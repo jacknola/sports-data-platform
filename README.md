@@ -11,6 +11,7 @@ A comprehensive sports betting intelligence application that aggregates data fro
 - 🐦 **Twitter Sentiment Analysis**: Monitors and analyzes Twitter discussions about teams/players
 - 📊 **Bayesian Models**: Runs sophisticated betting probability calculations
 - 🤖 **Hugging Face ML**: Sentiment analysis and prediction models
+- 📊 **Google Sheets Integration**: Automatic data syncing and analysis tracking
 - 📝 **Notion Integration**: Automatically updates your Notion database with insights
 - 📱 **Modern Dashboard**: Beautiful React frontend with real-time updates
 
@@ -147,6 +148,9 @@ Your Notion database will be automatically updated with:
 - `POST /api/v1/agents/analyze` - Multi-agent analysis with sequential thinking
 - `GET /api/v1/agents/status` - Agent status and performance
 - `POST /api/v1/agents/learn` - Submit outcomes for learning
+- `POST /api/v1/sheets/{id}/bet-analysis` - Write bet analysis to Google Sheets
+- `POST /api/v1/sheets/{id}/sync-predictions` - Sync predictions to Google Sheets
+- `POST /api/v1/sheets/{id}/daily-summary` - Create daily summary sheet
 - `POST /api/v1/notion/sync` - Manually sync to Notion
 
 ## Architecture
