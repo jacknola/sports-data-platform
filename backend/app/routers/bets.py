@@ -3,6 +3,7 @@ Best bets endpoints
 """
 from fastapi import APIRouter, HTTPException, Query
 from typing import List, Dict, Any, Optional
+from datetime import datetime
 from loguru import logger
 
 from app.services.bayesian import BayesianAnalyzer
