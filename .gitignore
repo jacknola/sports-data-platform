@@ -20,6 +20,8 @@ yarn-error.log*
 .pnpm-debug.log*
 .vite/
 dist/
+package-lock.json
+yarn.lock
 
 # Environment
 .env
@@ -60,7 +62,8 @@ backend/htmlcov/
 # Local data
 data/
 *.csv
-*.json
+!frontend/package.json
+!backend/requirements.txt
 
 # Google credentials
 service-account.json
