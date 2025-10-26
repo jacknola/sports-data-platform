@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  # Sequential Thinking MCP Server
+  sequentialthinking:
+    image: mcp/sequentialthinking:latest
+    container_name: mcp-sequentialthinking
+    restart: unless-stopped
+    networks:
+      - mcp-network
+    environment:
+      - MCP_MODE=stdio
+      - LOG_LEVEL=info
+    stdin_open: true
+    tty: true
+
+networks:
+  mcp-network:
+    name: sports-data-mcp-network
+    driver: bridge
+

@@ -1,0 +1,144 @@
+version: '3.8'
+
+networks:
+  mcp-network:
+    name: sports-data-mcp-network
+    driver: bridge
+
+services:
+  # Sequential Thinking MCP Server
+  sequentialthinking:
+    image: mcp/sequentialthinking:latest
+    container_name: mcp-sequentialthinking
+    restart: unless-stopped
+    networks:
+      - mcp-network
+      - default
+    environment:
+      - MCP_MODE=stdio
+      - LOG_LEVEL=info
+    stdin_open: true
+    tty: true
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: sports-postgres
+    networks:
+      - default
+    environment:
+      POSTGRES_USER: sports_app
+      POSTGRES_PASSWORD: sports_password
+      POSTGRES_DB: sports_data
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sports_app"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: sports-redis
+    networks:
+      - default
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sports-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://sports_app:sports_password@postgres:5432/sports_data
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - default
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sports-celery
+    environment:
+      - DATABASE_URL=postgresql://sports_app:sports_password@postgres:5432/sports_data
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - postgres
+      - redis
+    command: celery -A app.celery_app worker --loglevel=info
+
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sports-celery-beat
+    environment:
+      - DATABASE_URL=postgresql://sports_app:sports_password@postgres:5432/sports_data
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - postgres
+      - redis
+    command: celery -A app.celery_app beat --loglevel=info
+
+  flower:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sports-flower
+    ports:
+      - "5555:5555"
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+    command: celery -A app.celery_app flower --port=5555
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: sports-frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  redis_data:
+
