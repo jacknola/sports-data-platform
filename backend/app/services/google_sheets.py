@@ -132,7 +132,7 @@ class GoogleSheetsService:
             
             # Write headers
             headers = ['Date', 'Team', 'Opponent', 'Market', 'Prediction', 
-                      'Probability', 'Confidence', 'Edge', 'Recommendation']
+                      'Probability', 'Confidence', 'Edge', 'Kelly', 'Recommendation']
             worksheet.append_row(headers)
             
             # Write predictions
@@ -146,6 +146,7 @@ class GoogleSheetsService:
                     str(prediction.get('probability', '')),
                     str(prediction.get('confidence', '')),
                     str(prediction.get('edge', '')),
+                    str(prediction.get('kelly', '')),
                     prediction.get('recommendation', '')
                 ]
                 worksheet.append_row(row)
