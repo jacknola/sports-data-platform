@@ -7,11 +7,11 @@ from datetime import datetime
 from loguru import logger
 
 from app.services.bayesian import BayesianAnalyzer
-from app.services.nba_ml_predictor import NBA ML Predictor
+from app.services.nba_ml_predictor import NBAMLPredictor
 
 router = APIRouter()
 bayesian_analyzer = BayesianAnalyzer()
-nba_predictor = NBA ML Predictor()
+nba_predictor = NBAMLPredictor()
 
 
 @router.get("/bets")
@@ -41,16 +41,19 @@ async def get_best_bets(
             best_bets = []
             for pred in game_predictions:
                 # Check if prediction has positive EV
-                if pred.get('expected_value', {}).get('home_ev', 0) > min_edge:
+                ev = pred.get('expected_value', {})
+                if ev and max(ev.get('home_ev', 0), ev.get('away_ev', 0)) > min_edge:
+                    best_side = ev.get('best_bet')
+                    side_prob = pred['moneyline_prediction']['home_win_prob'] if best_side == 'home' else pred['moneyline_prediction']['away_win_prob']
                     best_bets.append({
                         'sport': 'NBA',
                         'game': f"{pred['away_team']} @ {pred['home_team']}",
                         'market': 'Moneyline',
-                        'selection': pred['expected_value']['best_bet'],
-                        'edge': pred['expected_value'][f"{pred['expected_value']['best_bet']}_ev"],
-                        'probability': pred['moneyline_prediction'].get('home_win_prob', 0),
+                        'selection': best_side,
+                        'edge': ev[f"{best_side}_ev"],
+                        'probability': side_prob,
                         'confidence': pred.get('confidence', 0),
-                        'current_odds': pred['expected_value'].get(f"{pred['expected_value']['best_bet']}_odds"),
+                        'current_odds': ev.get(f"{best_side}_odds"),
                         'kelly_fraction': pred.get('kelly_criterion', 0),
                         'method': 'ml_xgboost',
                         'ml_prediction': pred

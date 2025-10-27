@@ -9,6 +9,7 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 from loguru import logger
+from app.services.bayesian import BayesianAnalyzer
 
 try:
     import xgboost as xgb
@@ -18,12 +19,13 @@ except ImportError:
     logger.warning("XGBoost not installed, ML predictions disabled")
 
 
-class NBA ML Predictor:
+class NBAMLPredictor:
     """NBA betting predictions using machine learning"""
     
     def __init__(self):
-        self.models = {}
-        self.data_cache = {}
+        self.models: Dict[str, Any] = {}
+        self.data_cache: Dict[str, Any] = {}
+        self.bayesian = BayesianAnalyzer()
         self._load_models()
     
     def _load_models(self):
@@ -86,9 +88,16 @@ class NBA ML Predictor:
             
             # Calculate expected value
             ev = self._calculate_expected_value(moneyline_pred, features.get('odds', {}))
-            
-            # Kelly Criterion
-            kelly = self._calculate_kelly(features.get('edge', 0), features.get('probability', 0.5))
+
+            # Kelly Criterion for the best side using probability and odds
+            best_side = ev.get('best_bet', 'home')
+            side_prob = moneyline_pred['home_win_prob'] if best_side == 'home' else moneyline_pred['away_win_prob']
+            american_odds = ev['home_odds'] if best_side == 'home' else ev['away_odds']
+
+            def american_to_decimal(odds: float) -> float:
+                return (odds / 100 + 1) if odds > 0 else (100 / abs(odds) + 1)
+
+            kelly = self.bayesian.calculate_kelly_criterion(side_prob, american_to_decimal(american_odds))
             
             return {
                 'home_team': home_team,
@@ -110,21 +119,29 @@ class NBA ML Predictor:
             }
     
     def _prepare_features(self, features: Dict[str, Any]) -> pd.DataFrame:
-        """Prepare features for ML model input"""
-        # Convert features dict to DataFrame
-        # This would include: offensive_rating, defensive_rating, pace, recent_form, etc.
-        
-        feature_dict = {
-            'home_off_rating': features.get('home_off_rating', 110),
-            'home_def_rating': features.get('home_def_rating', 110),
-            'away_off_rating': features.get('away_off_rating', 110),
-            'away_def_rating': features.get('away_def_rating', 110),
-            'home_win_pct': features.get('home_win_pct', 0.5),
-            'away_win_pct': features.get('away_win_pct', 0.5),
-            'home_recent_form': features.get('home_recent_form', [1, 1, 1, 0, 1]),
-            'away_recent_form': features.get('away_recent_form', [1, 1, 0, 1, 0]),
+        """Prepare features for ML model input.
+
+        Ensure all features are numeric and fixed-width for model input.
+        """
+        home_recent = features.get('home_recent_form', [1, 1, 1, 0, 1])
+        away_recent = features.get('away_recent_form', [1, 1, 0, 1, 0])
+
+        def win_rate(seq: List[int]) -> float:
+            if not seq:
+                return 0.5
+            return float(sum(int(x) for x in seq)) / float(len(seq))
+
+        feature_dict: Dict[str, Any] = {
+            'home_off_rating': float(features.get('home_off_rating', 110.0)),
+            'home_def_rating': float(features.get('home_def_rating', 110.0)),
+            'away_off_rating': float(features.get('away_off_rating', 110.0)),
+            'away_def_rating': float(features.get('away_def_rating', 110.0)),
+            'home_win_pct': float(features.get('home_win_pct', 0.5)),
+            'away_win_pct': float(features.get('away_win_pct', 0.5)),
+            'home_recent_win_rate': win_rate(home_recent),
+            'away_recent_win_rate': win_rate(away_recent),
         }
-        
+
         return pd.DataFrame([feature_dict])
     
     def _predict_moneyline(self, features: pd.DataFrame) -> Dict[str, Any]:
@@ -210,15 +227,12 @@ class NBA ML Predictor:
             'away_odds': away_odds
         }
     
+    # Deprecated: prefer BayesianAnalyzer.calculate_kelly_criterion
     def _calculate_kelly(self, edge: float, probability: float) -> float:
-        """Calculate Kelly Criterion bet size"""
+        """Backward-compatible Kelly; prefer probability+odds based calculation."""
         if edge <= 0 or probability <= 0:
             return 0.0
-        
-        # Simplified Kelly formula
         kelly = edge / (1 - probability)
-        
-        # Cap at 25% of bankroll for safety
         return min(kelly, 0.25)
     
     async def predict_today_games(self, sport: str = 'nba') -> List[Dict[str, Any]]:
