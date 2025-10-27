@@ -18,7 +18,7 @@ except ImportError:
     logger.warning("XGBoost not installed, ML predictions disabled")
 
 
-class NBA ML Predictor:
+class NBAMLPredictor:
     """NBA betting predictions using machine learning"""
     
     def __init__(self):
