@@ -11,10 +11,15 @@ export default function Dashboard() {
     queryFn: () => api.get('/api/v1/agents/status'),
   })
   
-  const { data: bets, isLoading: betsLoading } = useQuery({
+  const { data: betsResponse, isLoading: betsLoading } = useQuery({
     queryKey: ['best-bets'],
-    queryFn: () => api.get('/api/v1/bets'),
+    queryFn: async () => {
+      const response = await api.get('/api/v1/bets?store_data=true')
+      return response.data
+    },
   })
+  
+  const bets = betsResponse?.bets || []
   
   return (
     <div className="space-y-8">
@@ -84,13 +89,24 @@ export default function Dashboard() {
               bets.slice(0, 5).map((bet: any, idx: number) => (
                 <div key={idx} className="flex items-center justify-between py-3 border-b last:border-0">
                   <div>
-                    <div className="font-semibold text-gray-900">{bet.description}</div>
-                    <div className="text-sm text-gray-500">{bet.sport}</div>
+                    <div className="font-semibold text-gray-900">
+                      {bet.selection || bet.team} - {bet.market}
+                    </div>
+                    <div className="text-sm text-gray-500">
+                      {bet.sport} • {typeof bet.game === 'string' ? bet.game : 
+                        bet.game?.away_team && bet.game?.home_team ? 
+                        `${bet.game.away_team} @ ${bet.game.home_team}` : 
+                        'Game Info'}
+                    </div>
                   </div>
                   <div className="flex items-center gap-4">
                     <div className="text-right">
-                      <div className="text-sm font-semibold text-green-600">+{bet.edge * 100}% edge</div>
-                      <div className="text-xs text-gray-500">{bet.current_odds}</div>
+                      <div className="text-sm font-semibold text-green-600">
+                        +{(bet.edge * 100).toFixed(1)}% edge
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {bet.current_odds > 0 ? `+${bet.current_odds}` : bet.current_odds}
+                      </div>
                     </div>
                     <CheckCircle2 className="w-5 h-5 text-green-500" />
                   </div>

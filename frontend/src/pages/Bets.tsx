@@ -3,10 +3,15 @@ import { TrendingUp, Target, AlertCircle, CheckCircle2, DollarSign } from 'lucid
 import { api } from '../utils/api'
 
 export default function Bets() {
-  const { data: bets, isLoading } = useQuery({
+  const { data: betsResponse, isLoading } = useQuery({
     queryKey: ['best-bets'],
-    queryFn: () => api.get('/api/v1/bets'),
+    queryFn: async () => {
+      const response = await api.get('/api/v1/bets?store_data=true')
+      return response.data
+    },
   })
+  
+  const bets = betsResponse?.bets || []
   
   return (
     <div className="space-y-8">
@@ -88,13 +93,25 @@ export default function Bets() {
                 <div className="flex items-start justify-between mb-4">
                   <div>
                     <div className="flex items-center gap-3 mb-2">
-                      <h3 className="text-lg font-bold text-gray-900">{bet.description}</h3>
+                      <h3 className="text-lg font-bold text-gray-900">
+                        {bet.selection || bet.team} - {bet.market}
+                      </h3>
                       <span className="badge badge-success">{bet.sport}</span>
                     </div>
-                    <p className="text-sm text-gray-600">Selection ID: {bet.selection_id}</p>
+                    <p className="text-sm text-gray-600">
+                      {typeof bet.game === 'string' ? bet.game : 
+                        bet.game?.away_team && bet.game?.home_team ? 
+                        `${bet.game.away_team} @ ${bet.game.home_team}` : 
+                        'Game Info'}
+                    </p>
+                    {bet.selection_id && (
+                      <p className="text-xs text-gray-500 mt-1">ID: {bet.selection_id}</p>
+                    )}
                   </div>
                   <div className="text-right">
-                    <div className="text-2xl font-bold text-green-600">+{bet.edge * 100}%</div>
+                    <div className="text-2xl font-bold text-green-600">
+                      +{(bet.edge * 100).toFixed(1)}%
+                    </div>
                     <div className="text-sm text-gray-500">Edge</div>
                   </div>
                 </div>
@@ -102,15 +119,25 @@ export default function Bets() {
                 <div className="grid grid-cols-3 gap-4 pt-4 border-t border-gray-200">
                   <div>
                     <p className="text-xs text-gray-500 mb-1">Probability</p>
-                    <p className="text-lg font-semibold text-gray-900">{(bet.probability * 100).toFixed(1)}%</p>
+                    <p className="text-lg font-semibold text-gray-900">
+                      {bet.probability ? (bet.probability * 100).toFixed(1) : 
+                       bet.posterior_prob ? (bet.posterior_prob * 100).toFixed(1) : 
+                       'N/A'}%
+                    </p>
                   </div>
                   <div>
-                    <p className="text-xs text-gray-500 mb-1">Odds</p>
-                    <p className="text-lg font-semibold text-gray-900">{bet.current_odds}</p>
+                    <p className="text-xs text-gray-500 mb-1">Current Odds</p>
+                    <p className="text-lg font-semibold text-gray-900">
+                      {bet.current_odds ? 
+                        (bet.current_odds > 0 ? `+${bet.current_odds}` : bet.current_odds) : 
+                        'N/A'}
+                    </p>
                   </div>
                   <div>
-                    <p className="text-xs text-gray-500 mb-1">Fair Odds</p>
-                    <p className="text-lg font-semibold text-gray-900">{bet.fair_american_odds}</p>
+                    <p className="text-xs text-gray-500 mb-1">Kelly Fraction</p>
+                    <p className="text-lg font-semibold text-gray-900">
+                      {bet.kelly_fraction ? (bet.kelly_fraction * 100).toFixed(1) + '%' : 'N/A'}
+                    </p>
                   </div>
                 </div>
                 
@@ -121,6 +148,11 @@ export default function Bets() {
                   <span className="text-xs text-gray-600">
                     {bet.edge > 0.1 ? 'High value bet - consider larger stake' : 'Solid value bet'}
                   </span>
+                  {bet.confidence && (
+                    <span className="text-xs text-gray-600 ml-2">
+                      • Confidence: {(bet.confidence * 100).toFixed(0)}%
+                    </span>
+                  )}
                 </div>
               </div>
             ))}
