@@ -8,6 +8,7 @@ from loguru import logger
 
 from app.config import settings
 from app.services.ml_service import MLService
+from app.services.parlay_parser import ParlayParser
 
 
 class TwitterAnalyzer:
@@ -16,6 +17,7 @@ class TwitterAnalyzer:
     def __init__(self):
         self._ml_service = MLService()
         self._client = None
+        self._parlay_parser = ParlayParser()
         self._init_client()
     
     def _init_client(self):
@@ -132,4 +134,49 @@ class TwitterAnalyzer:
             },
             'sample_tweets': tweets[:5]  # Include first 5 tweets
         }
+
+    def fetch_user_parlay_tweets(self, username: str, max_results: int = 20) -> List[Dict[str, Any]]:
+        """Fetch recent tweets from a user likely containing parlays."""
+        if not self._client:
+            return []
+        try:
+            # Resolve user id
+            user = self._client.get_user(username=username, user_fields=["username"])  # type: ignore
+            if not user or not getattr(user, 'data', None):
+                return []
+            user_id = user.data.id
+
+            tweets = self._client.get_users_tweets(
+                id=user_id,  # type: ignore
+                max_results=min(max_results, 100),
+                tweet_fields=['created_at', 'public_metrics'],
+                exclude=['retweets', 'replies']
+            )
+            if not tweets or not getattr(tweets, 'data', None):
+                return []
+
+            results = []
+            for t in tweets.data:
+                text = t.text
+                if self._looks_like_parlay(text):
+                    results.append({
+                        'id': t.id,
+                        'text': text,
+                        'created_at': t.created_at.isoformat() if t.created_at else None,
+                        'public_metrics': t.public_metrics,
+                        'author_username': username,
+                        'author_id': user_id,
+                    })
+            return results
+        except Exception as e:
+            logger.error(f"Twitter user fetch error: {e}")
+            return []
+
+    def _looks_like_parlay(self, text: str) -> bool:
+        tokens = text.lower()
+        hints = ["parlay", "leg", "ml", "over", "under", "pts", "+"]
+        return any(h in tokens for h in hints)
+
+    def parse_parlay_from_text(self, text: str) -> Dict[str, Any]:
+        return self._parlay_parser.parse(text)
 
