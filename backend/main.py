@@ -9,7 +9,7 @@ from loguru import logger
 
 from app.config import settings
 from app.database import init_db
-from app.routers import bets, analyze, odds, sentiment, predictions, notion, agents, google_sheets
+from app.routers import bets, analyze, odds, sentiment, predictions, notion, agents, google_sheets, player_props
 from app.services.cache import RedisCache
 
 
@@ -84,6 +84,7 @@ app.include_router(analyze.router, prefix="/api/v1", tags=["analyze"])
 app.include_router(odds.router, prefix="/api/v1", tags=["odds"])
 app.include_router(sentiment.router, prefix="/api/v1", tags=["sentiment"])
 app.include_router(predictions.router, prefix="/api/v1", tags=["predictions"])
+app.include_router(player_props.router, prefix="/api/v1", tags=["player-props"])
 app.include_router(notion.router, prefix="/api/v1", tags=["notion"])
 app.include_router(agents.router, prefix="/api/v1", tags=["agents"])
 app.include_router(google_sheets.router, prefix="/api/v1", tags=["google-sheets"])
