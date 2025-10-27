@@ -66,6 +66,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - ODDSAPI_API_KEY=${ODDSAPI_API_KEY}
     volumes:
       - ./backend:/app
     depends_on:
@@ -87,6 +88,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - ODDSAPI_API_KEY=${ODDSAPI_API_KEY}
     volumes:
       - ./backend:/app
     depends_on:
@@ -103,6 +105,7 @@ services:
       - DATABASE_URL=postgresql://sports_app:sports_password@postgres:5432/sports_data
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
+      - ODDSAPI_API_KEY=${ODDSAPI_API_KEY}
     volumes:
       - ./backend:/app
     depends_on:
