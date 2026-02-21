@@ -1,0 +1,77 @@
+# OpenCode Configuration for Sports Data Platform
+
+# Project metadata
+name: "Sports Data Intelligence Platform"
+type: "python-react-fullstack"
+description: "Quantitative sports betting platform with Bayesian modeling, ML predictions, and sharp money signals"
+
+# Entry points (scripts that agents can run)
+entry:
+  analysis:
+    - "python3 backend/run_ncaab_analysis.py"
+    - "python3 backend/run_nba_analysis.py"
+  server:
+    - "python3 backend/run_server.py"
+  daemon:
+    - "python3 backend/telegram_cron.py --daemon"
+  report:
+    - "python3 backend/telegram_cron.py --send-now"
+
+# Build/test commands
+commands:
+  test: "pytest backend/"
+  test-file: "pytest backend/{path}"
+  lint: "ruff check backend/"
+  format: "black backend/ && isort backend/"
+  dev: "npm run dev"
+  build: "npm run build"
+  setup: "pip install -r backend/requirements.txt"
+
+# Environment setup
+env:
+  python: "3.11"
+  node: "18+"
+  required:
+    - "TELEGRAM_BOT_TOKEN"
+    - "TELEGRAM_CHAT_ID"
+    - "ODDS_API_KEY"
+    - "SUPABASE_URL"
+    - "SUPABASE_KEY"
+
+# Directory conventions
+dirs:
+  backend: "backend/app"
+  frontend: "frontend/src"
+  tests: "backend"  # non-standard: flat files, not tests/
+  logs: "backend/logs"
+
+# Key dependencies
+deps:
+  python:
+    - "fastapi"
+    - "xgboost"
+    - "pymc"
+    - "loguru"
+    - "httpx"
+  node:
+    - "react"
+    - "tailwindcss"
+    - "recharts"
+
+# Ignore patterns (paths agents should not modify)
+ignore:
+  - "backend/venv/**"
+  - "node_modules/**"
+  - "*.env"
+  - ".git/**"
+
+# Agent capabilities for this project
+capabilities:
+  - "python-backend"
+  - "react-frontend"
+  - "data-analysis"
+  - "api-design"
+  - "ml-pipeline"
+
+# Custom slash commands available
+commands_path: ".claude/commands"

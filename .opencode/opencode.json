@@ -1,0 +1,16 @@
+{
+    "$schema": "https://opencode.ai/config.json",
+    "theme": "opencode",
+    "model": ["ge"],
+    "autoupdate": true,
+    "plugin": [
+        "opencode-gemini-auth@latest",
+        "@tarquinen/opencode-dcp@latest",
+        "opencode-pty@latest",
+        "@franlol/opencode-md-table-formatter@latest",
+        "@zenobius/opencode-skillful"
+    ],
+     "instructions": [
+    "~/.config/opencode/plugin/shell-strategy/shell_strategy.md"
+  ]
+}
