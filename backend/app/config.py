@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     HUGGINGFACE_API_KEY: Optional[str] = None
     HUGGINGFACE_MODEL: str = "cardiffnlp/twitter-roberta-base-sentiment-latest"
     
+    # Supabase
+    SUPABASE_URL: Optional[str] = None
+    SUPABASE_PUBLISHABLE_KEY: Optional[str] = None
+    SUPABASE_ANON_KEY: Optional[str] = None
+
     # Notion
     NOTION_API_KEY: Optional[str] = None
     NOTION_DATABASE_ID: Optional[str] = None
