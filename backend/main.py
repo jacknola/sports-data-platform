@@ -9,7 +9,7 @@ from loguru import logger
 
 from app.config import settings
 from app.database import init_db
-from app.routers import bets, analyze, odds, sentiment, predictions, notion, agents, google_sheets
+from app.routers import bets, analyze, odds, sentiment, predictions, notion, agents, google_sheets, cbb_sharp
 from app.services.cache import RedisCache
 
 
@@ -87,6 +87,7 @@ app.include_router(predictions.router, prefix="/api/v1", tags=["predictions"])
 app.include_router(notion.router, prefix="/api/v1", tags=["notion"])
 app.include_router(agents.router, prefix="/api/v1", tags=["agents"])
 app.include_router(google_sheets.router, prefix="/api/v1", tags=["google-sheets"])
+app.include_router(cbb_sharp.router, prefix="/api/v1", tags=["cbb-sharp-money"])
 
 
 if __name__ == "__main__":
