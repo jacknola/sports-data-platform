@@ -14,11 +14,11 @@ from typing import Optional
 
 
 # Emoji tier indicators
-_EMOJI_STRONG = "🟢"   # edge ≥ 5%
-_EMOJI_PLAY = "🟡"     # edge 2.5–5%
-_EMOJI_PASS = "⚪"     # below threshold
-_EMOJI_SIGNAL = "⚡"   # sharp signal detected
-_EMOJI_WARN = "⚠️"    # risk warning
+_EMOJI_STRONG = "🟢"  # edge ≥ 5%
+_EMOJI_PLAY = "🟡"  # edge 2.5–5%
+_EMOJI_PASS = "⚪"  # below threshold
+_EMOJI_SIGNAL = "⚡"  # sharp signal detected
+_EMOJI_WARN = "⚠️"  # risk warning
 
 
 class ReportFormatter:
@@ -29,19 +29,36 @@ class ReportFormatter:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def format_full_report(raw_output: str, bankroll: float = 10_000.0) -> str:
+    def format_full_report(raw_output: str, metrics: Optional[dict] = None) -> str:
         """
         Convert full run_ncaab_analysis.py stdout to Telegram HTML.
 
         Args:
             raw_output: Captured stdout from run_analysis()
-            bankroll: Current bankroll for context display
+            metrics: Optional dict of performance metrics (W/L, ROI)
 
         Returns:
             HTML-formatted string ready for TelegramService.send_message()
         """
         sections = ReportFormatter._parse_sections(raw_output)
         parts = []
+
+        # Add W/L Record Header if metrics provided
+        if metrics and metrics.get("total_bets", 0) > 0:
+            w = metrics.get("wins", 0)
+            l = metrics.get("losses", 0)
+            p = metrics.get("pushes", 0)
+            win_rate = metrics.get("win_rate", 0.0) * 100
+            units = metrics.get("units", 0.0)
+            roi = metrics.get("roi", 0.0) * 100
+
+            push_str = f"-{p}" if p > 0 else ""
+            record_str = (
+                f"<b>📈 Season Record:</b> {w}-{l}{push_str} ({win_rate:.1f}%)\n"
+            )
+            record_str += f"<b>💰 Profit:</b> {units:+.2f}U | <b>ROI:</b> {roi:+.1f}%\n"
+            record_str += f"<i>Based on {metrics.get('total_bets')} tracked bets</i>"
+            parts.append(record_str)
 
         # Portfolio summary block (most important — goes first after header)
         if sections.get("portfolio"):
@@ -275,7 +292,8 @@ class ReportFormatter:
             edge_raw = p.get("edge_raw", 0.0)
             emoji = _EMOJI_STRONG if edge_raw >= 0.05 else _EMOJI_PLAY
             signal_tag = (
-                f" {_EMOJI_SIGNAL}" if p.get("signals") and "Model only" not in p["signals"]
+                f" {_EMOJI_SIGNAL}"
+                if p.get("signals") and "Model only" not in p["signals"]
                 else ""
             )
             lines.append(
@@ -330,9 +348,4 @@ class ReportFormatter:
     @staticmethod
     def _escape(text: str) -> str:
         """Escape HTML reserved characters for Telegram HTML parse mode."""
-        return (
-            text
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-        )
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
