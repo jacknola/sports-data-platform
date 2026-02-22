@@ -46,9 +46,17 @@ class Settings(BaseSettings):
     # Notion
     NOTION_API_KEY: Optional[str] = None
     NOTION_DATABASE_ID: Optional[str] = None
-    
+
     # OpenAI
     OPENAI_API_KEY: Optional[str] = None
+
+    # Telegram
+    TELEGRAM_BOT_TOKEN: Optional[str] = None
+    TELEGRAM_CHAT_ID: Optional[str] = None
+    TELEGRAM_TIMEZONE: str = "America/New_York"
+    TELEGRAM_CRON_MORNING: str = "0 9 * * *"
+    TELEGRAM_CRON_AFTERNOON: str = "0 14 * * *"
+    TELEGRAM_CRON_EVENING: str = "0 19 * * *"
     
     # Security
     SECRET_KEY: str = "dev_secret_key_change_in_production"
