@@ -57,6 +57,7 @@ class BetTracker:
                     side TEXT,
                     market TEXT,
                     odds INTEGER,
+                    line REAL,
                     edge REAL,
                     bet_size REAL,
                     status TEXT,
@@ -84,6 +85,7 @@ class BetTracker:
             "side": bet_data.get("side", ""),
             "market": bet_data.get("market", "spread"),
             "odds": bet_data.get("odds", -110),
+            "line": bet_data.get("line", 0.0),
             "edge": bet_data.get("edge", 0.0),
             "bet_size": bet_data.get("bet_size", 0.0),
             "status": "pending",
@@ -111,8 +113,8 @@ class BetTracker:
             cursor.execute(
                 """
                 INSERT INTO bets 
-                (id, created_at, date, game_id, sport, side, market, odds, edge, bet_size, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, created_at, date, game_id, sport, side, market, odds, line, edge, bet_size, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     record["id"],
@@ -123,6 +125,7 @@ class BetTracker:
                     record["side"],
                     record["market"],
                     record["odds"],
+                    record["line"],
                     record["edge"],
                     record["bet_size"],
                     record["status"],

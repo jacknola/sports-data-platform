@@ -27,19 +27,21 @@ from loguru import logger
 # Data Structures
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class BettingOpportunity:
     """Single betting opportunity in a portfolio"""
+
     game_id: str
     side: str
-    market: str             # 'spread', 'total', 'moneyline'
-    true_prob: float        # Model-estimated win probability (devigged)
-    decimal_odds: float     # Offered decimal odds (e.g., 1.91 for -110)
-    edge: float             # true_prob - implied_prob
-    sport: str = 'ncaab'
-    conference: str = ''
-    home_team: str = ''
-    away_team: str = ''
+    market: str  # 'spread', 'total', 'moneyline'
+    true_prob: float  # Model-estimated win probability (devigged)
+    decimal_odds: float  # Offered decimal odds (e.g., 1.91 for -110)
+    edge: float  # true_prob - implied_prob
+    sport: str = "ncaab"
+    conference: str = ""
+    home_team: str = ""
+    away_team: str = ""
     sharp_signal_boost: float = 0.0  # Additional confidence from sharp signals
 
     @property
@@ -70,13 +72,14 @@ class BettingOpportunity:
 @dataclass
 class PortfolioResult:
     """Result from multivariate Kelly optimization"""
+
     opportunities: List[BettingOpportunity]
-    optimal_fractions: List[float]          # Fraction of bankroll per bet
-    expected_growth_rate: float             # Expected log-growth of bankroll
-    portfolio_variance: float               # Total portfolio variance
+    optimal_fractions: List[float]  # Fraction of bankroll per bet
+    expected_growth_rate: float  # Expected log-growth of bankroll
+    portfolio_variance: float  # Total portfolio variance
     correlation_matrix: np.ndarray
     covariance_matrix: np.ndarray
-    kelly_scale: float                      # Fractional Kelly applied (0.25, 0.5, etc.)
+    kelly_scale: float  # Fractional Kelly applied (0.25, 0.5, etc.)
     bankroll: float = 10000.0
 
     @property
@@ -94,33 +97,37 @@ class PortfolioResult:
             self.opportunities, self.optimal_fractions, self.bet_sizes
         ):
             if frac >= 0.001:  # Skip negligible allocations
-                results.append({
-                    'game_id': opp.game_id,
-                    'side': opp.side,
-                    'market': opp.market,
-                    'true_prob': round(opp.true_prob, 4),
-                    'decimal_odds': round(opp.decimal_odds, 3),
-                    'edge_pct': round(opp.edge * 100, 2),
-                    'single_kelly': round(opp.single_kelly, 4),
-                    'portfolio_fraction': round(frac, 4),
-                    'portfolio_fraction_pct': round(frac * 100, 2),
-                    'bet_size_$': round(size, 2),
-                    'sharp_signal': opp.sharp_signal_boost > 0
-                })
+                results.append(
+                    {
+                        "game_id": opp.game_id,
+                        "side": opp.side,
+                        "market": opp.market,
+                        "true_prob": round(opp.true_prob, 4),
+                        "decimal_odds": round(opp.decimal_odds, 3),
+                        "edge_pct": round(opp.edge * 100, 2),
+                        "single_kelly": round(opp.single_kelly, 4),
+                        "portfolio_fraction": round(frac, 4),
+                        "portfolio_fraction_pct": round(frac * 100, 2),
+                        "bet_size_$": round(size, 2),
+                        "sharp_signal": opp.sharp_signal_boost > 0,
+                        "line": getattr(opp, "line", 0.0),  # Safe get for line
+                    }
+                )
 
         return {
-            'kelly_scale': self.kelly_scale,
-            'total_bankroll_exposure_pct': round(self.total_exposure * 100, 2),
-            'expected_growth_rate': round(self.expected_growth_rate, 5),
-            'portfolio_variance': round(self.portfolio_variance, 6),
-            'bets': results,
-            'bankroll': self.bankroll
+            "kelly_scale": self.kelly_scale,
+            "total_bankroll_exposure_pct": round(self.total_exposure * 100, 2),
+            "expected_growth_rate": round(self.expected_growth_rate, 5),
+            "portfolio_variance": round(self.portfolio_variance, 6),
+            "bets": results,
+            "bankroll": self.bankroll,
         }
 
 
 # ---------------------------------------------------------------------------
 # Correlation Estimation
 # ---------------------------------------------------------------------------
+
 
 class CorrelationEstimator:
     """
@@ -135,7 +142,7 @@ class CorrelationEstimator:
     """
 
     SAME_GAME_SPREAD_TOTAL = 0.60
-    SAME_GAME_SAME_MARKET = 0.85   # e.g., two spread bets on same game
+    SAME_GAME_SAME_MARKET = 0.85  # e.g., two spread bets on same game
     BACK_TO_BACK_SAME_TEAM = 0.30
     SAME_CONFERENCE_SAME_DAY = 0.18
     SAME_DIVISION_SAME_DAY = 0.22
@@ -144,9 +151,7 @@ class CorrelationEstimator:
 
     @classmethod
     def estimate_correlation(
-        cls,
-        opp_i: BettingOpportunity,
-        opp_j: BettingOpportunity
+        cls, opp_i: BettingOpportunity, opp_j: BettingOpportunity
     ) -> float:
         """
         Estimate correlation coefficient between two betting outcomes.
@@ -163,7 +168,7 @@ class CorrelationEstimator:
             if opp_i.market != opp_j.market:
                 return cls.SAME_GAME_SPREAD_TOTAL  # e.g., spread + total
             else:
-                return cls.SAME_GAME_SAME_MARKET   # Same market (rare edge case)
+                return cls.SAME_GAME_SAME_MARKET  # Same market (rare edge case)
 
         # Different games
         if opp_i.sport != opp_j.sport:
@@ -204,6 +209,7 @@ class CorrelationEstimator:
 # Multivariate Kelly Optimizer
 # ---------------------------------------------------------------------------
 
+
 class MultivariateKellyOptimizer:
     """
     Solves the multivariate Kelly optimization problem for a portfolio of
@@ -235,9 +241,7 @@ class MultivariateKellyOptimizer:
         self.min_edge = min_edge
 
     def optimize(
-        self,
-        opportunities: List[BettingOpportunity],
-        bankroll: float = 10000.0
+        self, opportunities: List[BettingOpportunity], bankroll: float = 10000.0
     ) -> PortfolioResult:
         """
         Run multivariate Kelly optimization on a set of opportunities.
@@ -267,20 +271,16 @@ class MultivariateKellyOptimizer:
         corr_matrix = CorrelationEstimator.build_correlation_matrix(eligible)
 
         # Variance of each bet outcome (Bernoulli: p*(1-p))
-        variances = np.array([
-            o.true_prob * (1 - o.true_prob) * (o.net_odds ** 2)
-            for o in eligible
-        ])
+        variances = np.array(
+            [o.true_prob * (1 - o.true_prob) * (o.net_odds**2) for o in eligible]
+        )
 
         # Scale variances by decimal odds squared for proper covariance
         std_devs = np.sqrt(variances)
         cov_matrix = np.outer(std_devs, std_devs) * corr_matrix
 
         # Expected return vector: E[return] = p*b - q
-        mu = np.array([
-            o.true_prob * o.net_odds - (1 - o.true_prob)
-            for o in eligible
-        ])
+        mu = np.array([o.true_prob * o.net_odds - (1 - o.true_prob) for o in eligible])
 
         # Objective: maximize g(f) = f·μ - (1/2) f^T V f
         # Equivalent to minimizing the negative
@@ -292,10 +292,7 @@ class MultivariateKellyOptimizer:
 
         # Constraints
         constraints = [
-            {
-                'type': 'ineq',
-                'fun': lambda f: self.max_total_exposure - np.sum(f)
-            }
+            {"type": "ineq", "fun": lambda f: self.max_total_exposure - np.sum(f)}
         ]
 
         # Bounds: [0, max_single * kelly_scale] per bet
@@ -309,10 +306,10 @@ class MultivariateKellyOptimizer:
             neg_growth_rate,
             f0,
             jac=neg_growth_gradient,
-            method='SLSQP',
+            method="SLSQP",
             bounds=bounds,
             constraints=constraints,
-            options={'ftol': 1e-10, 'maxiter': 1000}
+            options={"ftol": 1e-10, "maxiter": 1000},
         )
 
         if not result.success:
@@ -328,8 +325,10 @@ class MultivariateKellyOptimizer:
         rounded_fractions = self._round_fractions(optimal_fractions)
 
         # Compute portfolio stats
-        expected_growth = float(np.dot(optimal_fractions, mu)
-                                - 0.5 * optimal_fractions @ cov_matrix @ optimal_fractions)
+        expected_growth = float(
+            np.dot(optimal_fractions, mu)
+            - 0.5 * optimal_fractions @ cov_matrix @ optimal_fractions
+        )
         portfolio_variance = float(optimal_fractions @ cov_matrix @ optimal_fractions)
 
         # Pad fractions back to original opportunities list order
@@ -350,7 +349,7 @@ class MultivariateKellyOptimizer:
             correlation_matrix=corr_matrix,
             covariance_matrix=cov_matrix,
             kelly_scale=self.kelly_scale,
-            bankroll=bankroll
+            bankroll=bankroll,
         )
 
         logger.info(
@@ -380,13 +379,14 @@ class MultivariateKellyOptimizer:
             correlation_matrix=np.eye(n) if n > 0 else np.array([[]]),
             covariance_matrix=np.zeros((n, n)) if n > 0 else np.array([[]]),
             kelly_scale=self.kelly_scale,
-            bankroll=bankroll
+            bankroll=bankroll,
         )
 
 
 # ---------------------------------------------------------------------------
 # Utility Functions
 # ---------------------------------------------------------------------------
+
 
 def american_to_decimal(american_odds: float) -> float:
     """Convert American odds to decimal odds"""
@@ -426,12 +426,28 @@ def devig(home_odds: float, away_odds: float) -> Tuple[float, float]:
 
 # Conferences considered non-power-5 for spread variance purposes
 _NON_POWER5 = {
-    'mac', 'sun_belt', 'cusa', 'ovc', 'colonial', 'big_south', 'horizon',
-    'swac', 'meac', 'patriot', 'nec', 'big_sky', 'southern', 'america_east',
-    'american', 'mountain_west', 'wcc', 'a10', 'mvc',
+    "mac",
+    "sun_belt",
+    "cusa",
+    "ovc",
+    "colonial",
+    "big_south",
+    "horizon",
+    "swac",
+    "meac",
+    "patriot",
+    "nec",
+    "big_sky",
+    "southern",
+    "america_east",
+    "american",
+    "mountain_west",
+    "wcc",
+    "a10",
+    "mvc",
 }
 
-_LARGE_SPREAD_FLOOR = 7.5   # Spread size that triggers variance risk flag
+_LARGE_SPREAD_FLOOR = 7.5  # Spread size that triggers variance risk flag
 
 
 def assess_parlay_risk(opportunities: List[BettingOpportunity]) -> Dict:
@@ -463,12 +479,12 @@ def assess_parlay_risk(opportunities: List[BettingOpportunity]) -> Dict:
     # --- Check 1: Large spreads in non-power-5 conferences ---
     large_spread_non_p5 = []
     for opp in opportunities:
-        if opp.market != 'spread':
+        if opp.market != "spread":
             continue
         # Spread magnitude stored as positive in side label; try to infer from edge/odds
         # BettingOpportunity doesn't store raw spread, so we check conference + market
         is_non_p5 = opp.conference.lower() in _NON_POWER5 or (
-            opp.conference == '' and opp.sport in ('ncaab', 'ncaaf')
+            opp.conference == "" and opp.sport in ("ncaab", "ncaaf")
         )
         # Infer large spread: true_prob far from 0.50 suggests large number
         # (e.g., -9.5 favorite implied ~0.65–0.70 true prob after devig)
@@ -477,51 +493,59 @@ def assess_parlay_risk(opportunities: List[BettingOpportunity]) -> Dict:
 
         if is_non_p5 and is_large_implied_spread:
             large_spread_non_p5.append(opp)
-            flagged_legs.append(f"{opp.game_id} ({opp.side}, {opp.conference or 'non-P5'})")
+            flagged_legs.append(
+                f"{opp.game_id} ({opp.side}, {opp.conference or 'non-P5'})"
+            )
 
     if len(large_spread_non_p5) >= 2:
         risk_score += len(large_spread_non_p5) * 0.18
-        warnings.append({
-            'type': 'CORRELATED_VARIANCE',
-            'severity': 'HIGH' if len(large_spread_non_p5) >= 3 else 'MEDIUM',
-            'leg_count': len(large_spread_non_p5),
-            'message': (
-                f"{len(large_spread_non_p5)} legs are large-spread favorites in "
-                f"non-power-5 conferences. These share systemic variance — "
-                f"one slow-scoring night can bust multiple legs simultaneously."
-            ),
-            'action': (
-                "Consider removing the weakest-edge mid-major spread legs, or "
-                "split into separate smaller tickets."
-            ),
-        })
+        warnings.append(
+            {
+                "type": "CORRELATED_VARIANCE",
+                "severity": "HIGH" if len(large_spread_non_p5) >= 3 else "MEDIUM",
+                "leg_count": len(large_spread_non_p5),
+                "message": (
+                    f"{len(large_spread_non_p5)} legs are large-spread favorites in "
+                    f"non-power-5 conferences. These share systemic variance — "
+                    f"one slow-scoring night can bust multiple legs simultaneously."
+                ),
+                "action": (
+                    "Consider removing the weakest-edge mid-major spread legs, or "
+                    "split into separate smaller tickets."
+                ),
+            }
+        )
 
     # --- Check 2: Parlay size ---
     n = len(opportunities)
     if n >= 9:
         risk_score += 0.40
-        warnings.append({
-            'type': 'PARLAY_SIZE',
-            'severity': 'HIGH',
-            'leg_count': n,
-            'message': (
-                f"{n}-leg parlay requires all {n} legs to win. "
-                f"Going 5-4 still means $0 payout — no partial credit."
-            ),
-            'action': (
-                "Break into 2–3 smaller parlays of 3–4 legs each for better "
-                "risk-adjusted expected value."
-            ),
-        })
+        warnings.append(
+            {
+                "type": "PARLAY_SIZE",
+                "severity": "HIGH",
+                "leg_count": n,
+                "message": (
+                    f"{n}-leg parlay requires all {n} legs to win. "
+                    f"Going 5-4 still means $0 payout — no partial credit."
+                ),
+                "action": (
+                    "Break into 2–3 smaller parlays of 3–4 legs each for better "
+                    "risk-adjusted expected value."
+                ),
+            }
+        )
     elif n >= 7:
         risk_score += 0.20
-        warnings.append({
-            'type': 'PARLAY_SIZE',
-            'severity': 'MEDIUM',
-            'leg_count': n,
-            'message': f"{n}-leg parlay. Consider splitting into smaller tickets.",
-            'action': "Target 4–5 leg parlays for better EV per unit risked.",
-        })
+        warnings.append(
+            {
+                "type": "PARLAY_SIZE",
+                "severity": "MEDIUM",
+                "leg_count": n,
+                "message": f"{n}-leg parlay. Consider splitting into smaller tickets.",
+                "action": "Target 4–5 leg parlays for better EV per unit risked.",
+            }
+        )
 
     # --- Check 3: Total exposure to same sport/conference ---
     sport_counts: Dict[str, int] = {}
@@ -531,31 +555,33 @@ def assess_parlay_risk(opportunities: List[BettingOpportunity]) -> Dict:
     dominant_sport = max(sport_counts, key=sport_counts.get) if sport_counts else None
     if dominant_sport and sport_counts[dominant_sport] >= 5:
         risk_score += 0.10
-        warnings.append({
-            'type': 'SPORT_CONCENTRATION',
-            'severity': 'LOW',
-            'sport': dominant_sport,
-            'leg_count': sport_counts[dominant_sport],
-            'message': (
-                f"{sport_counts[dominant_sport]} of {n} legs are {dominant_sport.upper()}. "
-                f"A sport-wide bad night (foul trouble, blowouts) hits multiple legs."
-            ),
-            'action': "Diversify across sports when possible.",
-        })
+        warnings.append(
+            {
+                "type": "SPORT_CONCENTRATION",
+                "severity": "LOW",
+                "sport": dominant_sport,
+                "leg_count": sport_counts[dominant_sport],
+                "message": (
+                    f"{sport_counts[dominant_sport]} of {n} legs are {dominant_sport.upper()}. "
+                    f"A sport-wide bad night (foul trouble, blowouts) hits multiple legs."
+                ),
+                "action": "Diversify across sports when possible.",
+            }
+        )
 
     risk_score = round(min(1.0, risk_score), 3)
 
     if risk_score >= 0.50:
-        recommendation = 'HIGH_RISK — strongly consider reducing size or splitting'
+        recommendation = "HIGH_RISK — strongly consider reducing size or splitting"
     elif risk_score >= 0.25:
-        recommendation = 'MODERATE_RISK — review flagged legs before placing'
+        recommendation = "MODERATE_RISK — review flagged legs before placing"
     else:
-        recommendation = 'ACCEPTABLE'
+        recommendation = "ACCEPTABLE"
 
     return {
-        'parlay_risk_score': risk_score,
-        'leg_count': n,
-        'warnings': warnings,
-        'flagged_legs': flagged_legs,
-        'recommendation': recommendation,
+        "parlay_risk_score": risk_score,
+        "leg_count": n,
+        "warnings": warnings,
+        "flagged_legs": flagged_legs,
+        "recommendation": recommendation,
     }

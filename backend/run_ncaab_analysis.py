@@ -327,6 +327,7 @@ def run_analysis():
             away_team=game["away"],
             sharp_signal_boost=sharp_boost if sharp_side == game["home"] else 0.0,
         )
+        setattr(home_opp, "line", game["spread"])  # For settlement tracking
 
         away_opp = BettingOpportunity(
             game_id=game["game_id"] + "_AWAY",
@@ -341,6 +342,7 @@ def run_analysis():
             away_team=game["away"],
             sharp_signal_boost=sharp_boost if sharp_side == game["away"] else 0.0,
         )
+        setattr(away_opp, "line", -game["spread"])  # For settlement tracking
 
         # Only add the better edge side (or both if both are positive)
         if home_edge > 0.025:
@@ -481,7 +483,7 @@ def run_analysis():
     print("  PORTFOLIO SUMMARY — MULTIVARIATE KELLY (HALF-KELLY)")
     print("=" * 76)
 
-    bets = [b for b in portfolio_summary["bets"] if b["bet_size_$"] >= 1]
+    bets = [b for b in portfolio_summary["bets"] if b["bet_size_$"] >= 0.01]
 
     if bets:
         # Sort by edge descending
@@ -529,11 +531,16 @@ def run_analysis():
                 tracker.save_bet(
                     {
                         "game_id": b["game_id"],
-                        "sport": b["sport"],
-                        "side": b["bet_on"],
+                        "sport": "ncaab",
+                        "side": b["side"],
                         "market": b["market"],
-                        "odds": b["odds"],
-                        "edge": float(b["edge_pct"].replace("%", "")),
+                        "odds": int(b["decimal_odds"] * 100)
+                        if b["decimal_odds"] > 2.0
+                        else int(
+                            -100 / (b["decimal_odds"] - 1)
+                        ),  # rough approximation just for tracking
+                        "line": float(b.get("line", 0.0)),
+                        "edge": float(b["edge_pct"]) / 100,
                         "bet_size": float(b["bet_size_$"]),
                         "date": datetime.utcnow().strftime("%Y-%m-%d"),
                     }
