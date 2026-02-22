@@ -19,6 +19,10 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+
+import asyncio
+from app.services.sports_api import SportsAPIService
+
 import numpy as np
 from datetime import datetime
 from typing import List, Dict
@@ -250,7 +254,78 @@ BANKROLL = 25.0
 # ============================================================================
 
 
+
+async def get_live_ncaab_games():
+    api = SportsAPIService()
+    odds_data = await api.get_odds('basketball_ncaab')
+    
+    if not odds_data:
+        return TONIGHT_GAMES
+        
+    live_games = []
+    for g in odds_data:
+        home = g.get('home_team')
+        away = g.get('away_team')
+        game_id = f"NCAAB_{g.get('id', '')}"
+        
+        pinnacle_home = -110
+        pinnacle_away = -110
+        retail_home = -110
+        retail_away = -110
+        spread = 0.0
+        
+        for book in g.get('bookmakers', []):
+            book_key = book['key']
+            for market in book.get('markets', []):
+                if market['key'] == 'spreads':
+                    home_odds = -110
+                    away_odds = -110
+                    home_point = 0.0
+                    for out in market['outcomes']:
+                        if out['name'] == home:
+                            home_odds = out['price']
+                            home_point = out.get('point', 0.0)
+                        elif out['name'] == away:
+                            away_odds = out['price']
+                    
+                    if book_key == 'pinnacle':
+                        pinnacle_home = home_odds
+                        pinnacle_away = away_odds
+                        spread = home_point # use pinnacle's spread as canonical
+                    elif book_key in ['draftkings', 'fanduel', 'bovada']:
+                        retail_home = home_odds
+                        retail_away = away_odds
+                        if spread == 0.0:
+                            spread = home_point
+                            
+        # Only add if we found a valid spread market
+        if spread != 0.0:
+            live_games.append({
+                "game_id": game_id,
+                "home": home,
+                "away": away,
+                "conference": "NCAAB",
+                "pinnacle_home_odds": pinnacle_home,
+                "pinnacle_away_odds": pinnacle_away,
+                "retail_home_odds": retail_home,
+                "retail_away_odds": retail_away,
+                "spread": spread,
+                "open_spread": spread, # Default to current since we don't have open
+                "home_ticket_pct": 0.50, # Neutral
+                "home_money_pct": 0.50, # Neutral
+                "model_home_prob": 0.50, # Neutral
+                "notes": "Live data from Odds API. Missing ticket % and KenPom defaults to 50%."
+            })
+            
+    if not live_games:
+        print("  Warning: No live spread markets found. Falling back to mocked games.")
+        return TONIGHT_GAMES
+        
+    return live_games
+
 def run_analysis():
+    games_to_analyze = asyncio.run(get_live_ncaab_games())
+
     detector = SharpMoneyDetector()
     optimizer = MultivariateKellyOptimizer(
         kelly_scale=0.5,  # Half-Kelly
@@ -267,7 +342,7 @@ def run_analysis():
     opportunities = []
     game_analyses = []
 
-    for game in TONIGHT_GAMES:
+    for game in games_to_analyze:
         # --- Devig Pinnacle for true probabilities ---
         true_home_prob, true_away_prob = devig(
             game["pinnacle_home_odds"], game["pinnacle_away_odds"]
@@ -384,7 +459,7 @@ def run_analysis():
         f"\n  BANKROLL: ${BANKROLL:,.0f}  |  Kelly Scale: Half (50%)  |  Max Single: 5%"
     )
     print(
-        f"  Games analyzed: {len(TONIGHT_GAMES)}  |  Opportunities meeting ≥2.5% edge: {len(opportunities)}"
+        f"  Games analyzed: {len(games_to_analyze)}  |  Opportunities meeting ≥2.5% edge: {len(opportunities)}"
     )
     print()
 
