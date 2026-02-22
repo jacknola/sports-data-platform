@@ -417,3 +417,144 @@ def devig(home_odds: float, away_odds: float) -> Tuple[float, float]:
     p_away = implied_prob(away_odds)
     total = p_home + p_away
     return p_home / total, p_away / total
+
+
+# ---------------------------------------------------------------------------
+# Parlay Risk Assessment
+# ---------------------------------------------------------------------------
+
+# Conferences considered non-power-5 for spread variance purposes
+_NON_POWER5 = {
+    'mac', 'sun_belt', 'cusa', 'ovc', 'colonial', 'big_south', 'horizon',
+    'swac', 'meac', 'patriot', 'nec', 'big_sky', 'southern', 'america_east',
+    'american', 'mountain_west', 'wcc', 'a10', 'mvc',
+}
+
+_LARGE_SPREAD_FLOOR = 7.5   # Spread size that triggers variance risk flag
+
+
+def assess_parlay_risk(opportunities: List[BettingOpportunity]) -> Dict:
+    """
+    Assess systemic risk in a proposed parlay / multi-bet ticket.
+
+    Identifies two failure modes from tonight's NCAAB parlay:
+      1. CORRELATED_VARIANCE — multiple large spreads in non-power-5 conferences
+         share a systemic risk: any night where mid-majors play close games
+         wipes out multiple legs simultaneously.
+      2. PARLAY_SIZE — large parlays (7+ legs) require near-perfect outcomes
+         and are often better broken into smaller independent tickets.
+
+    Args:
+        opportunities: List of BettingOpportunity objects in the parlay
+
+    Returns:
+        {
+            'parlay_risk_score': float (0.0–1.0),
+            'warnings': List[Dict],
+            'flagged_legs': List[str],
+            'recommendation': str
+        }
+    """
+    warnings = []
+    flagged_legs = []
+    risk_score = 0.0
+
+    # --- Check 1: Large spreads in non-power-5 conferences ---
+    large_spread_non_p5 = []
+    for opp in opportunities:
+        if opp.market != 'spread':
+            continue
+        # Spread magnitude stored as positive in side label; try to infer from edge/odds
+        # BettingOpportunity doesn't store raw spread, so we check conference + market
+        is_non_p5 = opp.conference.lower() in _NON_POWER5 or (
+            opp.conference == '' and opp.sport in ('ncaab', 'ncaaf')
+        )
+        # Infer large spread: true_prob far from 0.50 suggests large number
+        # (e.g., -9.5 favorite implied ~0.65–0.70 true prob after devig)
+        prob_gap = abs(opp.true_prob - 0.50)
+        is_large_implied_spread = prob_gap >= 0.12  # Roughly equivalent to 7.5+ pts
+
+        if is_non_p5 and is_large_implied_spread:
+            large_spread_non_p5.append(opp)
+            flagged_legs.append(f"{opp.game_id} ({opp.side}, {opp.conference or 'non-P5'})")
+
+    if len(large_spread_non_p5) >= 2:
+        risk_score += len(large_spread_non_p5) * 0.18
+        warnings.append({
+            'type': 'CORRELATED_VARIANCE',
+            'severity': 'HIGH' if len(large_spread_non_p5) >= 3 else 'MEDIUM',
+            'leg_count': len(large_spread_non_p5),
+            'message': (
+                f"{len(large_spread_non_p5)} legs are large-spread favorites in "
+                f"non-power-5 conferences. These share systemic variance — "
+                f"one slow-scoring night can bust multiple legs simultaneously."
+            ),
+            'action': (
+                "Consider removing the weakest-edge mid-major spread legs, or "
+                "split into separate smaller tickets."
+            ),
+        })
+
+    # --- Check 2: Parlay size ---
+    n = len(opportunities)
+    if n >= 9:
+        risk_score += 0.40
+        warnings.append({
+            'type': 'PARLAY_SIZE',
+            'severity': 'HIGH',
+            'leg_count': n,
+            'message': (
+                f"{n}-leg parlay requires all {n} legs to win. "
+                f"Going 5-4 still means $0 payout — no partial credit."
+            ),
+            'action': (
+                "Break into 2–3 smaller parlays of 3–4 legs each for better "
+                "risk-adjusted expected value."
+            ),
+        })
+    elif n >= 7:
+        risk_score += 0.20
+        warnings.append({
+            'type': 'PARLAY_SIZE',
+            'severity': 'MEDIUM',
+            'leg_count': n,
+            'message': f"{n}-leg parlay. Consider splitting into smaller tickets.",
+            'action': "Target 4–5 leg parlays for better EV per unit risked.",
+        })
+
+    # --- Check 3: Total exposure to same sport/conference ---
+    sport_counts: Dict[str, int] = {}
+    for opp in opportunities:
+        sport_counts[opp.sport] = sport_counts.get(opp.sport, 0) + 1
+
+    dominant_sport = max(sport_counts, key=sport_counts.get) if sport_counts else None
+    if dominant_sport and sport_counts[dominant_sport] >= 5:
+        risk_score += 0.10
+        warnings.append({
+            'type': 'SPORT_CONCENTRATION',
+            'severity': 'LOW',
+            'sport': dominant_sport,
+            'leg_count': sport_counts[dominant_sport],
+            'message': (
+                f"{sport_counts[dominant_sport]} of {n} legs are {dominant_sport.upper()}. "
+                f"A sport-wide bad night (foul trouble, blowouts) hits multiple legs."
+            ),
+            'action': "Diversify across sports when possible.",
+        })
+
+    risk_score = round(min(1.0, risk_score), 3)
+
+    if risk_score >= 0.50:
+        recommendation = 'HIGH_RISK — strongly consider reducing size or splitting'
+    elif risk_score >= 0.25:
+        recommendation = 'MODERATE_RISK — review flagged legs before placing'
+    else:
+        recommendation = 'ACCEPTABLE'
+
+    return {
+        'parlay_risk_score': risk_score,
+        'leg_count': n,
+        'warnings': warnings,
+        'flagged_legs': flagged_legs,
+        'recommendation': recommendation,
+    }
