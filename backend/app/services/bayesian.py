@@ -7,6 +7,33 @@ from typing import Dict, Any
 from loguru import logger
 
 
+# ---------------------------------------------------------------------------
+# Conference tier variance penalty for large spread markets
+#
+# Mid-major spreads of 7.5+ cover at materially lower rates than the
+# implied probability suggests. Books inflate spreads in low-sample-size
+# leagues where public betting is less informed, creating a systematic
+# overconfidence trap.
+#
+# Penalty applied as a negative adjustment to posterior probability when:
+#   - conference_tier is not 'power_5'
+#   - abs(spread) >= 7.5
+#
+# Derived from historical NCAAB cover rates by conference tier and spread size.
+# ---------------------------------------------------------------------------
+
+CONFERENCE_TIER_SPREAD_PENALTY: Dict[str, Dict[str, float]] = {
+    # tier → {spread_bucket: probability penalty}
+    'power_5':   {'large': 0.00, 'medium': 0.00},   # ACC, Big Ten, Big 12, SEC, Big East
+    'high_major': {'large': -0.02, 'medium': -0.01}, # American, Mountain West, WCC, A10
+    'mid_major':  {'large': -0.05, 'medium': -0.02}, # MAC, Sun Belt, CUSA, OVC, Colonial
+    'low_major':  {'large': -0.08, 'medium': -0.04}, # SWAC, MEAC, Patriot, NEC, Big Sky
+}
+
+LARGE_SPREAD_THRESHOLD = 7.5   # Spread size (points) triggering large penalty
+MEDIUM_SPREAD_THRESHOLD = 5.0  # Spread size triggering medium penalty
+
+
 class BayesianAnalyzer:
     """Bayesian probability calculator for sports betting"""
     
@@ -131,7 +158,31 @@ class BayesianAnalyzer:
         if recent_form:
             avg_form = np.mean(recent_form)
             adjustments['form'] = (avg_form - 0.5) * 0.1
-        
+
+        # Conference tier variance penalty for large spreads
+        # Mid-major large spreads are systematically overconfident — books inflate
+        # lines in low-sample-size leagues and covers come in far less often than
+        # implied probability suggests (e.g., GCU -9.5 losing outright, NM -8.5
+        # winning by 2 when -8.5 was the line).
+        conference_tier = features.get('conference_tier', 'power_5')
+        spread = features.get('spread', 0.0)  # signed: negative = favorite spread
+        abs_spread = abs(spread)
+        if abs_spread >= LARGE_SPREAD_THRESHOLD:
+            bucket = 'large'
+        elif abs_spread >= MEDIUM_SPREAD_THRESHOLD:
+            bucket = 'medium'
+        else:
+            bucket = None
+
+        if bucket is not None and conference_tier in CONFERENCE_TIER_SPREAD_PENALTY:
+            penalty = CONFERENCE_TIER_SPREAD_PENALTY[conference_tier].get(bucket, 0.0)
+            if penalty != 0.0:
+                adjustments['conference_spread_variance'] = penalty
+                logger.debug(
+                    f"Applied {conference_tier} {bucket}-spread variance penalty: {penalty:+.3f} "
+                    f"(spread={spread}, tier={conference_tier})"
+                )
+
         return adjustments
     
     def _prob_to_american_odds(self, prob: float) -> float:
