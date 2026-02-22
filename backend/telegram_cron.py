@@ -31,12 +31,17 @@ from datetime import datetime
 # Allow imports from backend/
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import asyncio
 from loguru import logger
 from app.config import settings
 from app.services.telegram_service import TelegramService
 from app.services.report_formatter import ReportFormatter
+from app.services.bet_settlement import BetSettlementEngine
+from app.services.bet_tracker import BetTracker
 
 
+# ---------------------------------------------------------------------------
+# Core send logic
 # ---------------------------------------------------------------------------
 # Logger setup
 # ---------------------------------------------------------------------------
@@ -54,6 +59,7 @@ logger.add(
 # ---------------------------------------------------------------------------
 # Core send logic
 # ---------------------------------------------------------------------------
+
 
 def _label_for_hour(hour: int) -> str:
     """Return a report label based on hour of day."""
@@ -102,13 +108,33 @@ def send_report(picks_only: bool = False) -> bool:
 
     logger.info(f"Starting {label} report send (picks_only={picks_only})")
 
+    # 1. First, attempt to settle any pending bets from previous days
+    settler = BetSettlementEngine()
+    try:
+        # We use asyncio.run because settle_pending_bets is async
+        asyncio.run(settler.settle_pending_bets("ncaab"))
+    except Exception as e:
+        logger.error(f"Error during bet settlement: {e}")
+
+    # 2. Run analysis (this will also save new pending bets)
     raw = capture_analysis()
+
+    # 3. Get updated performance metrics
+    tracker = BetTracker()
+    try:
+        metrics = tracker.get_performance_metrics()
+        logger.info(
+            f"Retrieved metrics: {metrics['wins']}-{metrics['losses']} ({metrics['win_rate']:.1%})"
+        )
+    except Exception as e:
+        logger.error(f"Error getting metrics: {e}")
+        metrics = {}
 
     if picks_only:
         formatted = ReportFormatter.format_picks_only(raw)
         ok = telegram.send_message(formatted)
     else:
-        formatted = ReportFormatter.format_full_report(raw)
+        formatted = ReportFormatter.format_full_report(raw, metrics=metrics)
         ok = telegram.send_report(formatted, label=label)
 
     if ok:
@@ -122,6 +148,7 @@ def send_report(picks_only: bool = False) -> bool:
 # ---------------------------------------------------------------------------
 # Scheduler (daemon mode)
 # ---------------------------------------------------------------------------
+
 
 def _parse_cron_hour(cron_expr: str) -> int:
     """Extract the hour from a simple 'M H * * *' cron expression."""
@@ -184,7 +211,9 @@ def run_daemon(picks_only: bool = False) -> None:
 
     for label, time_str in schedule_times:
         schedule.every().day.at(time_str).do(send_report, picks_only=picks_only)
-        logger.info(f"Scheduled {label} report at {time_str} {settings.TELEGRAM_TIMEZONE}")
+        logger.info(
+            f"Scheduled {label} report at {time_str} {settings.TELEGRAM_TIMEZONE}"
+        )
 
     # Graceful shutdown
     _running = [True]
@@ -209,10 +238,9 @@ def run_daemon(picks_only: bool = False) -> None:
 # CLI entry point
 # ---------------------------------------------------------------------------
 
+
 def main():
-    parser = argparse.ArgumentParser(
-        description="Send betting reports to Telegram"
-    )
+    parser = argparse.ArgumentParser(description="Send betting reports to Telegram")
     parser.add_argument(
         "--send-now",
         action="store_true",
