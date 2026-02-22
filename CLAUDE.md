@@ -431,10 +431,12 @@ For NCAAB closing lines, use Pinnacle as ground truth. Secondary references:
 | SharpMoneyDetector | `backend/app/services/sharp_money_detector.py` | RLM, steam, CLV, head fake filter |
 | MultivariateKelly | `backend/app/services/multivariate_kelly.py` | Correlated portfolio optimization |
 | NBAMLPredictor | `backend/app/services/nba_ml_predictor.py` | XGBoost predictions (NBA) |
-| **PropAnalyzer** | **`backend/app/services/prop_analyzer.py`** | **Prop RLM, steam, freeze, juice shift detection** |
-| **PropProbabilityModel** | **`backend/app/services/prop_probability.py`** | **Normal distribution prop projection + edge** |
+| PropAnalyzer | `backend/app/services/prop_analyzer.py` | Prop RLM, steam, freeze, juice shift detection |
+| PropProbabilityModel | `backend/app/services/prop_probability.py` | Normal distribution prop projection + edge |
 | SportsAPIService | `backend/app/services/sports_api.py` | Odds ingestion (The Odds API) |
 | WebScraper | `backend/app/services/web_scraper.py` | Crawl4AI intelligent extraction |
+| **TelegramService** | **`backend/app/services/telegram_service.py`** | **Bot messaging, chunking, retry, rate limit** |
+| **ReportFormatter** | **`backend/app/services/report_formatter.py`** | **HTML formatting for Telegram reports** |
 | OddsAgent | `backend/app/agents/odds_agent.py` | Value bet identification |
 | AnalysisAgent | `backend/app/agents/analysis_agent.py` | Bayesian + ML orchestration |
 | ExpertAgent | `backend/app/agents/expert_agent.py` | Sequential thinking final review |
@@ -551,6 +553,12 @@ POST /api/v1/bayesian
 # 6. Full prop analysis on a specific player
 POST /api/v1/props/analyze
 {"player_name": "...", "stat_type": "points", "line": 25.5, ...}
+
+# 7. Send report to Telegram immediately (on-demand)
+python backend/telegram_cron.py --send-now
+
+# 8. Run Telegram scheduler (3x daily daemon)
+python backend/telegram_cron.py --daemon
 ```
 
 ---
@@ -569,8 +577,104 @@ POST /api/v1/props/analyze
 
 ---
 
-## References
+---
 
+## 14. Telegram Bot Integration
+
+### Architecture
+
+```
+Schedule (cron / APScheduler)
+        ↓
+telegram_cron.py  →  run_analysis() (captures stdout)
+        ↓
+ReportFormatter   →  HTML-formatted message
+        ↓
+TelegramService   →  Telegram Bot API
+        ↓
+Your Chat / Group / Channel
+```
+
+### Environment Variables
+
+| Variable | Description | Required |
+|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather | Yes |
+| `TELEGRAM_CHAT_ID` | Your personal / group / channel ID | Yes |
+| `TELEGRAM_TIMEZONE` | Timezone for schedule (default: `America/New_York`) | No |
+| `TELEGRAM_CRON_MORNING` | Morning send cron (default: `0 9 * * *`) | No |
+| `TELEGRAM_CRON_AFTERNOON` | Afternoon send cron (default: `0 14 * * *`) | No |
+| `TELEGRAM_CRON_EVENING` | Evening send cron (default: `0 19 * * *`) | No |
+
+**Getting your Chat ID:** Message `@userinfobot` on Telegram — it replies instantly with your numeric ID.
+
+### Key Constraints (Telegram Bot API)
+
+- **Message length:** 4096 characters max per message — auto-chunk long reports
+- **Parse mode:** Use `HTML` (not Markdown) — more predictable with betting symbols like `+`, `-`, `%`
+- **Rate limit:** ~30 messages/second to different chats; ~1 message/second to same chat
+- **Allowed HTML tags:** `<b>`, `<i>`, `<u>`, `<code>`, `<pre>`, `<a href="...">`
+
+### Report Format (3x Daily)
+
+Each scheduled send includes:
+1. **Header** — date, report type (Morning/Afternoon/Evening), bankroll snapshot
+2. **Top Plays** — ranked by composite score (edge × signal confidence)
+3. **Game-by-Game** — devig probs, edge, sharp signals, Kelly allocation
+4. **Portfolio Summary** — total exposure, expected growth rate, active bet count
+5. **Risk Reminders** — CLV tracking reminder, EMDD warning if exposure is high
+
+### Suggested Feature Additions (Future)
+
+| Feature | Implementation Note |
+|---|---|
+| `/picks` command | Bot listens for messages via webhook or polling; runs analysis on demand |
+| `/bankroll <amount>` | Update BANKROLL in run_ncaab_analysis.py dynamically |
+| `/clv <bet_odds> <closing_odds>` | Quick CLV calculator returned inline |
+| Result tracking | After games finish, bot sends P&L update with actual outcomes |
+| Alert on sharp steam | Real-time steam detection triggers immediate Telegram alert |
+| Inline keyboard | Telegram inline buttons: [Run Analysis] [Send Now] [CLV Check] |
+
+---
+
+## 15. Slash Commands (Claude Code Skills)
+
+These project-level skills are available in Claude Code via `/` prefix. Stored in `.claude/commands/`.
+
+| Command | Description | When to Use |
+|---|---|---|
+| `/run-analysis` | Run NCAAB sharp money analysis for tonight's slate | Check tonight's plays |
+| `/check-ev` | Calculate EV, devig, and Kelly given Pinnacle + retail odds | Evaluating any specific bet |
+| `/add-game` | Add a new game to the NCAAB slate interactively | Updating tonight's game list |
+| `/new-slate` | Clear TONIGHT_GAMES and start fresh for a new date | Each new betting day |
+| `/send-report` | Send the betting report to Telegram on-demand | Ad-hoc report delivery |
+| `/setup-telegram` | Scaffold the full Telegram service, formatter, and cron runner | Initial Telegram setup |
+
+### Usage Examples
+
+```
+/run-analysis
+→ Runs python backend/run_ncaab_analysis.py and summarizes top plays
+
+/check-ev
+→ Prompts for Pinnacle odds, retail odds, model prob → returns edge table
+
+/add-game
+→ Walks through all required fields and appends to TONIGHT_GAMES
+
+/new-slate
+→ Clears TONIGHT_GAMES, updates date in docstring, ready for /add-game
+
+/send-report
+→ Runs analysis, formats it, sends to TELEGRAM_CHAT_ID immediately
+
+/setup-telegram
+→ Creates telegram_service.py, report_formatter.py, telegram_cron.py
+```
+
+---
+
+## References
 
 1. Pinnacle / Circa / BetCRIS — market maker ground truth for devigging
 2. KenPom Adjusted Efficiency — primary NCAAB predictive metric
@@ -579,3 +683,6 @@ POST /api/v1/props/analyze
 5. Action Network / Pregame — public ticket and money percentage data
 6. OddsJam / Unabated / Outlier — +EV opportunity scanning
 7. Sporttrade / Prophet Exchange — exchange routing for institutional capital
+8. Telegram Bot API — `https://core.telegram.org/bots/api`
+9. @BotFather — create and manage Telegram bots
+10. @userinfobot — get your Telegram Chat ID
