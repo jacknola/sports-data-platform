@@ -321,7 +321,8 @@ class MultivariateKellyOptimizer:
         raw_fractions = result.x.clip(0, upper_bound)
 
         # Apply kelly_scale (fractional Kelly)
-        optimal_fractions = raw_fractions * self.kelly_scale
+        # Note: bounds already include kelly_scale, so we don't multiply again
+        optimal_fractions = raw_fractions
 
         # Round to human-like denominations (avoid algorithmic fingerprint)
         rounded_fractions = self._round_fractions(optimal_fractions)

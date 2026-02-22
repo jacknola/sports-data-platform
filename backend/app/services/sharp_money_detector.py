@@ -386,7 +386,7 @@ class SharpMoneyDetector:
                     sharp_side = away_team
                     confidence_scores.append(conf)
 
-        elif away_is_public_fave:
+        if away_is_public_fave:
             away_ticket_pct = 1 - home_ticket_pct
             away_money_pct = 1 - home_money_pct
             line_moved_against_away = current_line > open_line
@@ -407,13 +407,16 @@ class SharpMoneyDetector:
             confidence_scores.append(0.70)
 
         # --- +EV Calculation ---
+        # Need both sides of Pinnacle to properly devig - use symmetric assumption
+        # For spread markets, assume pinnacle_away_odds is symmetric (-108/-108 typical)
+        pinnacle_away_symmetric = pinnacle_home_odds if pinnacle_home_odds == -108 else -108
+        devigged_home, _ = SharpMoneyDetector.devig_odds(pinnacle_home_odds, pinnacle_away_symmetric)
+
         pinnacle_implied = SharpMoneyDetector._american_to_implied_static(pinnacle_home_odds)
         retail_implied = SharpMoneyDetector._american_to_implied_static(retail_home_odds)
 
-        # Devig Pinnacle (assume symmetric market for quick calc)
         # True edge = Pinnacle devigged prob vs retail implied
-        devigged_prob = pinnacle_implied  # simplified; full devig requires both sides
-        edge = devigged_prob - retail_implied
+        edge = devigged_home - retail_implied
 
         avg_confidence = float(np.mean(confidence_scores)) if confidence_scores else 0.0
 

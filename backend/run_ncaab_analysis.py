@@ -240,7 +240,7 @@ TONIGHT_GAMES = [
     },
 ]
 
-BANKROLL = 10000.0
+BANKROLL = 25.0
 
 
 # ============================================================================
@@ -323,7 +323,7 @@ def run_analysis():
             conference=game['conference'],
             home_team=game['home'],
             away_team=game['away'],
-            sharp_signal_boost=sharp_boost if (sharp_side == game['home'] or sharp_side is None) else 0.0
+            sharp_signal_boost=sharp_boost if sharp_side == game['home'] else 0.0
         )
 
         away_opp = BettingOpportunity(
