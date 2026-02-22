@@ -72,18 +72,21 @@ def _label_for_hour(hour: int) -> str:
 
 def capture_analysis() -> str:
     """
-    Run the NCAAB analysis and capture stdout.
+    Run both NCAAB and NBA analysis and capture stdout.
 
     Returns:
-        Raw text output from run_analysis()
+        Raw text output from run_ncaab_analysis and run_nba_analysis
     """
     # Import here to avoid circular issues and allow dynamic slate changes
-    from run_ncaab_analysis import run_analysis
+    from run_ncaab_analysis import run_analysis as run_ncaab
+    from run_nba_analysis import main as run_nba
 
     buf = io.StringIO()
     try:
         with redirect_stdout(buf):
-            run_analysis()
+            run_ncaab()
+            print("\n\n" + "X" * 76 + "\n\n")
+            run_nba()
         output = buf.getvalue()
         logger.info(f"Analysis captured: {len(output)} chars")
         return output
@@ -113,6 +116,7 @@ def send_report(picks_only: bool = False) -> bool:
     try:
         # We use asyncio.run because settle_pending_bets is async
         asyncio.run(settler.settle_pending_bets("ncaab"))
+        asyncio.run(settler.settle_pending_bets("nba"))
     except Exception as e:
         logger.error(f"Error during bet settlement: {e}")
 

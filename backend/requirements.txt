@@ -32,6 +32,7 @@ scipy==1.11.4
 # NBA ML Predictions
 xgboost==2.0.3
 tensorflow==2.15.0
+nba_api==1.11.4
 
 # NBA Data API (DvP Analyzer)
 nba_api==1.5.2
@@ -91,3 +92,5 @@ supabase==2.4.0
 # Security
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
+telebot==0.0.5
+pyTelegramBotAPI==4.31.0
