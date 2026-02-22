@@ -9,6 +9,7 @@ from app.agents.analysis_agent import AnalysisAgent
 from app.agents.twitter_agent import TwitterAgent
 from app.agents.expert_agent import ExpertAgent
 from app.agents.scraping_agent import ScrapingAgent
+from app.agents.dvp_agent import DvPAgent
 from app.memory.agent_memory import AgentMemory
 
 
@@ -21,6 +22,7 @@ class OrchestratorAgent:
         self.twitter_agent = TwitterAgent()
         self.expert_agent = ExpertAgent()
         self.scraping_agent = ScrapingAgent()
+        self.dvp_agent = DvPAgent()
         self.memory = AgentMemory()
     
     async def execute_full_analysis(self, task: Dict[str, Any]) -> Dict[str, Any]:
@@ -187,7 +189,8 @@ class OrchestratorAgent:
                 'scraping': self.scraping_agent.get_agent_status(),
                 'analysis': self.analysis_agent.get_agent_status(),
                 'twitter': self.twitter_agent.get_agent_status(),
-                'expert': self.expert_agent.get_agent_status()
+                'expert': self.expert_agent.get_agent_status(),
+                'dvp': self.dvp_agent.get_agent_status()
             }
         }
 

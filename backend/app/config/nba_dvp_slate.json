@@ -1,0 +1,83 @@
+{
+  "date": "2026-02-22",
+  "season": "2025-26",
+  "games": [
+    {
+      "home": "OKC",
+      "away": "CLE",
+      "spread": -5.5,
+      "over_under": 222.5,
+      "tip_off": "19:00 ET"
+    },
+    {
+      "home": "ATL",
+      "away": "BKN",
+      "spread": -7.0,
+      "over_under": 225.0,
+      "tip_off": "19:30 ET"
+    },
+    {
+      "home": "MIL",
+      "away": "TOR",
+      "spread": -9.5,
+      "over_under": 228.0,
+      "tip_off": "20:00 ET"
+    },
+    {
+      "home": "GS",
+      "away": "DEN",
+      "spread": 2.0,
+      "over_under": 226.0,
+      "tip_off": "22:00 ET"
+    },
+    {
+      "home": "IND",
+      "away": "DAL",
+      "spread": 3.5,
+      "over_under": 230.5,
+      "tip_off": "19:00 ET"
+    },
+    {
+      "home": "WAS",
+      "away": "CHA",
+      "spread": 2.5,
+      "over_under": 224.0,
+      "tip_off": "19:00 ET"
+    },
+    {
+      "home": "LAL",
+      "away": "BOS",
+      "spread": 3.0,
+      "over_under": 221.0,
+      "tip_off": "22:00 ET"
+    },
+    {
+      "home": "MIN",
+      "away": "PHI",
+      "spread": -4.0,
+      "over_under": 218.5,
+      "tip_off": "20:00 ET"
+    },
+    {
+      "home": "PHX",
+      "away": "POR",
+      "spread": -8.5,
+      "over_under": 223.0,
+      "tip_off": "21:00 ET"
+    },
+    {
+      "home": "CHI",
+      "away": "NYK",
+      "spread": 6.5,
+      "over_under": 220.0,
+      "tip_off": "20:00 ET"
+    },
+    {
+      "home": "LAC",
+      "away": "ORL",
+      "spread": 1.0,
+      "over_under": 211.5,
+      "tip_off": "22:30 ET"
+    }
+  ]
+}

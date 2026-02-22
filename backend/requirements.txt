@@ -33,6 +33,9 @@ scipy==1.11.4
 xgboost==2.0.3
 tensorflow==2.15.0
 
+# NBA Data API (DvP Analyzer)
+nba_api==1.5.2
+
 # Bayesian Analysis
 pymc==5.9.0
 arviz==0.16.1
