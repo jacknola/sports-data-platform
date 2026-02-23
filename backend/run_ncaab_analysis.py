@@ -555,7 +555,7 @@ def run_analysis() -> Dict[str, Any]:
         dog = a if spread < 0 else h
         spread_str = f"{fav} {spread:+.1f}" if spread < 0 else f"{fav} +{spread:.1f}"
 
-        print(f"\n  {a} @ {h}")
+        print(f"\n  {a} @ {h} [SPREAD]")
         print(f"  [{game['conference']}] Spread: {spread_str} | O/U: TBD")
         print(
             f"  Open: {game['open_spread']:+.1f} → Current: {game['spread']:+.1f} "
