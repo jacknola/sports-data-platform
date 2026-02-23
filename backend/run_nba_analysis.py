@@ -68,7 +68,7 @@ async def run_nba_analysis() -> Dict[str, Any]:
         home_edge = ev.get("home_ev", 0)
         away_edge = ev.get("away_ev", 0)
 
-        print(f"\n  {a} @ {h}")
+        print(f"\n  {a} @ {h} [ML]")
         print(f"  ML Probabilities: {h} {home_prob:.1%} / {a} {away_prob:.1%}")
         print(
             f"  Odds (Retail):    {h} {ev['home_odds']:+d} / {a} {ev['away_odds']:+d}"
