@@ -31,6 +31,9 @@ except ImportError:
     NBA_API_AVAILABLE = False
     logger.warning("nba_api not installed — DvP analyzer will use fallback data")
 
+# League-average defensive rating (2024-25 baseline, updated at runtime)
+LEAGUE_AVG_DRTG = 113.5
+
 
 # ---------------------------------------------------------------------------
 # NBA team abbreviation mapping
@@ -85,6 +88,9 @@ class NBADvPAnalyzer:
         self.team_dvp: Dict[str, Dict[str, Dict[str, float]]] = {}
         self.player_baselines: List[Dict[str, Any]] = []
         self.team_season_avg_totals: Dict[str, float] = {}
+        # Advanced team stats: { abbrev: { "OFF_RATING": x, "DEF_RATING": y, "NET_RATING": z } }
+        self.team_advanced: Dict[str, Dict[str, float]] = {}
+        self.league_avg_drtg: float = LEAGUE_AVG_DRTG
         self._initialized = False
         logger.info("NBADvPAnalyzer created (season={})", self.season)
 
@@ -110,6 +116,96 @@ class NBADvPAnalyzer:
         except FileNotFoundError:
             logger.warning("Slate file not found at {}. Using empty slate.", self.slate_path)
             self.slate = {"date": datetime.now().strftime("%Y-%m-%d"), "games": []}
+
+    async def load_slate_from_odds_api(self) -> None:
+        """Auto-populate slate from live Odds API data.
+
+        Calls SportsAPIService.get_odds('basketball_nba') and builds the
+        slate dict dynamically from current spreads and totals.
+        Eliminates dependency on static nba_dvp_slate.json.
+        """
+        try:
+            from app.services.sports_api import SportsAPIService
+
+            api = SportsAPIService()
+            odds_data = await api.get_odds("basketball_nba", markets="spreads,totals")
+
+            if not odds_data:
+                logger.warning("No Odds API data for NBA — falling back to file slate")
+                self.load_slate()
+                return
+
+            games = []
+            for game in odds_data:
+                home = game.get("home_team", "")
+                away = game.get("away_team", "")
+                if not home or not away:
+                    continue
+
+                # Extract spread and total from best available bookmaker
+                spread = 0.0
+                total = 0.0
+                for book in game.get("bookmakers", []):
+                    book_key = book.get("key", "")
+                    for market in book.get("markets", []):
+                        if market.get("key") == "spreads":
+                            for out in market.get("outcomes", []):
+                                if out.get("name", "") == home:
+                                    candidate = float(out.get("point", 0))
+                                    # Prefer pinnacle/fanduel
+                                    if spread == 0.0 or book_key in ("pinnacle", "fanduel"):
+                                        spread = candidate
+                        elif market.get("key") == "totals":
+                            for out in market.get("outcomes", []):
+                                if out.get("name") == "Over":
+                                    candidate = float(out.get("point", 0))
+                                    if total == 0.0 or book_key in ("pinnacle", "fanduel"):
+                                        total = candidate
+
+                if total == 0.0:
+                    continue  # no total = can't compute implied team totals
+
+                # Map full team names to abbreviations
+                home_abbrev = self._full_name_to_abbrev(home)
+                away_abbrev = self._full_name_to_abbrev(away)
+
+                if not home_abbrev or not away_abbrev:
+                    logger.debug("Skipping unmapped teams: {} vs {}", home, away)
+                    continue
+
+                games.append({
+                    "home": home_abbrev,
+                    "away": away_abbrev,
+                    "spread": spread,
+                    "over_under": total,
+                })
+
+            self.slate = {
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "season": self.season,
+                "games": games,
+            }
+            logger.info(
+                "Slate auto-populated from Odds API: {} games", len(games)
+            )
+
+        except Exception as e:
+            logger.error("Failed to load slate from Odds API: {}. Falling back to file.", e)
+            self.load_slate()
+
+    @staticmethod
+    def _full_name_to_abbrev(full_name: str) -> Optional[str]:
+        """Map Odds API full team name to internal abbreviation."""
+        # Direct lookup
+        abbrev = TEAM_NAME_TO_ABBREV.get(full_name)
+        if abbrev:
+            return abbrev
+        # Partial match: check if full_name contains a known team name
+        fn_lower = full_name.lower()
+        for name, ab in TEAM_NAME_TO_ABBREV.items():
+            if name.lower() in fn_lower or fn_lower in name.lower():
+                return ab
+        return None
 
     # ------------------------------------------------------------------
     # 2. IMPLIED TEAM TOTALS
@@ -216,15 +312,22 @@ class NBADvPAnalyzer:
         implied_team_total: float,
         team_season_avg_total: float,
         pace_multiplier: float,
+        opponent: str = "",
     ) -> Dict[str, float]:
         """
         Matchup Modifier per stat category.
 
-        modifier = dvp_factor * environment_factor * pace_multiplier
+        modifier = dvp_factor * environment_factor * pace_multiplier * drtg_factor
 
         dvp_factor        = opp_dvp_allowed / league_avg_dvp  (>1 means soft matchup)
         environment_factor = implied_total / season_avg_total  (>1 means game-script boost)
+        drtg_factor        = opp_drtg / league_avg_drtg        (>1 means bad defense → boost)
         """
+        # Defensive rating factor: higher DRtg = worse defense = higher stat output
+        opp_adv = self.team_advanced.get(opponent, {})
+        opp_drtg = opp_adv.get("DEF_RATING", self.league_avg_drtg)
+        drtg_factor = opp_drtg / self.league_avg_drtg if self.league_avg_drtg > 0 else 1.0
+
         modifiers = {}
         for stat in ["PTS", "REB", "AST"]:
             opp_allowed = opponent_dvp_for_position.get(stat, 0)
@@ -238,7 +341,11 @@ class NBADvPAnalyzer:
             if team_season_avg_total > 0:
                 env_factor = implied_team_total / team_season_avg_total
 
-            modifiers[stat] = dvp_factor * env_factor * pace_multiplier
+            # For PTS, DRtg is most relevant; for REB/AST weight it less
+            stat_drtg_weight = 1.0 if stat == "PTS" else 0.5
+            blended_drtg = 1.0 + (drtg_factor - 1.0) * stat_drtg_weight
+
+            modifiers[stat] = dvp_factor * env_factor * pace_multiplier * blended_drtg
 
         # Combo stat modifier is the average of component modifiers
         modifiers["PTS+REB+AST"] = np.mean(
@@ -319,11 +426,13 @@ class NBADvPAnalyzer:
         """
         logger.info("=== Starting DvP +EV Analysis ===")
 
-        # Step 1: Load slate
-        self.load_slate(slate_data)
+        # Step 1: Load slate (skip if already populated via load_slate_from_odds_api)
+        if slate_data or not self.slate.get("games"):
+            self.load_slate(slate_data)
 
         # Step 2: Fetch data
         self.team_pace = self.fetch_team_pace()
+        self.team_advanced = self.fetch_team_advanced_stats()
         self.team_dvp = self.fetch_team_dvp()
         self.player_baselines = self.fetch_player_baselines(num_recent_games)
 
@@ -358,7 +467,8 @@ class NBADvPAnalyzer:
             season_total = self.team_season_avg_totals.get(team, 110.0)
 
             modifiers = self.compute_matchup_modifier(
-                opp_dvp, league_avg_dvp, imp_total, season_total, pace_mult
+                opp_dvp, league_avg_dvp, imp_total, season_total, pace_mult,
+                opponent=opponent,
             )
 
             for stat in STAT_CATEGORIES:
@@ -429,11 +539,16 @@ class NBADvPAnalyzer:
         return m
 
     def _estimate_team_season_totals(self) -> None:
-        """Rough estimate of a team's season average total from pace."""
-        # league-average points per possession ≈ 1.12
-        pts_per_poss = 1.12
+        """Estimate a team's season average total from ORtg + pace when available."""
+        # If we have advanced stats, use ORtg directly: total ≈ ORtg * pace / 100
+        # Otherwise fall back to pace * league-avg efficiency (1.12)
         for abbrev, pace in self.team_pace.items():
-            self.team_season_avg_totals[abbrev] = round(pace * pts_per_poss, 1)
+            adv = self.team_advanced.get(abbrev, {})
+            ortg = adv.get("OFF_RATING", 0)
+            if ortg > 0:
+                self.team_season_avg_totals[abbrev] = round(ortg * pace / 100.0, 1)
+            else:
+                self.team_season_avg_totals[abbrev] = round(pace * 1.12, 1)
 
     def _compute_league_avg_dvp(self) -> Dict[str, float]:
         """Average DvP across all teams for normalization."""
@@ -462,20 +577,112 @@ class NBADvPAnalyzer:
     # nba_api FETCH IMPLEMENTATIONS
     # ------------------------------------------------------------------
 
+    def fetch_team_advanced_stats(self) -> Dict[str, Dict[str, float]]:
+        """
+        Fetch team-level ORtg, DRtg, NET_RATING, PACE via LeagueDashTeamStats
+        with MeasureType='Advanced'.
+
+        Returns:
+            { team_abbrev: { "OFF_RATING": x, "DEF_RATING": y, "NET_RATING": z, "PACE": w } }
+        """
+        if NBA_API_AVAILABLE:
+            try:
+                stats = leaguedashteamstats.LeagueDashTeamStats(
+                    season=self.season,
+                    per_mode_detailed="PerGame",
+                    measure_type_detailed_defense="Advanced",
+                )
+                df = stats.get_data_frames()[0]
+                advanced: Dict[str, Dict[str, float]] = {}
+
+                for _, row in df.iterrows():
+                    abbrev = self._team_name_to_abbrev(row.get("TEAM_NAME", ""))
+                    if not abbrev:
+                        continue
+                    advanced[abbrev] = {
+                        "OFF_RATING": float(row.get("OFF_RATING", 0)),
+                        "DEF_RATING": float(row.get("DEF_RATING", 0)),
+                        "NET_RATING": float(row.get("NET_RATING", 0)),
+                        "PACE": float(row.get("PACE", 100.0)),
+                    }
+
+                # Update league-average DRtg from real data
+                drtg_vals = [v["DEF_RATING"] for v in advanced.values() if v["DEF_RATING"] > 0]
+                if drtg_vals:
+                    self.league_avg_drtg = float(np.mean(drtg_vals))
+
+                logger.info(
+                    "Fetched advanced stats for {} teams (avg DRtg={:.1f})",
+                    len(advanced), self.league_avg_drtg,
+                )
+                return advanced
+            except Exception as e:
+                logger.warning("nba_api advanced stats fetch failed ({}), using fallback", e)
+
+        return self._fallback_advanced_stats()
+
+    def _fallback_advanced_stats(self) -> Dict[str, Dict[str, float]]:
+        """Estimated 2025-26 team advanced stats when nba_api is unavailable."""
+        logger.info("Using fallback advanced stats")
+        # ORtg/DRtg approximations based on team strength tiers
+        data = {
+            "ATL": {"OFF_RATING": 114.0, "DEF_RATING": 117.0, "NET_RATING": -3.0},
+            "BOS": {"OFF_RATING": 120.5, "DEF_RATING": 109.0, "NET_RATING": 11.5},
+            "BKN": {"OFF_RATING": 110.0, "DEF_RATING": 118.5, "NET_RATING": -8.5},
+            "CHA": {"OFF_RATING": 109.0, "DEF_RATING": 117.5, "NET_RATING": -8.5},
+            "CHI": {"OFF_RATING": 111.5, "DEF_RATING": 114.5, "NET_RATING": -3.0},
+            "CLE": {"OFF_RATING": 118.0, "DEF_RATING": 107.5, "NET_RATING": 10.5},
+            "DAL": {"OFF_RATING": 117.0, "DEF_RATING": 113.0, "NET_RATING": 4.0},
+            "DEN": {"OFF_RATING": 117.5, "DEF_RATING": 112.0, "NET_RATING": 5.5},
+            "DET": {"OFF_RATING": 110.5, "DEF_RATING": 115.5, "NET_RATING": -5.0},
+            "GS":  {"OFF_RATING": 116.0, "DEF_RATING": 112.5, "NET_RATING": 3.5},
+            "HOU": {"OFF_RATING": 113.0, "DEF_RATING": 110.5, "NET_RATING": 2.5},
+            "IND": {"OFF_RATING": 118.5, "DEF_RATING": 116.0, "NET_RATING": 2.5},
+            "LAC": {"OFF_RATING": 112.0, "DEF_RATING": 111.5, "NET_RATING": 0.5},
+            "LAL": {"OFF_RATING": 114.5, "DEF_RATING": 112.0, "NET_RATING": 2.5},
+            "MEM": {"OFF_RATING": 115.0, "DEF_RATING": 112.5, "NET_RATING": 2.5},
+            "MIA": {"OFF_RATING": 112.5, "DEF_RATING": 111.0, "NET_RATING": 1.5},
+            "MIL": {"OFF_RATING": 117.0, "DEF_RATING": 113.0, "NET_RATING": 4.0},
+            "MIN": {"OFF_RATING": 114.0, "DEF_RATING": 108.5, "NET_RATING": 5.5},
+            "NO":  {"OFF_RATING": 112.0, "DEF_RATING": 115.0, "NET_RATING": -3.0},
+            "NYK": {"OFF_RATING": 118.0, "DEF_RATING": 110.5, "NET_RATING": 7.5},
+            "OKC": {"OFF_RATING": 119.5, "DEF_RATING": 107.0, "NET_RATING": 12.5},
+            "ORL": {"OFF_RATING": 109.5, "DEF_RATING": 106.5, "NET_RATING": 3.0},
+            "PHI": {"OFF_RATING": 113.0, "DEF_RATING": 112.5, "NET_RATING": 0.5},
+            "PHX": {"OFF_RATING": 116.0, "DEF_RATING": 115.0, "NET_RATING": 1.0},
+            "POR": {"OFF_RATING": 110.0, "DEF_RATING": 117.0, "NET_RATING": -7.0},
+            "SAC": {"OFF_RATING": 115.5, "DEF_RATING": 114.5, "NET_RATING": 1.0},
+            "SA":  {"OFF_RATING": 111.0, "DEF_RATING": 116.0, "NET_RATING": -5.0},
+            "TOR": {"OFF_RATING": 110.5, "DEF_RATING": 116.5, "NET_RATING": -6.0},
+            "UTA": {"OFF_RATING": 111.0, "DEF_RATING": 117.0, "NET_RATING": -6.0},
+            "WAS": {"OFF_RATING": 108.0, "DEF_RATING": 119.5, "NET_RATING": -11.5},
+        }
+        for v in data.values():
+            v["PACE"] = 100.0  # pace comes from fetch_team_pace
+        # Update league average from fallback
+        drtg_vals = [v["DEF_RATING"] for v in data.values()]
+        self.league_avg_drtg = float(np.mean(drtg_vals))
+        return data
+
     def _fetch_dvp_from_api(self) -> Dict[str, Dict[str, Dict[str, float]]]:
         """
-        Fetch DvP by aggregating opponent player stats grouped by position.
+        Fetch DvP using opponent player stats grouped by position.
 
-        Uses LeagueDashPlayerStats with OpponentTeamID filtering
-        to approximate points/rebounds/assists allowed per position.
+        Strategy: fetch LeagueDashPlayerStats per position, then scale the
+        league-average positional stats by each team's DRtg to approximate
+        what opponents at that position score against them.
+
+        If team advanced stats are available, DvP = league_pos_avg × (opp_drtg / league_drtg).
+        This is far more accurate than the previous approach of returning
+        identical league averages for every team.
         """
         dvp: Dict[str, Dict[str, Dict[str, float]]] = {}
 
         # Get all team IDs
         all_teams = nba_teams.get_teams()
-        team_id_map = {t["abbreviation"]: t["id"] for t in all_teams}
 
-        # Fetch league-wide player stats split by position
+        # First, compute league-average stats per position
+        pos_league_avg: Dict[str, Dict[str, float]] = {}
         for pos in POSITIONS:
             try:
                 stats = leaguedashplayerstats.LeagueDashPlayerStats(
@@ -484,29 +691,37 @@ class NBADvPAnalyzer:
                     player_position_abbreviation_nullable=pos,
                 )
                 df = stats.get_data_frames()[0]
-
-                # Group by team and average — this gives what each team's
-                # positional players score, not what opponents allow.
-                # We invert: for each team T, the DvP for position P is
-                # the average stats of position P players AGAINST T.
-                # Approximation: use league average per position as base.
-                for abbrev, tid in team_id_map.items():
-                    mapped = self._nba_abbrev_to_ours(abbrev)
-                    if not mapped:
-                        continue
-                    if mapped not in dvp:
-                        dvp[mapped] = {}
-
-                    # Approximate DvP: league positional avg (we refine later)
-                    dvp[mapped][pos] = {
-                        "PTS": float(df["PTS"].mean()),
-                        "REB": float(df["REB"].mean()),
-                        "AST": float(df["AST"].mean()),
-                    }
+                pos_league_avg[pos] = {
+                    "PTS": float(df["PTS"].mean()),
+                    "REB": float(df["REB"].mean()),
+                    "AST": float(df["AST"].mean()),
+                }
             except Exception as e:
                 logger.warning("DvP fetch for position {} failed: {}", pos, e)
+                pos_league_avg[pos] = {"PTS": 15.0, "REB": 5.0, "AST": 3.0}
 
-        logger.info("Fetched DvP data for {} teams", len(dvp))
+        # Scale by team DRtg: worse defense → opponents score more
+        for team in all_teams:
+            nba_abbrev = team["abbreviation"]
+            mapped = self._nba_abbrev_to_ours(nba_abbrev)
+            if not mapped:
+                continue
+
+            adv = self.team_advanced.get(mapped, {})
+            team_drtg = adv.get("DEF_RATING", self.league_avg_drtg)
+            # DRtg ratio: >1 means bad defense (opponents produce more)
+            drtg_ratio = team_drtg / self.league_avg_drtg if self.league_avg_drtg > 0 else 1.0
+
+            dvp[mapped] = {}
+            for pos in POSITIONS:
+                lg = pos_league_avg.get(pos, {"PTS": 15.0, "REB": 5.0, "AST": 3.0})
+                dvp[mapped][pos] = {
+                    "PTS": round(lg["PTS"] * drtg_ratio, 1),
+                    "REB": round(lg["REB"] * (1.0 + (drtg_ratio - 1.0) * 0.5), 1),  # REB less DRtg-sensitive
+                    "AST": round(lg["AST"] * (1.0 + (drtg_ratio - 1.0) * 0.5), 1),  # AST less DRtg-sensitive
+                }
+
+        logger.info("Fetched DvP data for {} teams (DRtg-weighted)", len(dvp))
         return dvp
 
     def _fetch_players_from_api(

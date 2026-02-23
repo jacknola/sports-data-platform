@@ -302,6 +302,48 @@ def _enrich_pick_with_orchestrator(
 
 
 # ---------------------------------------------------------------------------
+# DvP analysis pipeline (separate Telegram message)
+# ---------------------------------------------------------------------------
+
+
+def run_dvp_analysis_pipeline() -> Optional[Dict[str, Any]]:
+    """Run the DvP +EV analysis pipeline for NBA.
+
+    Called AFTER run_prop_analysis_pipeline() and produces a SEPARATE
+    Telegram message for DvP-based prop targets.
+
+    Returns:
+        Dict from DvPAgent.execute() or None on failure.
+    """
+    try:
+        from app.agents.dvp_agent import DvPAgent
+
+        agent = DvPAgent()
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(
+                agent.execute({"type": "full_analysis"})
+            )
+        finally:
+            loop.close()
+
+        if "error" in result:
+            logger.warning(f"DvP pipeline returned error: {result['error']}")
+            return None
+
+        count = result.get("count", 0)
+        hv = result.get("high_value_count", 0)
+        logger.info(f"DvP pipeline complete: {count} projections, {hv} HIGH VALUE")
+        return result
+
+    except Exception as e:
+        logger.error(f"DvP analysis pipeline failed: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Player prop analysis pipeline (separate Telegram message)
 # ---------------------------------------------------------------------------
 

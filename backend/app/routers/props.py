@@ -24,6 +24,7 @@ from app.services.multivariate_kelly import (
 from app.services.sports_api import SportsAPIService
 from app.services.nba_stats_service import NBAStatsService
 from app.services.ev_calculator import EVCalculator
+from app.services.open_line_cache import get_or_set_open_line
 from app.core.betting import american_to_decimal
 
 router = APIRouter()
@@ -151,6 +152,13 @@ async def _get_live_props(sport: str) -> List[Dict]:
         f"across {len(stat_buckets)} stat types (cap={MAX_ENRICHED}, >=2 books)"
     )
 
+    # ── Pre-fetch all-team advanced stats (pace, ratings) — single cached call ──
+    all_team_stats: Dict[str, Dict[str, Any]] = {}
+    try:
+        all_team_stats = await _nba_stats._nba_api_all_team_stats()
+    except Exception as e:
+        logger.debug(f"All-team stats pre-fetch failed (non-fatal): {e}")
+
     # ── Step 3: Enrich with player stats (concurrent with semaphore) ──
     enriched: List[Dict] = []
     research_cache: Dict[str, Dict[str, Any]] = {}  # player:stat → research
@@ -213,6 +221,7 @@ async def _get_live_props(sport: str) -> List[Dict]:
         team_pace = 100.0
         opp_pace = 100.0
         opp_def_rating = 113.5
+        dvp_modifier = None
 
         if research and not research.get("error"):
             rolling = research.get("rolling_averages", {})
@@ -256,6 +265,14 @@ async def _get_live_props(sport: str) -> List[Dict]:
                 opp_def_rating = float(matchup.get("def_rating", 113.5))
                 opp_pace = float(matchup.get("pace", 100.0))
 
+            # Fix: resolve player's own team pace from pre-fetched all-team stats
+            player_info = research.get("player", {})
+            player_team_abbrev = player_info.get("team_abbreviation")
+            if player_team_abbrev and all_team_stats:
+                own_stats = all_team_stats.get(player_team_abbrev.upper(), {})
+                if own_stats:
+                    team_pace = float(own_stats.get("pace", 100.0))
+
         # ── Determine team / opponent / is_home from research + event data ──
         home_team = raw.get("home_team", "")
         away_team = raw.get("away_team", "")
@@ -290,6 +307,20 @@ async def _get_live_props(sport: str) -> List[Dict]:
                     is_home = False
                     opponent = home_team
 
+        # ── Open-line cache: store first-seen line/odds for sharp detection ──
+        prop_market_key = f"prop:{player_id}:{stat_type}"
+        _cached_open = None
+        try:
+            _cached_open = get_or_set_open_line(
+                game_id=raw.get("event_id", ""),
+                market=prop_market_key,
+                current_line=line,
+                current_odds=over_odds,
+                current_odds_away=under_odds,
+            )
+        except Exception as e:
+            logger.debug(f"Open-line cache failed for {player_name}: {e}")
+
         # ── Build the prop dict ──
         enriched.append(
             {
@@ -302,9 +333,9 @@ async def _get_live_props(sport: str) -> List[Dict]:
                 "line": line,
                 "over_odds": over_odds,
                 "under_odds": under_odds,
-                "open_over_odds": over_odds,
-                "open_under_odds": under_odds,
-                "open_line": line,
+                "open_over_odds": _cached_open.get("open_odds", over_odds) if _cached_open else over_odds,
+                "open_under_odds": _cached_open.get("open_odds_away", under_odds) if _cached_open else under_odds,
+                "open_line": _cached_open.get("open_line", line) if _cached_open else line,
                 "over_ticket_pct": 0.50,
                 "over_money_pct": 0.50,
                 "season_avg": season_avg,
@@ -317,6 +348,7 @@ async def _get_live_props(sport: str) -> List[Dict]:
                 "team_pace": team_pace,
                 "opponent_pace": opp_pace,
                 "opponent_def_rating": opp_def_rating,
+                "dvp_modifier": dvp_modifier,
                 "home_team": home_team,
                 "away_team": away_team,
                 "books_offering": raw.get("books_offering", 1),
@@ -362,6 +394,7 @@ def _build_prop_analysis(prop: Dict) -> Dict:
         "opponent_pace": prop["opponent_pace"],
         "opponent_def_rating": prop["opponent_def_rating"],
         "is_home": prop["is_home"],
+        "dvp_modifier": prop.get("dvp_modifier"),
     }
 
     # 1. Projection (Normal CDF model)

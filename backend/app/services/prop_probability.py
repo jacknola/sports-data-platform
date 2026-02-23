@@ -324,6 +324,17 @@ class PropProbabilityModel:
         is_home = game_context.get('is_home', False)
         adjustments['home_advantage'] = round(base_mean * 0.02, 3) if is_home else round(-base_mean * 0.01, 3)
 
+        # --- DvP positional modifier ---
+        # When available (from NBADvPAnalyzer or NCAABDvPAnalyzer), dvp_modifier
+        # is the % delta vs league average for the opposing defense at the
+        # player's position and stat type.  E.g. +0.06 → opponent allows 6%
+        # more than average.
+        dvp_modifier = game_context.get('dvp_modifier')
+        if dvp_modifier is not None and dvp_modifier != 0.0:
+            adjustments['dvp_positional'] = round(base_mean * dvp_modifier * 0.60, 3)
+        else:
+            adjustments['dvp_positional'] = 0.0
+
         return adjustments
 
     def _compute_std(

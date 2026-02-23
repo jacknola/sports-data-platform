@@ -10,6 +10,7 @@ from app.agents.twitter_agent import TwitterAgent
 from app.agents.expert_agent import ExpertAgent
 from app.agents.scraping_agent import ScrapingAgent
 from app.agents.dvp_agent import DvPAgent
+from app.agents.ncaab_dvp_agent import NCAABDvPAgent
 from app.memory.agent_memory import AgentMemory
 
 
@@ -23,6 +24,7 @@ class OrchestratorAgent:
         self.expert_agent = ExpertAgent()
         self.scraping_agent = ScrapingAgent()
         self.dvp_agent = DvPAgent()
+        self.ncaab_dvp_agent = NCAABDvPAgent()
         self.memory = AgentMemory()
     
     async def execute_full_analysis(self, task: Dict[str, Any]) -> Dict[str, Any]:
@@ -122,6 +124,40 @@ class OrchestratorAgent:
                 expert_result = await self.expert_agent.execute(expert_task)
                 results['expert_recommendation'] = expert_result
                 results['agents_used'].append('ExpertAgent')
+
+            # Step 6: Run DvP analysis for NBA slates
+            if sport in ('basketball_nba', 'nba'):
+                logger.info("Step 6: Running DvP analysis...")
+                try:
+                    dvp_result = await self.dvp_agent.execute({
+                        'type': 'full_analysis',
+                    })
+                    results['dvp'] = dvp_result
+                    results['agents_used'].append('DvPAgent')
+                    logger.info(
+                        f"DvP analysis complete: {dvp_result.get('count', 0)} projections, "
+                        f"{dvp_result.get('high_value_count', 0)} HIGH VALUE"
+                    )
+                except Exception as e:
+                    logger.warning(f"DvP analysis failed (non-fatal): {e}")
+                    results['dvp'] = None
+
+            # Step 7: Run NCAAB efficiency analysis
+            if sport in ('basketball_ncaab', 'ncaab'):
+                logger.info("Step 7: Running NCAAB efficiency analysis...")
+                try:
+                    ncaab_dvp_result = await self.ncaab_dvp_agent.execute({
+                        'type': 'full_analysis',
+                    })
+                    results['ncaab_dvp'] = ncaab_dvp_result
+                    results['agents_used'].append('NCAABDvPAgent')
+                    logger.info(
+                        f"NCAAB DvP analysis complete: "
+                        f"{ncaab_dvp_result.get('count', 0)} projections"
+                    )
+                except Exception as e:
+                    logger.warning(f"NCAAB DvP analysis failed (non-fatal): {e}")
+                    results['ncaab_dvp'] = None
             
             # Record execution
             logger.info("Orchestrator: Full analysis complete")
@@ -190,7 +226,8 @@ class OrchestratorAgent:
                 'analysis': self.analysis_agent.get_agent_status(),
                 'twitter': self.twitter_agent.get_agent_status(),
                 'expert': self.expert_agent.get_agent_status(),
-                'dvp': self.dvp_agent.get_agent_status()
+                'dvp': self.dvp_agent.get_agent_status(),
+                'ncaab_dvp': self.ncaab_dvp_agent.get_agent_status()
             }
         }
 

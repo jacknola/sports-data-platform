@@ -40,6 +40,7 @@ from app.services.analysis_runner import (
     capture_analysis,
     run_orchestrated_analysis,
     run_prop_analysis_pipeline,
+    run_dvp_analysis_pipeline,
 )
 
 
@@ -133,7 +134,7 @@ def send_report(picks_only: bool = False) -> bool:
     if data and data.get("picks") is not None:
         # ── Orchestrator path (primary) ──
         if picks_only:
-            formatted = ReportFormatter.format_live_report(data, metrics=metrics)
+            formatted = ReportFormatter.format_picks_only_live(data)
         else:
             formatted = ReportFormatter.format_live_report(data, metrics=metrics)
         ok = telegram.send_message(formatted)
@@ -169,6 +170,23 @@ def send_report(picks_only: bool = False) -> bool:
             logger.info("No +EV props found — skipping prop report")
     except Exception as e:
         logger.error(f"Prop analysis/send failed (non-fatal): {e}")
+
+    # 6. DvP analysis (separate Telegram message)
+    try:
+        dvp_data = run_dvp_analysis_pipeline()
+        if dvp_data and dvp_data.get("high_value_count", 0) > 0:
+            dvp_msg = ReportFormatter.format_dvp_report(dvp_data)
+            dvp_ok = telegram.send_message(dvp_msg)
+            if dvp_ok:
+                logger.info(
+                    f"DvP report sent: {dvp_data['high_value_count']} HIGH VALUE plays"
+                )
+            else:
+                logger.error("DvP report send FAILED")
+        else:
+            logger.info("No HIGH VALUE DvP plays — skipping DvP report")
+    except Exception as e:
+        logger.error(f"DvP analysis/send failed (non-fatal): {e}")
 
     return ok
 
