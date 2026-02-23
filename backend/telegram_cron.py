@@ -22,10 +22,8 @@ Schedule (set in .env):
 
 import sys
 import os
-import io
 import argparse
 import signal
-from contextlib import redirect_stdout
 from datetime import datetime
 
 # Allow imports from backend/
@@ -38,6 +36,11 @@ from app.services.telegram_service import TelegramService
 from app.services.report_formatter import ReportFormatter
 from app.services.bet_settlement import BetSettlementEngine
 from app.services.bet_tracker import BetTracker
+from app.services.analysis_runner import (
+    capture_analysis,
+    run_orchestrated_analysis,
+    run_prop_analysis_pipeline,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -70,34 +73,19 @@ def _label_for_hour(hour: int) -> str:
     return "EVENING"
 
 
-def capture_analysis() -> str:
-    """
-    Run both NCAAB and NBA analysis and capture stdout.
-
-    Returns:
-        Raw text output from run_ncaab_analysis and run_nba_analysis
-    """
-    # Import here to avoid circular issues and allow dynamic slate changes
-    from run_ncaab_analysis import run_analysis as run_ncaab
-    from run_nba_analysis import main as run_nba
-
-    buf = io.StringIO()
-    try:
-        with redirect_stdout(buf):
-            run_ncaab()
-            print("\n\n" + "X" * 76 + "\n\n")
-            run_nba()
-        output = buf.getvalue()
-        logger.info(f"Analysis captured: {len(output)} chars")
-        return output
-    except Exception as e:
-        logger.error(f"Analysis failed: {e}")
-        return f"Analysis error: {e}"
-
-
 def send_report(picks_only: bool = False) -> bool:
     """
-    Run analysis, format, and send to Telegram.
+    Run orchestrated analysis, format, and send live picks to Telegram.
+
+    The orchestrator pipeline:
+        1. Settle pending bets from prior days.
+        2. Run NCAAB + NBA core analysis (structured data).
+        3. Enrich via OrchestratorAgent (sentiment, scraping, expert).
+        4. Dynamically size the pick list to the slate.
+        5. Format and send.
+
+    Falls back to the legacy ``capture_analysis()`` path if the
+    orchestrator fails entirely.
 
     Args:
         picks_only: If True, send compact picks summary instead of full report
@@ -111,19 +99,15 @@ def send_report(picks_only: bool = False) -> bool:
 
     logger.info(f"Starting {label} report send (picks_only={picks_only})")
 
-    # 1. First, attempt to settle any pending bets from previous days
+    # 1. Settle pending bets from previous days
     settler = BetSettlementEngine()
     try:
-        # We use asyncio.run because settle_pending_bets is async
         asyncio.run(settler.settle_pending_bets("ncaab"))
         asyncio.run(settler.settle_pending_bets("nba"))
     except Exception as e:
         logger.error(f"Error during bet settlement: {e}")
 
-    # 2. Run analysis (this will also save new pending bets)
-    raw = capture_analysis()
-
-    # 3. Get updated performance metrics
+    # 2. Get performance metrics
     tracker = BetTracker()
     try:
         metrics = tracker.get_performance_metrics()
@@ -134,17 +118,57 @@ def send_report(picks_only: bool = False) -> bool:
         logger.error(f"Error getting metrics: {e}")
         metrics = {}
 
-    if picks_only:
-        formatted = ReportFormatter.format_picks_only(raw)
+    # 3. Run orchestrated analysis (structured data + agent enrichment)
+    data = None
+    try:
+        data = run_orchestrated_analysis()
+        logger.info(
+            f"Orchestrated analysis done: {data['total_game_count']} games, "
+            f"{len(data['picks'])} picks (max {data['max_picks']})"
+        )
+    except Exception as e:
+        logger.error(f"Orchestrated analysis failed, falling back to legacy: {e}")
+
+    # 4. Format and send
+    if data and data.get("picks") is not None:
+        # ── Orchestrator path (primary) ──
+        if picks_only:
+            formatted = ReportFormatter.format_live_report(data, metrics=metrics)
+        else:
+            formatted = ReportFormatter.format_live_report(data, metrics=metrics)
         ok = telegram.send_message(formatted)
     else:
-        formatted = ReportFormatter.format_full_report(raw, metrics=metrics)
-        ok = telegram.send_report(formatted, label=label)
+        # ── Legacy fallback ──
+        logger.warning("Using legacy capture_analysis() fallback")
+        raw = capture_analysis()
+        if picks_only:
+            formatted = ReportFormatter.format_picks_only(raw)
+            ok = telegram.send_message(formatted)
+        else:
+            formatted = ReportFormatter.format_full_report(raw, metrics=metrics)
+            ok = telegram.send_report(formatted, label=label)
 
     if ok:
         logger.info(f"{label} report sent successfully")
     else:
         logger.error(f"{label} report send FAILED")
+
+    # 5. Player props (separate Telegram message)
+    try:
+        prop_data = run_prop_analysis_pipeline("nba")
+        if prop_data and prop_data.get("best_props"):
+            prop_msg = ReportFormatter.format_prop_report(prop_data)
+            prop_ok = telegram.send_message(prop_msg)
+            if prop_ok:
+                logger.info(
+                    f"Props report sent: {prop_data['positive_ev_count']} +EV props"
+                )
+            else:
+                logger.error("Props report send FAILED")
+        else:
+            logger.info("No +EV props found — skipping prop report")
+    except Exception as e:
+        logger.error(f"Prop analysis/send failed (non-fatal): {e}")
 
     return ok
 

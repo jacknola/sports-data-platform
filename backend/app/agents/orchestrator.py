@@ -91,7 +91,7 @@ class OrchestratorAgent:
             logger.info("Step 4: Running Bayesian analysis...")
             value_bets = odds_result.get('value_bets', [])
             
-            for bet in value_bets[:5]:  # Analyze top 5 value bets
+            for bet in value_bets[:15]:  # Analyze top 15 value bets
                 analysis_task = {
                     'selection': bet,
                     'sport': sport

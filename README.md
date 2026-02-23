@@ -84,7 +84,7 @@ python run_server.py
 
 # Terminal 2 - Frontend
 cd frontend
-npm start
+npm run dev
 
 # Terminal 3 - Celery Worker (for async tasks)
 cd backend

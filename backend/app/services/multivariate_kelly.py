@@ -21,6 +21,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from scipy.optimize import minimize
 from loguru import logger
+from app.core.betting import american_to_decimal  # noqa: F401 — re-exported for backward compat
 
 
 # ---------------------------------------------------------------------------
@@ -386,14 +387,6 @@ class MultivariateKellyOptimizer:
 # ---------------------------------------------------------------------------
 # Utility Functions
 # ---------------------------------------------------------------------------
-
-
-def american_to_decimal(american_odds: float) -> float:
-    """Convert American odds to decimal odds"""
-    if american_odds > 0:
-        return american_odds / 100 + 1
-    else:
-        return 100 / abs(american_odds) + 1
 
 
 def decimal_to_american(decimal_odds: float) -> float:
