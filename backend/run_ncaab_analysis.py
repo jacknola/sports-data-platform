@@ -188,43 +188,60 @@ def _parse_bookmaker_spreads(
     retail_home = -110
     retail_away = -110
     spread = 0.0
+    total = 0.0
     found_pinnacle = False
+    found_fanduel = False
 
     sharp_books = {"pinnacle", "circa", "betonlineag", "lowvig"}
     retail_books = {"fanduel", "draftkings", "betmgm", "caesars", "pointsbet", "bovada"}
-    found_fanduel = False
 
     for book in odds_game.get("bookmakers", []):
         book_key = book.get("key", "")
         for market in book.get("markets", []):
-            if market.get("key") != "spreads":
-                continue
-            home_odds = -110
-            away_odds = -110
-            home_point = 0.0
-            for out in market.get("outcomes", []):
-                name = out.get("name", "")
-                if name == home_team or name.lower() in home_team.lower():
-                    home_odds = round(out.get("price", -110))
-                    home_point = float(out.get("point", 0.0))
-                else:
-                    away_odds = round(out.get("price", -110))
+            if market.get("key") == "spreads":
+                home_odds = -110
+                away_odds = -110
+                home_point = 0.0
+                for out in market.get("outcomes", []):
+                    name = out.get("name", "")
+                    if name == home_team or name.lower() in home_team.lower():
+                        home_odds = round(out.get("price", -110))
+                        home_point = float(out.get("point", 0.0))
+                    else:
+                        away_odds = round(out.get("price", -110))
 
-            if book_key in sharp_books:
-                if book_key == "pinnacle" or not found_pinnacle:
-                    pinnacle_home = home_odds
-                    pinnacle_away = away_odds
-                    if book_key == "pinnacle":
-                        found_pinnacle = True
-                    spread = home_point  # sharp book spread is canonical
-            elif book_key in retail_books:
-                if book_key == "fanduel" or not found_fanduel:
-                    retail_home = home_odds
-                    retail_away = away_odds
-                    if book_key == "fanduel":
-                        found_fanduel = True
-                    if spread == 0.0:
-                        spread = home_point
+                if book_key in sharp_books:
+                    if book_key == "pinnacle" or not found_pinnacle:
+                        pinnacle_home = home_odds
+                        pinnacle_away = away_odds
+                        if book_key == "pinnacle":
+                            found_pinnacle = True
+                        spread = home_point  # sharp book spread is canonical
+                elif book_key in retail_books:
+                    if book_key == "fanduel" or not found_fanduel:
+                        retail_home = home_odds
+                        retail_away = away_odds
+                        if book_key == "fanduel":
+                            found_fanduel = True
+                        if spread == 0.0:
+                            spread = home_point
+            elif market.get("key") == "totals":
+                # Get the over/under line
+                for out in market.get("outcomes", []):
+                    if out.get("name") == "Over":
+                        current_total = float(out.get("point", 0.0))
+                        if total == 0.0 or book_key == "pinnacle" or book_key == "fanduel":
+                            total = current_total
+
+    return {
+        "pinnacle_home_odds": pinnacle_home,
+        "pinnacle_away_odds": pinnacle_away,
+        "retail_home_odds": retail_home,
+        "retail_away_odds": retail_away,
+        "spread": spread,
+        "total": total,
+        "open_spread": spread,  # Odds API doesn't provide opening lines
+    }
 
     return {
         "pinnacle_home_odds": pinnacle_home,
@@ -311,6 +328,7 @@ async def get_live_ncaab_games() -> Tuple[List[Dict[str, Any]], str]:
                         "home_ticket_pct": round(ticket_pct, 3),
                         "home_money_pct": round(money_pct, 3),
                         "model_home_prob": round(model_prob, 3),
+                        "total": spreads.get("total", 0.0),
                         "notes": f"Live ESPN + Odds API. Spread-implied public splits. Model prob from logistic.",
                     }
                 )
@@ -345,6 +363,7 @@ async def get_live_ncaab_games() -> Tuple[List[Dict[str, Any]], str]:
                     "home_ticket_pct": round(ticket_pct, 3),
                     "home_money_pct": round(money_pct, 3),
                     "model_home_prob": round(model_prob, 3),
+                    "total": spreads.get("total", 0.0),
                     "notes": "Live Odds API only (ESPN unavailable). Spread-implied public splits.",
                 }
             )
@@ -554,9 +573,10 @@ def run_analysis() -> Dict[str, Any]:
         fav = h if spread < 0 else a
         dog = a if spread < 0 else h
         spread_str = f"{fav} {spread:+.1f}" if spread < 0 else f"{fav} +{spread:.1f}"
+        total_str = f"{game.get('total', 0.0):.1f}"
 
         print(f"\n  {a} @ {h} [SPREAD]")
-        print(f"  [{game['conference']}] Spread: {spread_str} | O/U: TBD")
+        print(f"  [{game['conference']}] Spread: {spread_str} | O/U: {total_str}")
         print(
             f"  Open: {game['open_spread']:+.1f} → Current: {game['spread']:+.1f} "
             f"(move: {game['spread'] - game['open_spread']:+.1f})"
