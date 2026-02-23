@@ -1,7 +1,5 @@
 import sys
 import os
-import asyncio
-import threading
 from loguru import logger
 import telebot
 
@@ -12,7 +10,11 @@ from app.config import settings
 from app.services.telegram_service import TelegramService
 from app.services.report_formatter import ReportFormatter
 from app.services.bet_tracker import BetTracker
-from telegram_cron import capture_analysis
+from app.services.analysis_runner import (
+    capture_analysis,
+    run_orchestrated_analysis,
+    run_prop_analysis_pipeline,
+)
 
 # Initialize Telebot
 if not settings.TELEGRAM_BOT_TOKEN:
@@ -93,18 +95,33 @@ def send_analyze(message):
         return
 
     msg = bot.reply_to(
-        message, "⏳ Running full live analysis... This may take a minute."
+        message,
+        "⏳ Running full live analysis with orchestrator... This may take a minute.",
     )
 
     try:
-        # Run analysis (blocks thread, but ok for personal bot)
-        raw_output = capture_analysis()
-
         tracker = BetTracker()
         metrics = tracker.get_performance_metrics()
 
-        formatted = ReportFormatter.format_full_report(raw_output, metrics=metrics)
-        telegram_service.send_report(formatted, label="ON-DEMAND")
+        # Primary: orchestrated analysis (structured + agent enrichment)
+        try:
+            data = run_orchestrated_analysis()
+            formatted = ReportFormatter.format_live_report(data, metrics=metrics)
+            telegram_service.send_message(formatted)
+        except Exception as orch_err:
+            logger.warning(f"Orchestrator failed, falling back to legacy: {orch_err}")
+            raw_output = capture_analysis()
+            formatted = ReportFormatter.format_full_report(raw_output, metrics=metrics)
+            telegram_service.send_report(formatted, label="ON-DEMAND")
+
+        # Player props (separate message)
+        try:
+            prop_data = run_prop_analysis_pipeline("nba")
+            if prop_data and prop_data.get("best_props"):
+                prop_msg = ReportFormatter.format_prop_report(prop_data)
+                telegram_service.send_message(prop_msg)
+        except Exception as prop_err:
+            logger.warning(f"Prop analysis failed (non-fatal): {prop_err}")
 
         bot.delete_message(message.chat.id, msg.message_id)
     except Exception as e:
@@ -117,16 +134,42 @@ def send_picks(message):
     if not check_auth(message):
         return
 
-    msg = bot.reply_to(message, "⏳ Fetching top picks...")
+    logger.info("Received /picks command")
+    msg = bot.reply_to(message, "⏳ Running live analysis...")
 
     try:
-        raw_output = capture_analysis()
-        formatted = ReportFormatter.format_picks_only(raw_output)
-        telegram_service.send_message(formatted)
+        tracker = BetTracker()
+        metrics = tracker.get_performance_metrics()
 
+        # Primary: orchestrated analysis with dynamic pick count
+        try:
+            data = run_orchestrated_analysis()
+            formatted = ReportFormatter.format_live_report(data, metrics=metrics)
+            logger.info(
+                f"Orchestrated picks: {len(data.get('picks', []))} picks "
+                f"from {data.get('total_game_count', 0)}-game slate"
+            )
+            telegram_service.send_message(formatted)
+        except Exception as orch_err:
+            logger.warning(f"Orchestrator failed, falling back to legacy: {orch_err}")
+            raw_output = capture_analysis()
+            formatted = ReportFormatter.format_picks_only(raw_output)
+            telegram_service.send_message(formatted)
+
+        # Player props (separate message)
+        try:
+            prop_data = run_prop_analysis_pipeline("nba")
+            if prop_data and prop_data.get("best_props"):
+                prop_msg = ReportFormatter.format_prop_report(prop_data)
+                telegram_service.send_message(prop_msg)
+        except Exception as prop_err:
+            logger.warning(f"Prop analysis failed (non-fatal): {prop_err}")
+
+        logger.info("Sent formatted message")
         bot.delete_message(message.chat.id, msg.message_id)
+        logger.info("Deleted initial status message")
     except Exception as e:
-        logger.error(f"Picks error: {e}")
+        logger.error(f"Picks error: {e}", exc_info=True)
         telegram_service.send_message(f"❌ Error getting picks: {e}")
 
 

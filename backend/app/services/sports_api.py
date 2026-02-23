@@ -1,95 +1,956 @@
 """
-Sports API service for fetching odds and game data
+Sports API Service — Multi-source game discovery and odds fetching.
+
+Architecture:
+    1. ESPN Scoreboard (free, no API key) → game discovery
+    2. The Odds API /events endpoint   → secondary game discovery
+    3. The Odds API /odds endpoint     → odds enrichment
+    4. TTL in-memory cache             → serve stale when APIs fail
+    5. Hardcoded fallback              → absolute last resort (logged as error)
+
+All methods track their data source so callers can tag reports
+with [LIVE], [CACHED], or [FALLBACK].
 """
 
-from typing import Dict, Any, List
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
+
 import httpx
 from loguru import logger
 
 from app.config import settings
 
+# ─────────────────────────────────────────────────────────────────
+# ESPN sport keys → The Odds API sport keys mapping
+# ─────────────────────────────────────────────────────────────────
+ESPN_SPORT_MAP = {
+    "basketball_ncaab": "basketball/mens-college-basketball",
+    "basketball_nba": "basketball/nba",
+}
 
+ODDS_API_SPORT_DISPLAY = {
+    "basketball_ncaab": "NCAAB",
+    "basketball_nba": "NBA",
+}
+
+# Bookmakers to request (reduces credit burn vs. requesting all)
+SHARP_BOOKMAKERS = {"pinnacle", "circa", "betonlineag", "lowvig"}
+RETAIL_BOOKMAKERS = {"draftkings", "fanduel", "betmgm", "caesars", "pointsbet"}
+BOOKMAKER_FILTER = ",".join(sorted(SHARP_BOOKMAKERS | RETAIL_BOOKMAKERS))
+
+# ESPN conference ID → display name (NCAAB only)
+_ESPN_CONF_MAP: Dict[str, str] = {}  # populated lazily from ESPN data
+
+
+# ─────────────────────────────────────────────────────────────────
+# TTL Cache
+# ─────────────────────────────────────────────────────────────────
+@dataclass
+class _CacheEntry:
+    data: Any
+    ts: float = field(default_factory=time.time)
+    source: str = "live"
+
+
+class TTLCache:
+    """Simple in-memory cache with per-key TTL (seconds)."""
+
+    def __init__(self, default_ttl: int = 300):
+        self._store: Dict[str, _CacheEntry] = {}
+        self._default_ttl = default_ttl
+
+    def get(self, key: str, ttl: Optional[int] = None) -> Optional[_CacheEntry]:
+        entry = self._store.get(key)
+        if entry is None:
+            return None
+        age = time.time() - entry.ts
+        if age > (ttl or self._default_ttl):
+            return None  # expired
+        return entry
+
+    def get_stale(self, key: str) -> Optional[_CacheEntry]:
+        """Return entry even if expired — for graceful degradation."""
+        return self._store.get(key)
+
+    def set(self, key: str, data: Any, source: str = "live") -> None:
+        self._store[key] = _CacheEntry(data=data, ts=time.time(), source=source)
+
+    def age(self, key: str) -> Optional[float]:
+        entry = self._store.get(key)
+        return (time.time() - entry.ts) if entry else None
+
+
+# Module-level singleton so cache persists across calls within a process
+_cache = TTLCache(default_ttl=300)  # 5 minute default
+
+
+# ─────────────────────────────────────────────────────────────────
+# Data source tag
+# ─────────────────────────────────────────────────────────────────
+@dataclass
+class FetchResult:
+    """Wraps API results with provenance metadata."""
+
+    data: List[Dict[str, Any]]
+    source: str  # "espn_live", "oddsapi_live", "cached", "stale_cache", "fallback"
+    source_label: str = ""  # human-friendly, e.g. "[LIVE]"
+    game_count: int = 0
+    api_requests_remaining: Optional[int] = None
+    api_requests_used: Optional[int] = None
+
+    def __post_init__(self):
+        self.game_count = len(self.data)
+        labels = {
+            "espn_live": "[LIVE - ESPN]",
+            "oddsapi_live": "[LIVE - Odds API]",
+            "oddsapi_events": "[LIVE - Odds API Events]",
+            "cached": "[CACHED]",
+            "stale_cache": "[STALE CACHE]",
+            "fallback": "[FALLBACK]",
+        }
+        self.source_label = labels.get(self.source, f"[{self.source.upper()}]")
+
+
+# ─────────────────────────────────────────────────────────────────
+# Team name normalization
+# ─────────────────────────────────────────────────────────────────
+
+# ESPN uses slightly different names than The Odds API.  This map
+# covers the most common discrepancies for NCAAB + NBA.
+_TEAM_NAME_ALIASES: Dict[str, str] = {
+    # NCAAB
+    "UConn Huskies": "Connecticut Huskies",
+    "UConn": "Connecticut Huskies",
+    "UCONN": "Connecticut Huskies",
+    "Pitt Panthers": "Pittsburgh Panthers",
+    "SMU Mustangs": "Southern Methodist Mustangs",
+    "Ole Miss Rebels": "Mississippi Rebels",
+    "UNLV Rebels": "UNLV Runnin' Rebels",
+    "LSU Tigers": "LSU Tigers",
+    "USC Trojans": "Southern California Trojans",
+    "UCF Knights": "Central Florida Knights",
+    "BYU Cougars": "Brigham Young Cougars",
+    "VCU Rams": "Virginia Commonwealth Rams",
+    # NBA
+    "LA Clippers": "Los Angeles Clippers",
+}
+
+
+def normalize_team_name(name: str) -> str:
+    """Normalize a team name to a canonical form."""
+    return _TEAM_NAME_ALIASES.get(name, name)
+
+
+# ─────────────────────────────────────────────────────────────────
+# Main Service
+# ─────────────────────────────────────────────────────────────────
 class SportsAPIService:
-    """Service for interacting with sports APIs"""
+    """Multi-source sports data service.
+
+    Game discovery waterfall:
+        ESPN Scoreboard → Odds API /events → TTL cache → stale cache → (caller fallback)
+
+    Odds enrichment:
+        Odds API /odds → TTL cache → (caller uses defaults)
+    """
 
     def __init__(self):
-        self.odds_api_key = settings.ODDSAPI_API_KEY
-        self.sportsradar_key = settings.SPORTSRADAR_API_KEY
+        # Dual API key resolution (from sports-betting-edge-tool branch)
+        self.odds_api_key = getattr(settings, "ODDSAPI_API_KEY", None) or getattr(
+            settings, "THE_ODDS_API_KEY", None
+        )
+        self.sportsradar_key = getattr(settings, "SPORTSRADAR_API_KEY", None)
         self.base_url = "https://api.the-odds-api.com/v4"
+        self._last_quota_remaining: Optional[int] = None
+        self._last_quota_used: Optional[int] = None
 
-    async def get_odds(self, sport: str) -> List[Dict[str, Any]]:
-        """
-        Fetch current odds for a sport
+    # ──────────────────────────────────────────────────────────────
+    # Phase 1: ESPN Scoreboard (primary game discovery)
+    # ──────────────────────────────────────────────────────────────
+
+    async def get_espn_scoreboard(self, sport: str) -> FetchResult:
+        """Fetch today's games from ESPN's free scoreboard API.
+
+        No API key required.  Returns structured game dicts with
+        home/away teams, tip time, conference, and ESPN game ID.
 
         Args:
-            sport: Sport identifier (nfl, nba, mlb, etc.)
+            sport: Odds API sport key (e.g. 'basketball_ncaab')
 
         Returns:
-            List of odds markets
+            FetchResult with list of game dicts
         """
-        if not self.odds_api_key:
-            logger.warning("Odds API key not configured")
-            return []
+        espn_path = ESPN_SPORT_MAP.get(sport)
+        if not espn_path:
+            logger.warning(f"No ESPN mapping for sport '{sport}'")
+            return FetchResult(data=[], source="espn_live")
+
+        url = f"https://site.api.espn.com/apis/site/v2/sports/{espn_path}/scoreboard"
+        cache_key = f"espn_scoreboard_{sport}"
 
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{self.base_url}/sports/{sport}/odds",
-                    params={
-                        "regions": "us",
-                        "markets": "h2h,spreads,totals",
-                        "apiKey": self.odds_api_key,
-                    },
-                    timeout=30.0,
-                )
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.get(url)
                 response.raise_for_status()
 
-                data = response.json()
-                logger.info(f"Fetched odds for {sport}: {len(data)} games")
-                return data
+            raw = response.json()
+            events = raw.get("events", [])
+            games = []
 
+            for event in events:
+                try:
+                    competition = event["competitions"][0]
+                    competitors = competition.get("competitors", [])
+                    if len(competitors) < 2:
+                        continue
+
+                    home = next(
+                        (c for c in competitors if c.get("homeAway") == "home"), None
+                    )
+                    away = next(
+                        (c for c in competitors if c.get("homeAway") == "away"), None
+                    )
+                    if not home or not away:
+                        continue
+
+                    home_team = home.get("team", {}).get("displayName", "")
+                    away_team = away.get("team", {}).get("displayName", "")
+
+                    # Conference (NCAAB only — extracted from group name)
+                    conference = ""
+                    for comp in competitors:
+                        conf_name = comp.get("team", {}).get("conferenceId", "")
+                        # ESPN sometimes puts conference in different spots
+                        groups = event.get("competitions", [{}])[0].get("groups", {})
+                        if groups:
+                            conference = groups.get("name", "")
+                            break
+
+                    # Tip time
+                    commence_time = event.get("date", "")
+
+                    # Game status
+                    status_type = (
+                        competition.get("status", {})
+                        .get("type", {})
+                        .get("name", "STATUS_SCHEDULED")
+                    )
+
+                    # Skip completed games
+                    if status_type == "STATUS_FINAL":
+                        continue
+
+                    game = {
+                        "espn_id": event.get("id", ""),
+                        "home_team": normalize_team_name(home_team),
+                        "away_team": normalize_team_name(away_team),
+                        "commence_time": commence_time,
+                        "conference": conference,
+                        "status": status_type,
+                        "sport": sport,
+                    }
+                    games.append(game)
+
+                except (KeyError, IndexError, StopIteration) as e:
+                    logger.debug(f"Skipping ESPN event parse error: {e}")
+                    continue
+
+            result = FetchResult(data=games, source="espn_live")
+            if games:
+                _cache.set(cache_key, games, source="espn_live")
+                logger.info(
+                    f"ESPN scoreboard: {len(games)} games for "
+                    f"{ODDS_API_SPORT_DISPLAY.get(sport, sport)}"
+                )
+            else:
+                logger.warning(f"ESPN scoreboard returned 0 games for {sport}")
+
+            return result
+
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"ESPN HTTP error for {sport}: {e.response.status_code} — "
+                f"{e.response.text[:200]}"
+            )
         except Exception as e:
-            logger.error(f"Failed to fetch odds for {sport}: {e}")
-            return []
+            logger.error(f"ESPN scoreboard failed for {sport}: {e}")
 
-    async def get_scores(self, sport: str, days_from: int = 1) -> List[Dict[str, Any]]:
+        # Try cache on failure
+        cached = _cache.get(cache_key, ttl=600)  # 10 min grace
+        if cached:
+            logger.info(
+                f"Serving cached ESPN data for {sport} (age: {_cache.age(cache_key):.0f}s)"
+            )
+            return FetchResult(data=cached.data, source="cached")
+
+        return FetchResult(data=[], source="espn_live")
+
+    # ──────────────────────────────────────────────────────────────
+    # Phase 1: Odds API /events (secondary game discovery)
+    # ──────────────────────────────────────────────────────────────
+
+    async def get_events(self, sport: str) -> FetchResult:
+        """Fetch upcoming events from The Odds API /events endpoint.
+
+        This returns games regardless of whether odds are posted yet,
+        decoupling game discovery from odds availability.
+
+        Args:
+            sport: Odds API sport key (e.g. 'basketball_ncaab')
+
+        Returns:
+            FetchResult with list of event dicts
         """
-        Fetch completed game scores for a sport over the last N days.
+        if not self.odds_api_key:
+            logger.warning("No Odds API key — cannot call /events")
+            return FetchResult(data=[], source="oddsapi_events")
+
+        cache_key = f"oddsapi_events_{sport}"
+        url = f"{self.base_url}/sports/{sport}/events"
+
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                response = await client.get(
+                    url,
+                    params={"apiKey": self.odds_api_key},
+                )
+                self._track_quota(response)
+                response.raise_for_status()
+
+            events = response.json()
+            result = FetchResult(
+                data=events,
+                source="oddsapi_events",
+                api_requests_remaining=self._last_quota_remaining,
+                api_requests_used=self._last_quota_used,
+            )
+            if events:
+                _cache.set(cache_key, events, source="oddsapi_events")
+                logger.info(
+                    f"Odds API /events: {len(events)} events for "
+                    f"{ODDS_API_SPORT_DISPLAY.get(sport, sport)}"
+                )
+            return result
+
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"Odds API /events HTTP {e.response.status_code} for {sport}: "
+                f"{e.response.text[:200]}"
+            )
+        except Exception as e:
+            logger.error(f"Odds API /events failed for {sport}: {e}")
+
+        # Try cache
+        cached = _cache.get(cache_key, ttl=600)
+        if cached:
+            return FetchResult(data=cached.data, source="cached")
+
+        return FetchResult(data=[], source="oddsapi_events")
+
+    # ──────────────────────────────────────────────────────────────
+    # Phase 2: Odds API /odds (enrichment — with filtering + cache)
+    # ──────────────────────────────────────────────────────────────
+
+    async def get_odds(
+        self,
+        sport: str,
+        markets: str = "h2h,spreads,totals",
+        bookmakers: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Fetch current odds for a sport with caching + quota tracking.
 
         Args:
             sport: Sport identifier (e.g. 'basketball_ncaab')
-            days_from: Number of days to look back
+            markets: Comma-separated market types
+            bookmakers: Comma-separated bookmaker keys (defaults to
+                        SHARP + RETAIL set to reduce credit burn)
 
         Returns:
-            List of completed game score objects
+            List of odds event objects (empty list on failure)
         """
+        if not self.odds_api_key:
+            logger.warning("Odds API key not configured — cannot fetch odds")
+            # Try serving from cache
+            cached = _cache.get_stale(f"oddsapi_odds_{sport}")
+            if cached:
+                logger.info(f"Serving stale cached odds for {sport}")
+                return cached.data
+            return []
+
+        cache_key = f"oddsapi_odds_{sport}"
+
+        try:
+            params: Dict[str, Any] = {
+                "regions": "us",
+                "markets": markets,
+                "apiKey": self.odds_api_key,
+                "oddsFormat": "american",
+            }
+            if bookmakers:
+                params["bookmakers"] = bookmakers
+            else:
+                params["bookmakers"] = BOOKMAKER_FILTER
+
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                response = await client.get(
+                    f"{self.base_url}/sports/{sport}/odds",
+                    params=params,
+                )
+                self._track_quota(response)
+                response.raise_for_status()
+
+            data = response.json()
+
+            # ── Phase 2: commence_time filtering ──
+            # Only keep games starting within the next 14 hours
+            now_ts = datetime.now(timezone.utc)
+            filtered = []
+            for game in data:
+                ct = game.get("commence_time", "")
+                if ct:
+                    try:
+                        game_time = datetime.fromisoformat(ct.replace("Z", "+00:00"))
+                        hours_until = (game_time - now_ts).total_seconds() / 3600
+                        # Keep games: not yet started OR started within last 3 hours
+                        if -3.0 <= hours_until <= 14.0:
+                            filtered.append(game)
+                    except (ValueError, TypeError):
+                        filtered.append(game)  # keep if unparseable
+                else:
+                    filtered.append(game)
+
+            if filtered:
+                _cache.set(cache_key, filtered, source="oddsapi_live")
+            logger.info(
+                f"Odds API: {len(filtered)}/{len(data)} games for {sport} "
+                f"(filtered to ±14h window) | "
+                f"Quota: {self._last_quota_remaining} remaining"
+            )
+            return filtered
+
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code
+            body = e.response.text[:200]
+            if status == 401:
+                logger.error(
+                    f"Odds API 401 for {sport} — API key invalid or quota exhausted: {body}"
+                )
+            elif status == 429:
+                logger.error(f"Odds API 429 rate-limited for {sport}: {body}")
+            else:
+                logger.error(f"Odds API HTTP {status} for {sport}: {body}")
+        except Exception as e:
+            logger.error(f"Odds API /odds failed for {sport}: {e}")
+
+        # Serve from cache on failure
+        cached = _cache.get(cache_key, ttl=600)
+        if cached:
+            logger.info(
+                f"Serving cached odds for {sport} (age: {_cache.age(cache_key):.0f}s)"
+            )
+            return cached.data
+
+        # Try stale cache as last resort
+        stale = _cache.get_stale(cache_key)
+        if stale:
+            logger.warning(
+                f"Serving STALE cached odds for {sport} "
+                f"(age: {_cache.age(cache_key):.0f}s)"
+            )
+            return stale.data
+
+        return []
+
+    # ──────────────────────────────────────────────────────────────
+    # Game discovery waterfall (combines ESPN + Odds API)
+    # ──────────────────────────────────────────────────────────────
+
+    async def discover_games(self, sport: str) -> FetchResult:
+        """High-level game discovery with multi-source waterfall.
+
+        1. ESPN Scoreboard (free, no key)
+        2. Odds API /events
+        3. TTL cache
+        4. Stale cache
+
+        Callers should check result.source to decide on fallback behavior.
+
+        Args:
+            sport: Odds API sport key
+
+        Returns:
+            FetchResult with game list + provenance
+        """
+        # 1. ESPN first (free, no credit cost)
+        espn_result = await self.get_espn_scoreboard(sport)
+        if espn_result.data:
+            return espn_result
+
+        # 2. Odds API /events
+        events_result = await self.get_events(sport)
+        if events_result.data:
+            return events_result
+
+        # 3. Check caches
+        for cache_key in [f"espn_scoreboard_{sport}", f"oddsapi_events_{sport}"]:
+            stale = _cache.get_stale(cache_key)
+            if stale and stale.data:
+                age = _cache.age(cache_key) or 0
+                logger.warning(
+                    f"All live sources failed for {sport}. "
+                    f"Serving stale cache (age: {age:.0f}s)"
+                )
+                return FetchResult(data=stale.data, source="stale_cache")
+
+        logger.error(
+            f"All game discovery sources failed for {sport} — "
+            f"no ESPN, no Odds API, no cache."
+        )
+        return FetchResult(data=[], source="fallback")
+
+    # ──────────────────────────────────────────────────────────────
+    # Scores (unchanged but with better error handling)
+    # ──────────────────────────────────────────────────────────────
+
+    async def get_scores(self, sport: str, days_from: int = 1) -> List[Dict[str, Any]]:
+        """Fetch completed game scores over the last N days."""
         if not self.odds_api_key:
             logger.warning("Odds API key not configured")
             return []
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=20.0) as client:
                 response = await client.get(
                     f"{self.base_url}/sports/{sport}/scores",
                     params={
                         "daysFrom": days_from,
                         "apiKey": self.odds_api_key,
                     },
-                    timeout=30.0,
                 )
+                self._track_quota(response)
                 response.raise_for_status()
 
-                data = response.json()
-                # Filter only for games that are marked as completed
-                completed = [g for g in data if g.get("completed")]
-                logger.info(
-                    f"Fetched scores for {sport}: {len(completed)} completed games in last {days_from} days"
-                )
-                return completed
+            data = response.json()
+            completed = [g for g in data if g.get("completed")]
+            logger.info(
+                f"Scores for {sport}: {len(completed)} completed "
+                f"(last {days_from} days)"
+            )
+            return completed
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP Error fetching scores for {sport}: {e.response.text}")
+            logger.error(
+                f"Scores HTTP {e.response.status_code} for {sport}: "
+                f"{e.response.text[:200]}"
+            )
             return []
         except Exception as e:
-            logger.error(f"Failed to fetch scores for {sport}: {e}")
+            logger.error(f"Scores fetch failed for {sport}: {e}")
             return []
+
+    # ──────────────────────────────────────────────────────────────
+    # Player Props — per-event odds endpoint
+    # ──────────────────────────────────────────────────────────────
+
+    # Core 5 prop markets (best credit/value ratio)
+    CORE_PROP_MARKETS: List[str] = [
+        "player_points",
+        "player_rebounds",
+        "player_assists",
+        "player_threes",
+        "player_points_rebounds_assists",
+    ]
+
+    # Extended markets (use when credit budget allows)
+    EXTENDED_PROP_MARKETS: List[str] = [
+        "player_blocks",
+        "player_steals",
+        "player_blocks_steals",
+        "player_turnovers",
+        "player_points_rebounds",
+        "player_points_assists",
+        "player_rebounds_assists",
+        "player_double_double",
+    ]
+
+    PROP_BOOKMAKERS: str = (
+        "draftkings,fanduel,betmgm,williamhill_us,pointsbetus,"
+        "betrivers,unibet_us,superbook"
+    )
+
+    async def get_event_player_props(
+        self,
+        sport: str,
+        event_id: str,
+        markets: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Fetch player prop odds for a single event.
+
+        Uses The Odds API /events/{eventId}/odds endpoint.
+        Each market × region = 1 API credit.
+
+        Args:
+            sport: Sport key (e.g. 'basketball_nba')
+            event_id: Event UUID from get_events()
+            markets: List of market keys (defaults to CORE_PROP_MARKETS)
+
+        Returns:
+            Raw Odds API response dict with bookmakers/markets, or
+            empty dict on failure.
+        """
+        if not self.odds_api_key:
+            logger.warning("No API key — cannot fetch player props")
+            return {}
+
+        if markets is None:
+            markets = self.CORE_PROP_MARKETS
+
+        markets_csv = ",".join(markets)
+        cache_key = f"props_{sport}_{event_id}_{markets_csv}"
+
+        # Check fresh cache first
+        cached = _cache.get(cache_key, ttl=180)  # 3-min TTL for props
+        if cached:
+            return cached.data
+
+        try:
+            async with httpx.AsyncClient(timeout=25.0) as client:
+                response = await client.get(
+                    f"{self.base_url}/sports/{sport}/events/{event_id}/odds",
+                    params={
+                        "apiKey": self.odds_api_key,
+                        "regions": "us",
+                        "markets": markets_csv,
+                        "oddsFormat": "american",
+                        "bookmakers": self.PROP_BOOKMAKERS,
+                    },
+                )
+                self._track_quota(response)
+                response.raise_for_status()
+
+            data = response.json()
+            if data:
+                _cache.set(cache_key, data, source="oddsapi_props")
+            logger.info(
+                f"Props for event {event_id[:8]}...: "
+                f"{len(data.get('bookmakers', []))} bookmakers, "
+                f"{len(markets)} markets"
+            )
+            return data
+
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code
+            if status == 422:
+                # Event may not have prop markets available
+                logger.debug(f"No prop markets for event {event_id[:8]}... ({sport})")
+            elif status == 429:
+                logger.error(
+                    f"Odds API rate-limited fetching props for {event_id[:8]}..."
+                )
+            else:
+                logger.error(
+                    f"Props HTTP {status} for {event_id[:8]}...: "
+                    f"{e.response.text[:200]}"
+                )
+        except Exception as e:
+            logger.error(f"Props fetch failed for {event_id[:8]}...: {e}")
+
+        # Serve stale cache on failure
+        stale = _cache.get_stale(cache_key)
+        if stale:
+            return stale.data
+
+        return {}
+
+    async def get_all_player_props(
+        self,
+        sport: str,
+        markets: Optional[List[str]] = None,
+        max_events: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Fetch player props for ALL today's events in a sport.
+
+        Waterfall: discover events → fetch props per event → merge results.
+        Respects quota: stops if remaining credits < 20.
+
+        Args:
+            sport: Sport key (e.g. 'basketball_nba')
+            markets: Market keys (defaults to CORE_PROP_MARKETS)
+            max_events: Cap on events to scan (None = all)
+
+        Returns:
+            List of enriched prop dicts, each containing:
+            - player: str
+            - prop_type: str (market key)
+            - line: float
+            - over_odds: int
+            - under_odds: int
+            - book: str (best book)
+            - book_key: str
+            - event_id: str
+            - home_team: str
+            - away_team: str
+            - offerings: List[Dict] (all books)
+            - devigged_over_prob: float
+            - devigged_under_prob: float
+        """
+        if markets is None:
+            markets = self.CORE_PROP_MARKETS
+
+        cache_key = f"all_props_{sport}"
+        cached = _cache.get(cache_key, ttl=180)
+        if cached:
+            logger.info(f"Serving cached prop scan for {sport}")
+            return cached.data
+
+        # Step 1: Discover events
+        discovery = await self.discover_games(sport)
+        events = discovery.data
+        if not events:
+            logger.warning(f"No events found for {sport} — cannot scan props")
+            return []
+
+        # Step 2: Get event IDs
+        event_ids: List[str] = []
+        event_meta: Dict[str, Dict[str, str]] = {}
+
+        for ev in events:
+            eid = ev.get("id", "")
+            if not eid:
+                continue
+            event_ids.append(eid)
+            event_meta[eid] = {
+                "home_team": ev.get("home_team", ""),
+                "away_team": ev.get("away_team", ""),
+            }
+
+        if max_events:
+            event_ids = event_ids[:max_events]
+
+        logger.info(
+            f"Prop scan: {len(event_ids)} events × {len(markets)} markets "
+            f"for {sport} (~{len(event_ids) * len(markets)} credits)"
+        )
+
+        # Step 3: Check quota before proceeding
+        estimated_cost = len(event_ids) * len(markets)
+        if (
+            self._last_quota_remaining is not None
+            and self._last_quota_remaining < estimated_cost + 20
+        ):
+            logger.warning(
+                f"Insufficient quota for prop scan: need ~{estimated_cost}, "
+                f"only {self._last_quota_remaining} remaining. Skipping."
+            )
+            stale = _cache.get_stale(cache_key)
+            if stale:
+                return stale.data
+            return []
+
+        # Step 4: Fetch props per event
+        all_raw_props: List[Dict[str, Any]] = []
+
+        for eid in event_ids:
+            event_data = await self.get_event_player_props(sport, eid, markets)
+            if not event_data:
+                continue
+
+            meta = event_meta.get(eid, {})
+            home = meta.get("home_team", event_data.get("home_team", ""))
+            away = meta.get("away_team", event_data.get("away_team", ""))
+
+            # Parse bookmakers → extract props
+            for book in event_data.get("bookmakers", []):
+                book_key = book.get("key", "")
+                book_title = book.get("title", book_key)
+
+                for market in book.get("markets", []):
+                    market_key = market.get("key", "")
+                    outcomes = market.get("outcomes", [])
+
+                    # Pair Over/Under by player description
+                    player_pairs: Dict[str, Dict[str, Any]] = {}
+                    for out in outcomes:
+                        player = out.get("description", "")
+                        if not player:
+                            continue
+
+                        if player not in player_pairs:
+                            player_pairs[player] = {}
+
+                        side = out.get("name", "").lower()
+                        if side == "over":
+                            player_pairs[player]["over_odds"] = out.get("price", -110)
+                            player_pairs[player]["line"] = out.get("point", 0.0)
+                        elif side == "under":
+                            player_pairs[player]["under_odds"] = out.get("price", -110)
+                            if "line" not in player_pairs[player]:
+                                player_pairs[player]["line"] = out.get("point", 0.0)
+
+                    for player, pair in player_pairs.items():
+                        if "over_odds" in pair and "under_odds" in pair:
+                            all_raw_props.append(
+                                {
+                                    "player": player,
+                                    "prop_type": market_key,
+                                    "line": pair.get("line", 0.0),
+                                    "over_odds": pair["over_odds"],
+                                    "under_odds": pair["under_odds"],
+                                    "book": book_title,
+                                    "book_key": book_key,
+                                    "event_id": eid,
+                                    "home_team": home,
+                                    "away_team": away,
+                                }
+                            )
+
+            # Brief pause between events to avoid hammering
+            import asyncio
+
+            await asyncio.sleep(0.1)
+
+        if not all_raw_props:
+            logger.warning(f"Prop scan found 0 props for {sport}")
+            return []
+
+        # Step 5: Group by player|prop_type, enrich with devig + best lines
+        grouped = self._group_and_enrich_props(all_raw_props)
+
+        logger.info(
+            f"Prop scan complete: {len(grouped)} unique player props "
+            f"from {len(event_ids)} events"
+        )
+
+        _cache.set(cache_key, grouped, source="oddsapi_props")
+        return grouped
+
+    def _group_and_enrich_props(
+        self,
+        raw_props: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Group raw props by player|prop_type and enrich with devig + best lines.
+
+        Args:
+            raw_props: Flat list of per-book prop offerings
+
+        Returns:
+            List of grouped, enriched prop dicts
+        """
+        # Group by player + prop_type
+        groups: Dict[str, List[Dict[str, Any]]] = {}
+        for prop in raw_props:
+            key = f"{prop['player']}|{prop['prop_type']}"
+            if key not in groups:
+                groups[key] = []
+            groups[key].append(prop)
+
+        enriched: List[Dict[str, Any]] = []
+
+        for key, offerings in groups.items():
+            if not offerings:
+                continue
+
+            # Find best over and under odds across all books
+            best_over = max(offerings, key=lambda x: x.get("over_odds", -999))
+            best_under = max(offerings, key=lambda x: x.get("under_odds", -999))
+
+            # Use the median line as canonical
+            lines = [o["line"] for o in offerings if o.get("line")]
+            canonical_line = (
+                sorted(lines)[len(lines) // 2] if lines else offerings[0].get("line", 0)
+            )
+
+            # Devig using best available odds (sharp book preferred)
+            over_odds = best_over.get("over_odds", -110)
+            under_odds = best_under.get("under_odds", -110)
+            devig_over, devig_under = self._devig_american(over_odds, under_odds)
+
+            first = offerings[0]
+            enriched.append(
+                {
+                    "player": first["player"],
+                    "prop_type": first["prop_type"],
+                    "line": canonical_line,
+                    "over_odds": over_odds,
+                    "under_odds": under_odds,
+                    "best_over_book": best_over.get("book", ""),
+                    "best_over_odds": over_odds,
+                    "best_under_book": best_under.get("book", ""),
+                    "best_under_odds": under_odds,
+                    "devigged_over_prob": devig_over,
+                    "devigged_under_prob": devig_under,
+                    "books_offering": len(offerings),
+                    "event_id": first.get("event_id", ""),
+                    "home_team": first.get("home_team", ""),
+                    "away_team": first.get("away_team", ""),
+                    "offerings": offerings,
+                }
+            )
+
+        return enriched
+
+    @staticmethod
+    def _devig_american(over_odds: float, under_odds: float) -> tuple:
+        """Devig a two-way prop market using multiplicative method.
+
+        Args:
+            over_odds: American over odds
+            under_odds: American under odds
+
+        Returns:
+            (true_over_prob, true_under_prob) summing to ~1.0
+        """
+
+        def _to_implied(odds: float) -> float:
+            if odds >= 100:
+                return 100.0 / (odds + 100.0)
+            else:
+                return abs(odds) / (abs(odds) + 100.0)
+
+        imp_over = _to_implied(over_odds)
+        imp_under = _to_implied(under_odds)
+        total = imp_over + imp_under
+
+        if total <= 0:
+            return (0.50, 0.50)
+
+        return (imp_over / total, imp_under / total)
+
+    # ──────────────────────────────────────────────────────────────
+    # Phase 4: Quota tracking
+    # ──────────────────────────────────────────────────────────────
+
+    def _track_quota(self, response: httpx.Response) -> None:
+        """Parse Odds API quota headers and log usage."""
+        remaining = response.headers.get("x-requests-remaining")
+        used = response.headers.get("x-requests-used")
+        if remaining is not None:
+            try:
+                self._last_quota_remaining = int(remaining)
+            except ValueError:
+                pass
+        if used is not None:
+            try:
+                self._last_quota_used = int(used)
+            except ValueError:
+                pass
+        if self._last_quota_remaining is not None:
+            logger.info(
+                f"Odds API quota: {self._last_quota_used} used / "
+                f"{self._last_quota_remaining} remaining"
+            )
+            if self._last_quota_remaining < 50:
+                logger.warning(
+                    f"⚠ Odds API quota LOW: only {self._last_quota_remaining} "
+                    f"requests remaining!"
+                )
+
+    @property
+    def quota_remaining(self) -> Optional[int]:
+        return self._last_quota_remaining
+
+    @property
+    def quota_used(self) -> Optional[int]:
+        return self._last_quota_used

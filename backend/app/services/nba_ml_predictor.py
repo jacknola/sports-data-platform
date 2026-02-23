@@ -306,7 +306,12 @@ class NBAMLPredictor:
 
     async def predict_today_games(self, sport: str = "nba") -> List[Dict[str, Any]]:
         """
-        Get predictions for today's games using live Odds API and NBA API stats
+        Get predictions for today's games using multi-source discovery + live odds.
+
+        Game discovery waterfall:
+            1. ESPN NBA Scoreboard (free, no key)
+            2. Odds API /odds (existing path)
+            3. No more hardcoded placeholder — return empty if both fail
 
         Args:
             sport: Sport to predict (currently NBA only)
@@ -316,10 +321,20 @@ class NBAMLPredictor:
         """
         logger.info(f"Getting live predictions for today's {sport.upper()} games")
 
-        # 1. Fetch Live Odds
+        # 1. Discover games via ESPN first (free, no credit cost)
+        discovery = await self.sports_api.discover_games("basketball_nba")
+        espn_games = discovery.data
+
+        if espn_games:
+            logger.info(
+                f"NBA game discovery: {len(espn_games)} games via {discovery.source}"
+            )
+
+        # 2. Fetch Live Odds for enrichment
         odds_data = await self.sports_api.get_odds("basketball_nba")
 
         games = []
+
         if odds_data:
             # 2. Fetch Live Stats
             stats_df = self._fetch_live_team_stats()
@@ -334,7 +349,7 @@ class NBAMLPredictor:
                 away_odds = -110
 
                 # Try to find pinnacle or draftkings/fanduel
-                target_books = ["pinnacle", "draftkings", "fanduel", "bovada"]
+                target_books = ["pinnacle", "circa", "draftkings", "fanduel", "bovada"]
                 for book in target_books:
                     b_data = next((b for b in bookmakers if b["key"] == book), None)
                     if b_data:
@@ -344,9 +359,9 @@ class NBAMLPredictor:
                         if h2h and len(h2h["outcomes"]) == 2:
                             for out in h2h["outcomes"]:
                                 if out["name"] == home_team:
-                                    home_odds = out["price"]
+                                    home_odds = round(out["price"])
                                 elif out["name"] == away_team:
-                                    away_odds = out["price"]
+                                    away_odds = round(out["price"])
                             break
 
                 features = {"odds": {"home": home_odds, "away": away_odds}}
@@ -377,26 +392,26 @@ class NBAMLPredictor:
                         "features": features,
                     }
                 )
+
+        elif espn_games:
+            # ESPN found games but no odds data — build games with default odds
+            logger.warning(
+                f"Odds API returned no NBA data. Using {len(espn_games)} ESPN games "
+                f"with default -110/-110 odds."
+            )
+            for eg in espn_games:
+                games.append(
+                    {
+                        "home_team": eg.get("home_team", ""),
+                        "away_team": eg.get("away_team", ""),
+                        "features": {"odds": {"home": -110, "away": -110}},
+                    }
+                )
         else:
-            logger.warning("No live odds found. Using placeholder games.")
-            games = [
-                {
-                    "home_team": "Los Angeles Lakers",
-                    "away_team": "Golden State Warriors",
-                    "features": {
-                        "home_off_rating": 115.2,
-                        "home_def_rating": 112.5,
-                        "away_off_rating": 118.0,
-                        "away_def_rating": 113.8,
-                        "home_win_pct": 0.55,
-                        "away_win_pct": 0.62,
-                        "home_recent_form": [1, 1, 0, 1, 1],
-                        "away_recent_form": [1, 0, 1, 1, 1],
-                        "odds": {"home": -110, "away": -110},
-                        "over_under": 230.5,
-                    },
-                }
-            ]
+            logger.error(
+                "NBA: Both ESPN and Odds API returned no games. "
+                "No placeholder — returning empty predictions."
+            )
 
         predictions = []
         for game in games:

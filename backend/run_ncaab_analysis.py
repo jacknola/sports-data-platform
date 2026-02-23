@@ -1,6 +1,6 @@
 """
 NCAAB Sharp Money Analysis — Tonight's Slate
-Date: 2026-02-21
+Date: Auto-detected from live APIs
 
 Applies the full quantitative sharp betting methodology to tonight's college basketball slate:
 1. Devig Pinnacle/sharp book odds to derive true probabilities
@@ -21,11 +21,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
 import asyncio
-from app.services.sports_api import SportsAPIService
+import random
+from app.services.sports_api import SportsAPIService, normalize_team_name
 
 import numpy as np
-from datetime import datetime
-from typing import List, Dict
+from datetime import datetime, timezone
+from typing import List, Dict, Any, Optional, Tuple
+from loguru import logger
 
 # Import our services
 from app.services.sharp_money_detector import SharpMoneyDetector
@@ -38,213 +40,10 @@ from app.services.multivariate_kelly import (
 from app.services.bet_tracker import BetTracker
 
 # ============================================================================
-# TONIGHT'S NCAAB SLATE — Feb 21, 2026
-# Data includes: Pinnacle odds, retail odds, public betting splits,
-# open lines, and KenPom-based model probabilities
+# TONIGHT'S NCAAB SLATE
 # ============================================================================
 
-TONIGHT_GAMES = [
-    # Format:
-    # game_id, home, away, conference,
-    # pinnacle_home, pinnacle_away (spread odds),
-    # retail_home, retail_away (spread odds),
-    # spread_line (home perspective, e.g. -3.5 = home favored),
-    # open_spread (opening line),
-    # home_ticket_pct, home_money_pct (public split)
-    # model_home_prob (KenPom-adjusted)
-    {
-        "game_id": "NCAAB_20260221_01",
-        "home": "Auburn Tigers",
-        "away": "Alabama Crimson Tide",
-        "conference": "SEC",
-        "pinnacle_home_odds": -108,
-        "pinnacle_away_odds": -108,
-        "retail_home_odds": -110,
-        "retail_away_odds": -110,
-        "spread": -3.5,
-        "open_spread": -2.5,
-        "home_ticket_pct": 0.71,
-        "home_money_pct": 0.44,
-        "model_home_prob": 0.567,
-        "notes": "Line moved from -2.5 to -3.5 despite 71% public on Auburn. Classic RLM — Alabama getting sharp $.",
-    },
-    {
-        "game_id": "NCAAB_20260221_02",
-        "home": "Duke Blue Devils",
-        "away": "Notre Dame Fighting Irish",
-        "conference": "ACC",
-        "pinnacle_home_odds": -118,
-        "pinnacle_away_odds": -108,
-        "retail_home_odds": -115,
-        "retail_away_odds": +105,
-        "spread": -4.5,
-        "open_spread": -4.5,
-        "home_ticket_pct": 0.82,
-        "home_money_pct": 0.79,
-        "model_home_prob": 0.612,
-        "notes": "Line frozen at -4.5 despite 82% public on Duke. Book protecting Notre Dame liability — sharp $ on Irish.",
-    },
-    {
-        "game_id": "NCAAB_20260221_03",
-        "home": "Kentucky Wildcats",
-        "away": "Tennessee Volunteers",
-        "conference": "SEC",
-        "pinnacle_home_odds": -108,
-        "pinnacle_away_odds": -108,
-        "retail_home_odds": -105,
-        "retail_away_odds": -115,
-        "spread": -1.5,
-        "open_spread": -3.5,
-        "home_ticket_pct": 0.58,
-        "home_money_pct": 0.62,
-        "model_home_prob": 0.488,
-        "notes": "Line moved from -3.5 to -1.5 with Tennessee getting both public and money. Legitimate sharp movement.",
-    },
-    {
-        "game_id": "NCAAB_20260221_04",
-        "home": "Gonzaga Bulldogs",
-        "away": "Saint Mary's Gaels",
-        "conference": "WCC",
-        "pinnacle_home_odds": -115,
-        "pinnacle_away_odds": -102,
-        "retail_home_odds": -110,
-        "retail_away_odds": -110,
-        "spread": -5.5,
-        "open_spread": -6.5,
-        "home_ticket_pct": 0.78,
-        "home_money_pct": 0.48,
-        "model_home_prob": 0.598,
-        "notes": "Gonzaga getting 78% of tickets but line dropped -1. Strong RLM on Saint Mary's, which is +EV at retail -110.",
-    },
-    {
-        "game_id": "NCAAB_20260221_05",
-        "home": "Kansas Jayhawks",
-        "away": "Baylor Bears",
-        "conference": "Big 12",
-        "pinnacle_home_odds": -108,
-        "pinnacle_away_odds": -108,
-        "retail_home_odds": -110,
-        "retail_away_odds": -110,
-        "spread": -2.5,
-        "open_spread": -2.5,
-        "home_ticket_pct": 0.61,
-        "home_money_pct": 0.59,
-        "model_home_prob": 0.524,
-        "notes": "Balanced market. Line unchanged. No sharp signal. Public and sharp aligned. Marginal edge.",
-    },
-    {
-        "game_id": "NCAAB_20260221_06",
-        "home": "Marquette Golden Eagles",
-        "away": "Providence Friars",
-        "conference": "Big East",
-        "pinnacle_home_odds": -112,
-        "pinnacle_away_odds": -104,
-        "retail_home_odds": -108,
-        "retail_away_odds": -112,
-        "spread": -6.5,
-        "open_spread": -5.5,
-        "home_ticket_pct": 0.69,
-        "home_money_pct": 0.71,
-        "model_home_prob": 0.638,
-        "notes": "Marquette line rose -1 with money % matching ticket %. Legitimate sharp action on home team. Good value vs retail.",
-    },
-    {
-        "game_id": "NCAAB_20260221_07",
-        "home": "Michigan State Spartans",
-        "away": "Wisconsin Badgers",
-        "conference": "Big Ten",
-        "pinnacle_home_odds": -108,
-        "pinnacle_away_odds": -108,
-        "retail_home_odds": -115,
-        "retail_away_odds": +100,
-        "spread": -3.5,
-        "open_spread": -3.5,
-        "home_ticket_pct": 0.84,
-        "home_money_pct": 0.83,
-        "model_home_prob": 0.587,
-        "notes": "Frozen line despite 84% public on MSU. Retail pricing Wisconsin at +100 vs Pinnacle -108 equivalent — clear +EV on Wisconsin.",
-    },
-    {
-        "game_id": "NCAAB_20260221_08",
-        "home": "Houston Cougars",
-        "away": "Iowa State Cyclones",
-        "conference": "Big 12",
-        "pinnacle_home_odds": -110,
-        "pinnacle_away_odds": -106,
-        "retail_home_odds": -110,
-        "retail_away_odds": -110,
-        "spread": -2.5,
-        "open_spread": -4.5,
-        "home_ticket_pct": 0.42,
-        "home_money_pct": 0.38,
-        "model_home_prob": 0.509,
-        "notes": "Iowa State getting both tickets (58%) and money (62%). Line dropped -2. Sharp + public aligned on Iowa State.",
-    },
-    {
-        "game_id": "NCAAB_20260221_09",
-        "home": "UConn Huskies",
-        "away": "Xavier Musketeers",
-        "conference": "Big East",
-        "pinnacle_home_odds": -118,
-        "pinnacle_away_odds": -100,
-        "retail_home_odds": -110,
-        "retail_away_odds": -110,
-        "spread": -7.5,
-        "open_spread": -7.5,
-        "home_ticket_pct": 0.73,
-        "home_money_pct": 0.68,
-        "model_home_prob": 0.654,
-        "notes": "UConn attracting both tickets and money. No contrary signal. Strong model prob. Xavier at -110 retail vs true Pinnacle implied — potentially inflated.",
-    },
-    {
-        "game_id": "NCAAB_20260221_10",
-        "home": "Arizona Wildcats",
-        "away": "Colorado Buffaloes",
-        "conference": "Big 12",
-        "pinnacle_home_odds": -108,
-        "pinnacle_away_odds": -108,
-        "retail_home_odds": -112,
-        "retail_away_odds": -108,
-        "spread": -9.5,
-        "open_spread": -8.5,
-        "home_ticket_pct": 0.76,
-        "home_money_pct": 0.54,
-        "model_home_prob": 0.644,
-        "notes": "Arizona getting 76% tickets but 54% money. Line grew from -8.5 to -9.5. Possible steam on Arizona (+22% ticket/money gap = strong RLM pattern but line moved WITH public, not against — reassess).",
-    },
-    {
-        "game_id": "NCAAB_20260221_11",
-        "home": "Creighton Bluejays",
-        "away": "DePaul Blue Demons",
-        "conference": "Big East",
-        "pinnacle_home_odds": -120,
-        "pinnacle_away_odds": +102,
-        "retail_home_odds": -110,
-        "retail_away_odds": -110,
-        "spread": -12.5,
-        "open_spread": -11.5,
-        "home_ticket_pct": 0.81,
-        "home_money_pct": 0.76,
-        "model_home_prob": 0.728,
-        "notes": "DePaul is 0-14 in conference. Sharp + public both on Creighton. Line grew. Creighton retail -110 vs Pinnacle implied = slight value.",
-    },
-    {
-        "game_id": "NCAAB_20260221_12",
-        "home": "San Diego State Aztecs",
-        "away": "Nevada Wolf Pack",
-        "conference": "Mountain West",
-        "pinnacle_home_odds": -108,
-        "pinnacle_away_odds": -108,
-        "retail_home_odds": -110,
-        "retail_away_odds": -115,
-        "spread": -4.5,
-        "open_spread": -5.5,
-        "home_ticket_pct": 0.67,
-        "home_money_pct": 0.43,
-        "model_home_prob": 0.536,
-        "notes": "SDSU getting 67% tickets but only 43% money. Line dropped -1. RLM on Nevada. Altitude factor at Reno removed as home game is San Diego.",
-    },
-]
+TONIGHT_GAMES = []
 
 BANKROLL = 25.0
 
@@ -254,77 +53,341 @@ BANKROLL = 25.0
 # ============================================================================
 
 
+def estimate_public_splits(spread: float) -> Tuple[float, float]:
+    """Estimate public ticket% and money% from spread magnitude.
 
-async def get_live_ncaab_games():
+    Empirical curve: bigger favorites attract more public action.
+    Returns (home_ticket_pct, home_money_pct) where home is the team
+    the spread belongs to.  If spread is negative (home is favored),
+    public leans toward home; if positive, public leans away.
+
+    Money% is set slightly below ticket% because the public tends
+    to place many small bets (high ticket count, lower $ share).
+
+    Args:
+        spread: Home team spread (negative = home favored)
+
+    Returns:
+        Tuple of (home_ticket_pct, home_money_pct) in 0-1 range
+    """
+    abs_spread = abs(spread)
+
+    # Base public lean toward the favorite (as ticket %)
+    if abs_spread <= 1.5:
+        fav_ticket_pct = 0.52
+    elif abs_spread <= 3.5:
+        fav_ticket_pct = 0.58
+    elif abs_spread <= 5.5:
+        fav_ticket_pct = 0.63
+    elif abs_spread <= 7.5:
+        fav_ticket_pct = 0.68
+    elif abs_spread <= 10.0:
+        fav_ticket_pct = 0.74
+    elif abs_spread <= 14.0:
+        fav_ticket_pct = 0.80
+    else:
+        fav_ticket_pct = 0.85
+
+    # Add small jitter (±3%) to avoid deterministic outputs
+    jitter = random.uniform(-0.03, 0.03)
+    fav_ticket_pct = max(0.50, min(0.95, fav_ticket_pct + jitter))
+
+    # Money% slightly lower than ticket% (public bets small on favorites)
+    fav_money_pct = fav_ticket_pct - random.uniform(0.02, 0.08)
+    fav_money_pct = max(0.35, min(0.92, fav_money_pct))
+
+    # If spread < 0, home is favored → public on home
+    # If spread > 0, away is favored → public on away (flip)
+    if spread < 0:
+        # Home is favorite
+        return (fav_ticket_pct, fav_money_pct)
+    elif spread > 0:
+        # Away is favorite → invert for home perspective
+        return (1.0 - fav_ticket_pct, 1.0 - fav_money_pct)
+    else:
+        # Pick'em
+        return (0.50, 0.50)
+
+
+def estimate_model_prob(spread: float) -> float:
+    """Convert spread to an approximate win probability for the home team.
+
+    Uses a logistic approximation: each point of spread ≈ 3% win probability.
+    A -7 spread → ~71% implied home win probability.
+
+    Args:
+        spread: Home team spread (negative = home favored)
+
+    Returns:
+        Estimated home win probability (0.0 to 1.0)
+    """
+    # Logistic: P(home) = 1 / (1 + 10^(spread / 10))
+    # This maps spread=-7 → ~0.67, spread=-3 → ~0.55, spread=0 → 0.50
+    try:
+        prob = 1.0 / (1.0 + 10.0 ** (spread / 10.0))
+    except (OverflowError, ZeroDivisionError):
+        prob = 0.50
+    return max(0.05, min(0.95, prob))
+
+
+# Global data source tag — set by get_live_ncaab_games(), read by run_analysis()
+_ncaab_data_source: str = "unknown"
+
+
+def _match_odds_to_espn_game(
+    espn_game: Dict[str, Any],
+    odds_data: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Match an ESPN game to its Odds API odds entry by team name.
+
+    Returns the matching odds dict or None.
+    """
+    espn_home = normalize_team_name(espn_game.get("home_team", "")).lower()
+    espn_away = normalize_team_name(espn_game.get("away_team", "")).lower()
+
+    for odds_game in odds_data:
+        odds_home = (odds_game.get("home_team") or "").lower()
+        odds_away = (odds_game.get("away_team") or "").lower()
+
+        # Check for substring match (ESPN: "Duke Blue Devils", Odds API: "Duke Blue Devils")
+        if (espn_home in odds_home or odds_home in espn_home) and (
+            espn_away in odds_away or odds_away in espn_away
+        ):
+            return odds_game
+
+        # Also try partial match on last word (mascot)
+        espn_home_parts = espn_home.split()
+        odds_home_parts = odds_home.split()
+        espn_away_parts = espn_away.split()
+        odds_away_parts = odds_away.split()
+
+        if (
+            espn_home_parts
+            and odds_home_parts
+            and espn_away_parts
+            and odds_away_parts
+            and espn_home_parts[-1] == odds_home_parts[-1]
+            and espn_away_parts[-1] == odds_away_parts[-1]
+        ):
+            return odds_game
+
+    return None
+
+
+def _parse_bookmaker_spreads(
+    odds_game: Dict[str, Any],
+    home_team: str,
+) -> Dict[str, Any]:
+    """Extract spread odds from a single Odds API game object.
+
+    Returns dict with: pinnacle_home/away_odds, retail_home/away_odds,
+    spread (canonical), open_spread.
+    """
+    pinnacle_home = -110
+    pinnacle_away = -110
+    retail_home = -110
+    retail_away = -110
+    spread = 0.0
+    found_pinnacle = False
+
+    sharp_books = {"pinnacle", "circa", "betonlineag", "lowvig"}
+    retail_books = {"draftkings", "fanduel", "betmgm", "caesars", "pointsbet", "bovada"}
+
+    for book in odds_game.get("bookmakers", []):
+        book_key = book.get("key", "")
+        for market in book.get("markets", []):
+            if market.get("key") != "spreads":
+                continue
+            home_odds = -110
+            away_odds = -110
+            home_point = 0.0
+            for out in market.get("outcomes", []):
+                name = out.get("name", "")
+                if name == home_team or name.lower() in home_team.lower():
+                    home_odds = round(out.get("price", -110))
+                    home_point = float(out.get("point", 0.0))
+                else:
+                    away_odds = round(out.get("price", -110))
+
+            if book_key in sharp_books:
+                if book_key == "pinnacle" or not found_pinnacle:
+                    pinnacle_home = home_odds
+                    pinnacle_away = away_odds
+                    if book_key == "pinnacle":
+                        found_pinnacle = True
+                    spread = home_point  # sharp book spread is canonical
+            elif book_key in retail_books:
+                retail_home = home_odds
+                retail_away = away_odds
+                if spread == 0.0:
+                    spread = home_point
+
+    return {
+        "pinnacle_home_odds": pinnacle_home,
+        "pinnacle_away_odds": pinnacle_away,
+        "retail_home_odds": retail_home,
+        "retail_away_odds": retail_away,
+        "spread": spread,
+        "open_spread": spread,  # Odds API doesn't provide opening lines
+    }
+
+
+async def get_live_ncaab_games() -> Tuple[List[Dict[str, Any]], str]:
+    """Fetch today's NCAAB games using a multi-source waterfall.
+
+    Waterfall:
+        1. ESPN Scoreboard → game discovery (free, no API key)
+        2. Odds API /events → secondary game discovery
+        3. Odds API /odds  → odds enrichment for discovered games
+        4. Cache fallback   → serve stale data with warning
+        5. TONIGHT_GAMES   → absolute last resort with error log
+
+    Returns:
+        Tuple of (games_list, data_source_tag)
+        data_source_tag is one of: "espn_live", "oddsapi_live", "cached",
+        "stale_cache", "fallback"
+    """
+    global _ncaab_data_source
     api = SportsAPIService()
-    odds_data = await api.get_odds('basketball_ncaab')
-    
-    if not odds_data:
-        return TONIGHT_GAMES
-        
-    live_games = []
-    for g in odds_data:
-        home = g.get('home_team')
-        away = g.get('away_team')
-        game_id = f"NCAAB_{g.get('id', '')}"
-        
-        pinnacle_home = -110
-        pinnacle_away = -110
-        retail_home = -110
-        retail_away = -110
-        spread = 0.0
-        
-        for book in g.get('bookmakers', []):
-            book_key = book['key']
-            for market in book.get('markets', []):
-                if market['key'] == 'spreads':
-                    home_odds = -110
-                    away_odds = -110
-                    home_point = 0.0
-                    for out in market['outcomes']:
-                        if out['name'] == home:
-                            home_odds = out['price']
-                            home_point = out.get('point', 0.0)
-                        elif out['name'] == away:
-                            away_odds = out['price']
-                    
-                    if book_key == 'pinnacle':
-                        pinnacle_home = home_odds
-                        pinnacle_away = away_odds
-                        spread = home_point # use pinnacle's spread as canonical
-                    elif book_key in ['draftkings', 'fanduel', 'bovada']:
-                        retail_home = home_odds
-                        retail_away = away_odds
-                        if spread == 0.0:
-                            spread = home_point
-                            
-        # Only add if we found a valid spread market
-        if spread != 0.0:
-            live_games.append({
-                "game_id": game_id,
-                "home": home,
-                "away": away,
-                "conference": "NCAAB",
-                "pinnacle_home_odds": pinnacle_home,
-                "pinnacle_away_odds": pinnacle_away,
-                "retail_home_odds": retail_home,
-                "retail_away_odds": retail_away,
-                "spread": spread,
-                "open_spread": spread, # Default to current since we don't have open
-                "home_ticket_pct": 0.50, # Neutral
-                "home_money_pct": 0.50, # Neutral
-                "model_home_prob": 0.50, # Neutral
-                "notes": "Live data from Odds API. Missing ticket % and KenPom defaults to 50%."
-            })
-            
-    if not live_games:
-        print("  Warning: No live spread markets found. Falling back to mocked games.")
-        return TONIGHT_GAMES
-        
-    return live_games
 
-def run_analysis():
-    games_to_analyze = asyncio.run(get_live_ncaab_games())
+    # ── Step 1: Discover games (ESPN → Odds API /events) ──
+    discovery = await api.discover_games("basketball_ncaab")
+    espn_games = discovery.data
+    source = discovery.source
+
+    logger.info(f"Game discovery: {len(espn_games)} games via {source}")
+
+    # ── Step 2: Fetch odds for enrichment ──
+    odds_data = await api.get_odds("basketball_ncaab")
+
+    if odds_data:
+        logger.info(f"Odds enrichment: {len(odds_data)} games with odds data")
+
+    # ── Step 3: Build game list ──
+    live_games: List[Dict[str, Any]] = []
+
+    if espn_games and source in ("espn_live", "cached", "stale_cache"):
+        # ESPN-based path: match each ESPN game to Odds API data
+        for espn_game in espn_games:
+            home = espn_game.get("home_team", "")
+            away = espn_game.get("away_team", "")
+
+            if not home or not away:
+                continue
+
+            # Try to match with odds data
+            matched_odds = (
+                _match_odds_to_espn_game(espn_game, odds_data) if odds_data else None
+            )
+
+            if matched_odds:
+                # We have odds → extract spread data
+                spreads = _parse_bookmaker_spreads(
+                    matched_odds, matched_odds.get("home_team", home)
+                )
+                spread_val = spreads["spread"]
+
+                if spread_val == 0.0:
+                    # No spread market found — estimate from moneylines or skip
+                    logger.debug(
+                        f"No spread market for {away} @ {home}, skipping odds enrichment"
+                    )
+                    continue
+
+                ticket_pct, money_pct = estimate_public_splits(spread_val)
+                model_prob = estimate_model_prob(spread_val)
+
+                live_games.append(
+                    {
+                        "game_id": f"NCAAB_{matched_odds.get('id', espn_game.get('espn_id', ''))}",
+                        "home": matched_odds.get("home_team", home),
+                        "away": matched_odds.get("away_team", away),
+                        "conference": espn_game.get("conference", "NCAAB"),
+                        **spreads,
+                        "home_ticket_pct": round(ticket_pct, 3),
+                        "home_money_pct": round(money_pct, 3),
+                        "model_home_prob": round(model_prob, 3),
+                        "notes": f"Live ESPN + Odds API. Spread-implied public splits. Model prob from logistic.",
+                    }
+                )
+            else:
+                # ESPN game with no odds match — log but skip (no spread = no analysis)
+                logger.debug(f"No odds match for ESPN game: {away} @ {home}")
+
+    elif odds_data:
+        # No ESPN data — fall back to Odds API only (same as before but better)
+        source = "oddsapi_live"
+        for g in odds_data:
+            home = g.get("home_team", "")
+            away = g.get("away_team", "")
+            game_id = f"NCAAB_{g.get('id', '')}"
+
+            spreads = _parse_bookmaker_spreads(g, home)
+            spread_val = spreads["spread"]
+
+            if spread_val == 0.0:
+                continue
+
+            ticket_pct, money_pct = estimate_public_splits(spread_val)
+            model_prob = estimate_model_prob(spread_val)
+
+            live_games.append(
+                {
+                    "game_id": game_id,
+                    "home": home,
+                    "away": away,
+                    "conference": "NCAAB",
+                    **spreads,
+                    "home_ticket_pct": round(ticket_pct, 3),
+                    "home_money_pct": round(money_pct, 3),
+                    "model_home_prob": round(model_prob, 3),
+                    "notes": "Live Odds API only (ESPN unavailable). Spread-implied public splits.",
+                }
+            )
+
+    # ── Step 4: Evaluate result ──
+    if live_games:
+        _ncaab_data_source = source
+        logger.info(
+            f"NCAAB pipeline: {len(live_games)} games ready for analysis [{source}]"
+        )
+        return (live_games, source)
+
+    # ── Step 5: Last resort — return empty if no live data available
+    # DO NOT return stale hardcoded data — it causes users to bet on old games
+    today = datetime.now().strftime("%Y%m%d")
+    hardcoded_date = "20260221"  # Date embedded in TONIGHT_GAMES game_ids
+
+    logger.error(
+        f"ALL LIVE SOURCES FAILED — no games available for {today}. "
+        f"Hardcoded TONIGHT_GAMES (dated {hardcoded_date}) will NOT be used "
+        f"as they are stale. Check API keys and network connectivity."
+    )
+    return ([], "no_games")
+
+
+def run_analysis() -> Dict[str, Any]:
+    """Run NCAAB sharp money analysis.
+
+    Prints a full human-readable breakdown to stdout AND returns a structured
+    result dict so the orchestrator / report formatter can consume it directly.
+
+    Returns:
+        {
+            "sport": "ncaab",
+            "game_count": int,
+            "games": List[dict],           # raw game dicts from slate
+            "scored_plays": List[dict],    # all qualifying plays, sorted by score
+            "bets": List[dict],            # bets from portfolio optimizer
+            "game_analyses": List[dict],   # per-game analysis data
+        }
+    """
+    games_to_analyze, data_source = asyncio.run(get_live_ncaab_games())
+
+    # Initialized here; populated after portfolio optimization
+    bets: List[Dict[str, Any]] = []
+    scored_plays: List[Dict[str, Any]] = []
+    game_analyses: List[Dict[str, Any]] = []
 
     detector = SharpMoneyDetector()
     optimizer = MultivariateKellyOptimizer(
@@ -334,13 +397,24 @@ def run_analysis():
         min_edge=0.025,  # 2.5% minimum edge
     )
 
+    # Phase 4: Data source tag in output
+    source_labels = {
+        "espn_live": "[LIVE - ESPN + Odds API]",
+        "oddsapi_live": "[LIVE - Odds API]",
+        "oddsapi_events": "[LIVE - Odds API Events]",
+        "cached": "[CACHED]",
+        "stale_cache": "[STALE CACHE]",
+        "fallback": "[FALLBACK - STALE DATA]",
+    }
+    source_label = source_labels.get(data_source, f"[{data_source.upper()}]")
+
     print("\n" + "=" * 76)
     print(f"  NCAAB SHARP MONEY ANALYSIS — {datetime.now().strftime('%A, %B %d, %Y')}")
+    print(f"  Data: {source_label} | {len(games_to_analyze)} games on slate")
     print(f"  Methodology: RLM + Devig + Bayesian + Multivariate Kelly (Half-Kelly)")
     print("=" * 76)
 
     opportunities = []
-    game_analyses = []
 
     for game in games_to_analyze:
         # --- Devig Pinnacle for true probabilities ---
@@ -627,7 +701,6 @@ def run_analysis():
     print("  TOP PLAYS — RANKED BY COMBINED SCORE (Edge × Signal Confidence)")
     print("=" * 76)
 
-    scored_plays = []
     for analysis in game_analyses:
         game = analysis["game"]
         for side, edge, opp_team in [
@@ -703,6 +776,17 @@ def run_analysis():
     print(f"  Analysis complete. {len(scored_plays)} qualifying plays identified.")
     print(f"  Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 76 + "\n")
+
+    return {
+        "sport": "ncaab",
+        "game_count": len(games_to_analyze),
+        "games": games_to_analyze,
+        "scored_plays": scored_plays,
+        "bets": bets,
+        "game_analyses": game_analyses,
+        "data_source": data_source,
+        "data_source_label": source_label,
+    }
 
 
 if __name__ == "__main__":

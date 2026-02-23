@@ -9,14 +9,28 @@ import sys
 import os
 import asyncio
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from loguru import logger
 from app.services.nba_ml_predictor import NBAMLPredictor
 from app.services.bet_tracker import BetTracker
 
 
-async def run_nba_analysis():
+async def run_nba_analysis() -> Dict[str, Any]:
+    """Run NBA ML analysis.
+
+    Returns structured data dict in addition to printing to stdout.
+
+    Returns:
+        {
+            "sport": "nba",
+            "game_count": int,
+            "predictions": List[dict],
+            "bets": List[dict],
+        }
+    """
     predictor = NBAMLPredictor()
 
     print("\n" + "=" * 76)
@@ -28,7 +42,7 @@ async def run_nba_analysis():
 
     if not predictions:
         print("\n  No NBA games found today.")
-        return
+        return {"sport": "nba", "game_count": 0, "predictions": [], "bets": []}
 
     BANKROLL = 25.0
     bets_to_save = []
@@ -127,6 +141,13 @@ async def run_nba_analysis():
         print(f"\n  Saved {len(bets_to_save)} pending ML bets to tracker.")
     else:
         print("\n  No bets meet all ML criteria today.")
+
+    return {
+        "sport": "nba",
+        "game_count": len(predictions),
+        "predictions": predictions,
+        "bets": bets_to_save,
+    }
 
 
 def main():

@@ -10,7 +10,7 @@ Telegram HTML allowed tags: <b>, <i>, <u>, <code>, <pre>, <a href>
 
 import re
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 
 # Emoji tier indicators
@@ -97,7 +97,7 @@ class ReportFormatter:
             return "<b>No qualifying plays identified.</b>"
 
         lines = [f"<b>{_EMOJI_PLAY} TOP PLAYS — QUICK VIEW</b>\n"]
-        for play in plays[:6]:
+        for play in plays[:20]:
             signals = play.get("signals", "Model only")
             edge = play.get("edge_raw", 0.0)
             emoji = _EMOJI_STRONG if edge >= 0.05 else _EMOJI_PLAY
@@ -340,6 +340,334 @@ class ReportFormatter:
                 lines.append(f"  <i>{note}</i>")
 
         return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # Utilities
+    # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Orchestrator-powered live report
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def format_live_report(
+        data: Dict[str, Any],
+        metrics: Optional[dict] = None,
+    ) -> str:
+        """Format the orchestrated analysis into a live Telegram report.
+
+        This is the primary formatter when the orchestrator pipeline is active.
+        It uses structured pick data (not raw stdout) and dynamically adjusts
+        the number of picks displayed based on the slate size.
+
+        Args:
+            data: Result dict from ``run_orchestrated_analysis()``.
+            metrics: Optional performance metrics dict (W/L, ROI).
+
+        Returns:
+            HTML string ready for ``TelegramService.send_message()``.
+        """
+        parts: List[str] = []
+
+        total_games = data.get("total_game_count", 0)
+        max_picks = data.get("max_picks", 0)
+        picks: List[Dict[str, Any]] = data.get("picks", [])
+
+        ncaab_count = (data.get("ncaab") or {}).get("game_count", 0)
+        nba_count = (data.get("nba") or {}).get("game_count", 0)
+
+        # ── Header ──
+        # Phase 4: Data source tag — shows where game data came from
+        data_source = data.get("data_source", "")
+        source_labels = {
+            "espn_live": "LIVE - ESPN + Odds API",
+            "oddsapi_live": "LIVE - Odds API",
+            "oddsapi_events": "LIVE - Odds API Events",
+            "cached": "CACHED",
+            "stale_cache": "STALE CACHE",
+            "fallback": "FALLBACK - STALE DATA",
+        }
+        source_label = source_labels.get(data_source, "")
+
+        header_lines = [
+            f"<b>🔴 LIVE PICKS — {datetime.now().strftime('%a %b %d, %Y %I:%M %p')}</b>"
+        ]
+        if source_label:
+            header_lines.append(f"<code>[{source_label}]</code>")
+        header_lines.append(
+            f"Slate: <code>{ncaab_count}</code> NCAAB + <code>{nba_count}</code> NBA "
+            f"= <code>{total_games}</code> games"
+        )
+        parts.append("\n".join(header_lines))
+
+        # ── Season Record ──
+        if metrics and metrics.get("total_bets", 0) > 0:
+            w = metrics.get("wins", 0)
+            l = metrics.get("losses", 0)
+            p = metrics.get("pushes", 0)
+            win_rate = metrics.get("win_rate", 0.0) * 100
+            units = metrics.get("units", 0.0)
+            roi = metrics.get("roi", 0.0) * 100
+            push_str = f"-{p}" if p else ""
+            parts.append(
+                f"<b>📈 Record:</b> {w}-{l}{push_str} ({win_rate:.1f}%)\n"
+                f"<b>💰 Profit:</b> {units:+.2f}U | <b>ROI:</b> {roi:+.1f}%"
+            )
+
+        # ── Picks ──
+        if not picks:
+            parts.append(f"{_EMOJI_PASS} <b>No qualifying plays on this slate.</b>")
+        else:
+            pick_lines = [
+                f"<b>{_EMOJI_PLAY} TOP {len(picks)} PICKS</b> <i>(of {max_picks} max for {total_games}-game slate)</i>"
+            ]
+            for i, pick in enumerate(picks, 1):
+                pick_lines.append(ReportFormatter._format_single_pick(i, pick))
+            parts.append("\n\n".join(pick_lines))
+
+        # ── Orchestrator enrichment summary ──
+        enrichment = []
+        if data.get("orchestrator_ncaab"):
+            agents = data["orchestrator_ncaab"].get("agents_used", [])
+            enrichment.append(f"NCAAB: {', '.join(set(agents))}")
+        if data.get("orchestrator_nba"):
+            agents = data["orchestrator_nba"].get("agents_used", [])
+            enrichment.append(f"NBA: {', '.join(set(agents))}")
+        if enrichment:
+            parts.append(f"<i>🤖 Agent enrichment: {' | '.join(enrichment)}</i>")
+
+        # ── Footer ──
+        footer_parts = [
+            "Bets are LIVE. Dynamic sizing via Multivariate Kelly.",
+            "Track CLV on every bet. Line shop before placing.",
+        ]
+
+        # Phase 4: API quota display
+        quota_remaining = data.get("api_quota_remaining")
+        if quota_remaining is not None:
+            footer_parts.append(f"API: {quota_remaining} requests remaining")
+
+        parts.append(f"<i>{'  '.join(footer_parts)}</i>")
+
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _format_single_pick(rank: int, pick: Dict[str, Any]) -> str:
+        """Render one pick as a Telegram HTML block."""
+        bet_on = pick.get("bet_on", pick.get("team", "Unknown"))
+        matchup = pick.get("matchup", "")
+        sport = (pick.get("sport") or "").upper()
+        odds = pick.get("odds", "")
+        edge = pick.get("edge", 0)
+        edge_pct = edge * 100 if isinstance(edge, float) and edge < 1 else edge
+        score = pick.get("score", 0)
+        signals = pick.get("signals", "")
+        conference = pick.get("conference", "")
+
+        # Choose emoji tier
+        if isinstance(edge, (int, float)):
+            edge_val = edge if edge < 1 else edge / 100
+        else:
+            edge_val = 0
+        emoji = _EMOJI_STRONG if edge_val >= 0.05 else _EMOJI_PLAY
+
+        # Signal tag
+        signal_tag = ""
+        if (
+            signals
+            and "model only" not in str(signals).lower()
+            and "none" not in str(signals).lower()
+        ):
+            signal_tag = f" {_EMOJI_SIGNAL}"
+
+        # Sentiment tag (from orchestrator)
+        sentiment_tag = ""
+        sentiment = pick.get("sentiment", {})
+        if sentiment:
+            sent_score = sentiment.get("sentiment_score", sentiment.get("score", 0))
+            if isinstance(sent_score, (int, float)) and sent_score != 0:
+                direction = "📈" if sent_score > 0 else "📉"
+                sentiment_tag = f"  |  Sentiment {direction}"
+
+        # Expert tag
+        expert_tag = ""
+        expert = pick.get("expert", {})
+        if expert and expert.get("should_bet"):
+            conf = expert.get("confidence", 0)
+            if isinstance(conf, (int, float)) and conf > 0:
+                expert_tag = f"\n   🧠 Expert: {conf:.0%} confidence"
+
+        # Build the line
+        odds_str = f"<code>({odds})</code>" if odds else ""
+        edge_str = f"{edge_pct:.1f}%" if isinstance(edge_pct, float) else str(edge_pct)
+        sport_tag = f"[{sport}]" if sport else ""
+
+        line = (
+            f"{emoji} <b>#{rank} {ReportFormatter._escape(str(bet_on))} "
+            f"{odds_str}</b>{signal_tag}\n"
+            f"   {sport_tag} <i>{ReportFormatter._escape(str(matchup))}</i>\n"
+            f"   Edge: <code>{edge_str}</code>  |  Score: <code>{score:.1f}</code>"
+        )
+        if signals and str(signals).strip():
+            line += f"\n   Signals: {ReportFormatter._escape(str(signals))}"
+        if conference:
+            line += f"  |  {ReportFormatter._escape(str(conference))}"
+        if sentiment_tag:
+            line += sentiment_tag
+        if expert_tag:
+            line += expert_tag
+
+        return line
+
+    # ------------------------------------------------------------------
+    # Player Props Report (separate Telegram message)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def format_prop_report(prop_data: Dict[str, Any]) -> str:
+        """Format player prop analysis as a standalone Telegram HTML message.
+
+        Args:
+            prop_data: Dict from run_prop_analysis() with keys:
+                sport, date, total_props, positive_ev_count,
+                props (all), best_props (filtered +EV)
+
+        Returns:
+            HTML-formatted string for Telegram
+        """
+        parts: List[str] = []
+
+        total = prop_data.get("total_props", 0)
+        best_props = prop_data.get("best_props", [])
+        ev_count = prop_data.get("positive_ev_count", 0)
+
+        # ── Header ──
+        parts.append(
+            f"<b>🏀 NBA PLAYER PROPS — "
+            f"{datetime.now().strftime('%a %b %d, %Y %I:%M %p')}</b>"
+        )
+        parts.append(
+            f"Scanned: <code>{total}</code> props  |  +EV: <code>{ev_count}</code>"
+        )
+
+        if not best_props:
+            parts.append("\n<i>No +EV props found on this slate.</i>")
+            return "\n".join(parts)
+
+        # ── Props ──
+        parts.append("")  # blank line
+        for i, prop in enumerate(best_props, 1):
+            parts.append(ReportFormatter._format_single_prop(i, prop))
+
+        # ── Footer ──
+        parts.append("")
+        parts.append(
+            "<i>Props sized via Quarter-Kelly. Line shop before placing. Track CLV.</i>"
+        )
+
+        return "\n".join(parts)
+
+    @staticmethod
+    def _format_single_prop(rank: int, prop: Dict[str, Any]) -> str:
+        """Render a single player prop pick in Telegram HTML format.
+
+        Args:
+            rank: Display rank (1-indexed)
+            prop: Dict from _build_prop_analysis() with model, sharp, Bayesian keys
+
+        Returns:
+            HTML string for one prop pick
+        """
+        player = prop.get("player_name", "Unknown")
+        stat_type = prop.get("stat_type", "")
+        line = prop.get("line", 0)
+        best_side = prop.get("best_side", "over")
+        bayesian_edge = prop.get("bayesian_edge", 0)
+        projected_mean = prop.get("projected_mean", 0)
+        kelly = prop.get("kelly_fraction", 0)
+        sharp_signals = prop.get("sharp_signals", [])
+        ev_class = prop.get("ev_classification", "")
+        home_team = prop.get("home_team", "")
+        away_team = prop.get("away_team", "")
+        books_ct = prop.get("books_offering", 0)
+        best_book = (
+            prop.get("best_over_book", "")
+            if best_side == "over"
+            else prop.get("best_under_book", "")
+        )
+        odds = (
+            prop.get("over_odds", -110)
+            if best_side == "over"
+            else prop.get("under_odds", -110)
+        )
+
+        # Stat display names
+        stat_display = {
+            "points": "PTS",
+            "rebounds": "REB",
+            "assists": "AST",
+            "threes": "3PM",
+            "blocks": "BLK",
+            "steals": "STL",
+            "pts+reb+ast": "PRA",
+            "pts+reb": "P+R",
+            "pts+ast": "P+A",
+            "reb+ast": "R+A",
+            "turnovers": "TO",
+            "stl+blk": "S+B",
+        }.get(stat_type, stat_type.upper())
+
+        # Edge tier emoji
+        edge_pct = bayesian_edge * 100 if isinstance(bayesian_edge, float) else 0
+        if edge_pct >= 8:
+            emoji = "🟢"
+            tier = "STRONG"
+        elif edge_pct >= 5:
+            emoji = "🟡"
+            tier = "GOOD"
+        elif edge_pct >= 3:
+            emoji = "🔵"
+            tier = "LEAN"
+        else:
+            emoji = "⚪"
+            tier = "PASS"
+
+        # Sharp signal tag
+        signal_tag = ""
+        if sharp_signals:
+            types = [
+                s.get("signal_type", "") if isinstance(s, dict) else str(s)
+                for s in sharp_signals
+            ]
+            signal_tag = f"  ⚡ {', '.join(types)}"
+
+        # EV classification tag
+        ev_tag = ""
+        if ev_class and ev_class != "pass":
+            ev_tag = f"  [{ev_class.replace('_', ' ').title()}]"
+
+        # Matchup line
+        matchup = f"{away_team} @ {home_team}" if home_team and away_team else ""
+
+        # Build output
+        side_upper = best_side.upper()
+        esc = ReportFormatter._escape
+
+        result = (
+            f"{emoji} <b>#{rank} {esc(player)} — {side_upper} "
+            f"{line} {stat_display} ({odds})</b>{signal_tag}{ev_tag}\n"
+        )
+        if matchup:
+            result += f"   <i>{esc(matchup)}</i>\n"
+        result += (
+            f"   Proj: <code>{projected_mean:.1f}</code>  |  "
+            f"Edge: <code>{edge_pct:.1f}%</code>  |  "
+            f"Kelly: <code>{kelly:.2%}</code>"
+        )
+        if best_book:
+            result += f"\n   Best line: {esc(best_book)} ({books_ct} books)"
+
+        return result
 
     # ------------------------------------------------------------------
     # Utilities
