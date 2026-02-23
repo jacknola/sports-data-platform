@@ -348,8 +348,8 @@ class NBAMLPredictor:
                 home_odds = -110
                 away_odds = -110
 
-                # Try to find pinnacle or draftkings/fanduel
-                target_books = ["pinnacle", "circa", "draftkings", "fanduel", "bovada"]
+                # Try to find pinnacle or fanduel/draftkings
+                target_books = ["pinnacle", "fanduel", "draftkings", "circa", "bovada"]
                 for book in target_books:
                     b_data = next((b for b in bookmakers if b["key"] == book), None)
                     if b_data:

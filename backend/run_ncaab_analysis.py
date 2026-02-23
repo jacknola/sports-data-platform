@@ -191,7 +191,8 @@ def _parse_bookmaker_spreads(
     found_pinnacle = False
 
     sharp_books = {"pinnacle", "circa", "betonlineag", "lowvig"}
-    retail_books = {"draftkings", "fanduel", "betmgm", "caesars", "pointsbet", "bovada"}
+    retail_books = {"fanduel", "draftkings", "betmgm", "caesars", "pointsbet", "bovada"}
+    found_fanduel = False
 
     for book in odds_game.get("bookmakers", []):
         book_key = book.get("key", "")
@@ -217,10 +218,13 @@ def _parse_bookmaker_spreads(
                         found_pinnacle = True
                     spread = home_point  # sharp book spread is canonical
             elif book_key in retail_books:
-                retail_home = home_odds
-                retail_away = away_odds
-                if spread == 0.0:
-                    spread = home_point
+                if book_key == "fanduel" or not found_fanduel:
+                    retail_home = home_odds
+                    retail_away = away_odds
+                    if book_key == "fanduel":
+                        found_fanduel = True
+                    if spread == 0.0:
+                        spread = home_point
 
     return {
         "pinnacle_home_odds": pinnacle_home,
