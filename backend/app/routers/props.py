@@ -439,6 +439,7 @@ def _build_prop_analysis(prop: Dict) -> Dict:
         "game_id": prop.get("game_id", ""),
         "stat_type": prop["stat_type"],
         "line": prop["line"],
+        "market": "prop",
         "best_side": projection.best_side,
         "over_odds": prop["over_odds"],
         "under_odds": prop["under_odds"],

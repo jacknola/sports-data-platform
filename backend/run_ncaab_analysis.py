@@ -726,6 +726,7 @@ def run_analysis() -> Dict[str, Any]:
                     "rank": 0,
                     "matchup": f"{game['away']} @ {game['home']}",
                     "bet_on": side,
+                    "market": "spread",
                     "odds": odds,
                     "edge": edge,
                     "signal_conf": signal_conf,

@@ -501,11 +501,27 @@ class ReportFormatter:
         odds_str = f"<code>({odds})</code>" if odds else ""
         edge_str = f"{edge_pct:.1f}%" if isinstance(edge_pct, float) else str(edge_pct)
         sport_tag = f"[{sport}]" if sport else ""
+        
+        # Market label
+        market = pick.get("market", "").lower()
+        if not market and pick.get("stat_type"):
+            market = "prop"
+            
+        market_labels = {
+            "spread": "SPREAD",
+            "total": "TOTAL",
+            "moneyline": "ML",
+            "ml": "ML",
+            "h2h": "ML",
+            "prop": "PROP"
+        }
+        market_label = market_labels.get(market, market.upper())
+        market_tag = f" [{market_label}]" if market_label else ""
 
         line = (
             f"{emoji} <b>#{rank} {ReportFormatter._escape(str(bet_on))} "
             f"{odds_str}</b>{signal_tag}\n"
-            f"   {sport_tag} <i>{ReportFormatter._escape(str(matchup))}</i>\n"
+            f"   {sport_tag}{market_tag} <i>{ReportFormatter._escape(str(matchup))}</i>\n"
             f"   Edge: <code>{edge_str}</code>  |  Score: <code>{score:.1f}</code>"
         )
         if signals and str(signals).strip():
@@ -657,8 +673,9 @@ class ReportFormatter:
             f"{emoji} <b>#{rank} {esc(player)} — {side_upper} "
             f"{line} {stat_display} ({odds})</b>{signal_tag}{ev_tag}\n"
         )
+        result += f"   [PROP] "
         if matchup:
-            result += f"   <i>{esc(matchup)}</i>\n"
+            result += f"<i>{esc(matchup)}</i>\n"
         result += (
             f"   Proj: <code>{projected_mean:.1f}</code>  |  "
             f"Edge: <code>{edge_pct:.1f}%</code>  |  "
