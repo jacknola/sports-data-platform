@@ -111,6 +111,36 @@ async def run_nba_analysis() -> Dict[str, Any]:
         else:
             print("  → PASS (No qualifying ML edge)")
 
+        # Check under/over if available
+        if p.get("underover_prediction"):
+            uo = p["underover_prediction"]
+            uo_prob = uo["over_prob"] if uo["recommendation"] == "over" else uo["under_prob"]
+            uo_edge = abs(uo["over_prob"] - 0.5) # simplified edge for placeholder
+            
+            # Use same retail odds for EV/Kelly if available, otherwise default -110
+            uo_odds = -110 
+            uo_decimal = 1.909
+            uo_ev = (uo_prob * (uo_decimal - 1)) - (1 - uo_prob)
+            
+            if uo_ev > 0.025:
+                uo_kelly = (uo_ev / (uo_decimal - 1)) * 0.25
+                uo_bet_size = uo_kelly * BANKROLL
+                
+                if uo_bet_size > 0.5: # At least $0.50 bet
+                    print(f"  ★ TOTAL BET: {uo['recommendation'].upper()} {uo['total_points']} ({uo_odds:+d}) → ${uo_bet_size:.0f} ({uo_kelly * 100:.2f}% of bankroll)")
+                    
+                    bets_to_save.append({
+                        "game_id": f"NBA_TOTAL_{h}_{a}_{datetime.now().strftime('%Y%m%d')}".replace(" ", ""),
+                        "sport": "nba",
+                        "side": f"{uo['recommendation'].upper()} {uo['total_points']}",
+                        "market": "total",
+                        "odds": uo_odds,
+                        "line": uo["total_points"],
+                        "edge": uo_ev,
+                        "bet_size": uo_bet_size,
+                        "date": datetime.utcnow().strftime("%Y-%m-%d"),
+                    })
+
     print("\n" + "=" * 76)
     print("  PORTFOLIO SUMMARY — NBA ML (QUARTER-KELLY)")
     print("=" * 76)
