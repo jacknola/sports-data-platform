@@ -38,6 +38,7 @@ from app.services.multivariate_kelly import (
     devig,
 )
 from app.services.bet_tracker import BetTracker
+from app.services.open_line_cache import get_or_set_open_line
 
 # ============================================================================
 # TONIGHT'S NCAAB SLATE
@@ -240,16 +241,8 @@ def _parse_bookmaker_spreads(
         "retail_away_odds": retail_away,
         "spread": spread,
         "total": total,
-        "open_spread": spread,  # Odds API doesn't provide opening lines
-    }
-
-    return {
-        "pinnacle_home_odds": pinnacle_home,
-        "pinnacle_away_odds": pinnacle_away,
-        "retail_home_odds": retail_home,
-        "retail_away_odds": retail_away,
-        "spread": spread,
-        "open_spread": spread,  # Odds API doesn't provide opening lines
+        "fanduel_home_odds": retail_home if found_fanduel else None,
+        "fanduel_away_odds": retail_away if found_fanduel else None,
     }
 
 
@@ -318,13 +311,20 @@ async def get_live_ncaab_games() -> Tuple[List[Dict[str, Any]], str]:
                 ticket_pct, money_pct = estimate_public_splits(spread_val)
                 model_prob = estimate_model_prob(spread_val)
 
+                game_id = f"NCAAB_{matched_odds.get('id', espn_game.get('espn_id', ''))}"
+                cached = get_or_set_open_line(
+                    game_id, "spread", spread_val,
+                    current_odds=spreads["pinnacle_home_odds"],
+                    current_odds_away=spreads["pinnacle_away_odds"],
+                )
                 live_games.append(
                     {
-                        "game_id": f"NCAAB_{matched_odds.get('id', espn_game.get('espn_id', ''))}",
+                        "game_id": game_id,
                         "home": matched_odds.get("home_team", home),
                         "away": matched_odds.get("away_team", away),
                         "conference": espn_game.get("conference", "NCAAB"),
                         **spreads,
+                        "open_spread": cached["open_line"],
                         "home_ticket_pct": round(ticket_pct, 3),
                         "home_money_pct": round(money_pct, 3),
                         "model_home_prob": round(model_prob, 3),
@@ -353,6 +353,11 @@ async def get_live_ncaab_games() -> Tuple[List[Dict[str, Any]], str]:
             ticket_pct, money_pct = estimate_public_splits(spread_val)
             model_prob = estimate_model_prob(spread_val)
 
+            cached = get_or_set_open_line(
+                game_id, "spread", spread_val,
+                current_odds=spreads["pinnacle_home_odds"],
+                current_odds_away=spreads["pinnacle_away_odds"],
+            )
             live_games.append(
                 {
                     "game_id": game_id,
@@ -360,6 +365,7 @@ async def get_live_ncaab_games() -> Tuple[List[Dict[str, Any]], str]:
                     "away": away,
                     "conference": "NCAAB",
                     **spreads,
+                    "open_spread": cached["open_line"],
                     "home_ticket_pct": round(ticket_pct, 3),
                     "home_money_pct": round(money_pct, 3),
                     "model_home_prob": round(model_prob, 3),
@@ -588,8 +594,9 @@ def run_analysis() -> Dict[str, Any]:
         print(
             f"  Pinnacle: {h} {game['pinnacle_home_odds']:+d} / {a} {game['pinnacle_away_odds']:+d}"
         )
+        fd_tag = "  🎯 FanDuel" if game.get("fanduel_home_odds") else ""
         print(
-            f"  Retail:   {h} {game['retail_home_odds']:+d} / {a} {game['retail_away_odds']:+d}"
+            f"  Retail:   {h} {game['retail_home_odds']:+d} / {a} {game['retail_away_odds']:+d}{fd_tag}"
         )
         print(
             f"  True prob (devig): {h} {analysis['true_home_prob']:.1%} / "
@@ -626,21 +633,25 @@ def run_analysis() -> Dict[str, Any]:
         away_key = game["game_id"] + "_AWAY"
 
         bets_found = []
+        fd_home = game.get("fanduel_home_odds")
+        fd_away = game.get("fanduel_away_odds")
         if home_key in fraction_lookup:
             opp, frac = fraction_lookup[home_key]
             if frac >= 0.001:
                 size = frac * BANKROLL
+                fd_note = f"  🎯 FanDuel ({fd_home:+d})" if fd_home else ""
                 bets_found.append(
                     f"  ★ BET: {h} {game['retail_home_odds']:+d} "
-                    f"→ ${size:.0f} ({frac * 100:.2f}% of bankroll)"
+                    f"→ ${size:.0f} ({frac * 100:.2f}% of bankroll){fd_note}"
                 )
         if away_key in fraction_lookup:
             opp, frac = fraction_lookup[away_key]
             if frac >= 0.001:
                 size = frac * BANKROLL
+                fd_note = f"  🎯 FanDuel ({fd_away:+d})" if fd_away else ""
                 bets_found.append(
                     f"  ★ BET: {a} {game['retail_away_odds']:+d} "
-                    f"→ ${size:.0f} ({frac * 100:.2f}% of bankroll)"
+                    f"→ ${size:.0f} ({frac * 100:.2f}% of bankroll){fd_note}"
                 )
 
         if bets_found:

@@ -197,7 +197,11 @@ class TelegramService:
 
     @staticmethod
     def _chunk(text: str) -> list[str]:
-        """Split text into chunks of at most _TELEGRAM_MAX_LENGTH characters."""
+        """Split text into chunks of at most _TELEGRAM_MAX_LENGTH characters.
+
+        HTML-aware: tracks open tags and closes/reopens them across chunk
+        boundaries so Telegram doesn't reject malformed HTML.
+        """
         if len(text) <= _TELEGRAM_MAX_LENGTH:
             return [text]
 
@@ -206,11 +210,49 @@ class TelegramService:
             if len(text) <= _TELEGRAM_MAX_LENGTH:
                 chunks.append(text)
                 break
-            # Try to split on a newline boundary near the limit
-            split_at = text.rfind("\n", 0, _TELEGRAM_MAX_LENGTH)
+
+            # Prefer splitting on double-newline (between logical blocks)
+            split_at = text.rfind("\n\n", 0, _TELEGRAM_MAX_LENGTH)
+            if split_at == -1:
+                split_at = text.rfind("\n", 0, _TELEGRAM_MAX_LENGTH)
             if split_at == -1:
                 split_at = _TELEGRAM_MAX_LENGTH
-            chunks.append(text[:split_at])
+
+            chunk = text[:split_at]
+
+            # Close any open HTML tags in this chunk so Telegram accepts it
+            open_tags = TelegramService._find_open_tags(chunk)
+            if open_tags:
+                chunk += "".join(f"</{t}>" for t in reversed(open_tags))
+
+            chunks.append(chunk)
+
             text = text[split_at:].lstrip("\n")
 
+            # Re-open the tags at the start of the next chunk
+            if open_tags and text:
+                text = "".join(f"<{t}>" for t in open_tags) + text
+
         return chunks
+
+    @staticmethod
+    def _find_open_tags(html: str) -> list[str]:
+        """Return a list of HTML tags that are opened but not closed in *html*.
+
+        Only tracks the simple tags Telegram supports: b, i, u, code, pre.
+        """
+        import re
+
+        _TELEGRAM_TAGS = {"b", "i", "u", "code", "pre"}
+        stack: list[str] = []
+        for m in re.finditer(r"<(/?)([a-z]+)[^>]*>", html):
+            tag = m.group(2)
+            if tag not in _TELEGRAM_TAGS:
+                continue
+            if m.group(1) == "/":
+                # Closing tag — pop if it matches the top of the stack
+                if stack and stack[-1] == tag:
+                    stack.pop()
+            else:
+                stack.append(tag)
+        return stack

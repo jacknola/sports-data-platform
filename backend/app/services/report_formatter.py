@@ -19,6 +19,7 @@ _EMOJI_PLAY = "🟡"  # edge 2.5–5%
 _EMOJI_PASS = "⚪"  # below threshold
 _EMOJI_SIGNAL = "⚡"  # sharp signal detected
 _EMOJI_WARN = "⚠️"  # risk warning
+_EMOJI_FANDUEL = "🎯"  # best odds on FanDuel (user's primary book)
 
 
 class ReportFormatter:
@@ -274,7 +275,7 @@ class ReportFormatter:
             elif "PASS" in line or "no bets" in line.lower():
                 out.append(f"{_EMOJI_PASS} <i>{line}</i>")
             elif any(c.isdigit() for c in line):
-                out.append(f"<code>{line}</code>")
+                out.append(f"<code>{ReportFormatter._escape(line)}</code>")
             else:
                 out.append(line)
 
@@ -348,6 +349,46 @@ class ReportFormatter:
     # ------------------------------------------------------------------
     # Orchestrator-powered live report
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def format_picks_only_live(data: Dict[str, Any]) -> str:
+        """Compact picks-only summary from orchestrator data.
+
+        This is the structured-data equivalent of ``format_picks_only()`` —
+        used when ``--picks-only`` is passed and the orchestrator is active.
+
+        Returns:
+            HTML string with just the ranked picks (no portfolio or breakdown).
+        """
+        picks: List[Dict[str, Any]] = data.get("picks", [])
+
+        if not picks:
+            return f"{_EMOJI_PASS} <b>No qualifying plays on this slate.</b>"
+
+        lines = [
+            f"<b>{_EMOJI_PLAY} TOP PICKS — QUICK VIEW</b>\n"
+            f"<i>{datetime.now().strftime('%a %b %d, %I:%M %p')}</i>"
+        ]
+        for i, pick in enumerate(picks, 1):
+            bet_on = pick.get("bet_on", pick.get("team", "Unknown"))
+            odds = pick.get("odds", "")
+            edge = pick.get("edge", 0)
+            edge_val = edge if isinstance(edge, float) and edge < 1 else (edge / 100 if isinstance(edge, (int, float)) and edge != 0 else 0)
+            emoji = _EMOJI_STRONG if edge_val >= 0.05 else _EMOJI_PLAY
+            edge_pct = edge_val * 100
+            sport = (pick.get("sport") or "").upper()
+            matchup = pick.get("matchup", "")
+
+            odds_str = f"({odds})" if odds else ""
+            sport_tag = f"[{sport}] " if sport else ""
+            lines.append(
+                f"{emoji} <b>#{i} {ReportFormatter._escape(str(bet_on))} "
+                f"<code>{odds_str}</code></b>\n"
+                f"   {sport_tag}<i>{ReportFormatter._escape(str(matchup))}</i>\n"
+                f"   Edge: <code>{edge_pct:.1f}%</code>"
+            )
+
+        return "\n\n".join(lines)
 
     @staticmethod
     def format_live_report(
@@ -480,6 +521,12 @@ class ReportFormatter:
         ):
             signal_tag = f" {_EMOJI_SIGNAL}"
 
+        # FanDuel tag — highlight when best odds are on user's primary book
+        fd_tag = ""
+        best_book = pick.get("best_book", pick.get("best_over_book", ""))
+        if best_book and "fanduel" in str(best_book).lower():
+            fd_tag = f" {_EMOJI_FANDUEL}"
+
         # Sentiment tag (from orchestrator)
         sentiment_tag = ""
         sentiment = pick.get("sentiment", {})
@@ -499,7 +546,7 @@ class ReportFormatter:
 
         # Build the line
         odds_str = f"<code>({odds})</code>" if odds else ""
-        edge_str = f"{edge_pct:.1f}%" if isinstance(edge_pct, float) else str(edge_pct)
+        edge_str = f"{float(edge_pct):.1f}%"
         sport_tag = f"[{sport}]" if sport else ""
         
         # Market label
@@ -520,7 +567,7 @@ class ReportFormatter:
 
         line = (
             f"{emoji} <b>#{rank} {ReportFormatter._escape(str(bet_on))} "
-            f"{odds_str}</b>{signal_tag}\n"
+            f"{odds_str}</b>{signal_tag}{fd_tag}\n"
             f"   {sport_tag}{market_tag} <i>{ReportFormatter._escape(str(matchup))}</i>\n"
             f"   Edge: <code>{edge_str}</code>  |  Score: <code>{score:.1f}</code>"
         )
@@ -682,9 +729,74 @@ class ReportFormatter:
             f"Kelly: <code>{kelly:.2%}</code>"
         )
         if best_book:
-            result += f"\n   Best line: {esc(best_book)} ({books_ct} books)"
+            fd_tag = f" {_EMOJI_FANDUEL}" if "fanduel" in best_book.lower() else ""
+            result += f"\n   Best line: {esc(best_book)} ({books_ct} books){fd_tag}"
 
         return result
+
+    # ------------------------------------------------------------------
+    # DvP Report (separate Telegram message)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def format_dvp_report(dvp_data: Dict[str, Any]) -> str:
+        """Format DvP +EV analysis as a standalone Telegram HTML message.
+
+        Args:
+            dvp_data: Dict from DvPAgent.execute() with keys:
+                task_type, count, high_value_count, projections
+
+        Returns:
+            HTML-formatted string for Telegram
+        """
+        parts: List[str] = []
+        projections = dvp_data.get("projections", [])
+        high_value = [p for p in projections if "HIGH VALUE" in p.get("Recommendation", "")]
+        leans = [p for p in projections if "LEAN" in p.get("Recommendation", "")]
+
+        parts.append(
+            f"<b>🎯 DvP PROP TARGETS — "
+            f"{datetime.now().strftime('%a %b %d, %Y %I:%M %p')}</b>"
+        )
+        parts.append(
+            f"Projections: <code>{len(projections)}</code>  |  "
+            f"HIGH VALUE: <code>{len(high_value)}</code>  |  "
+            f"Leans: <code>{len(leans)}</code>"
+        )
+
+        if not high_value and not leans:
+            parts.append("\n<i>No DvP edges found on this slate.</i>")
+            return "\n".join(parts)
+
+        # HIGH VALUE plays first
+        for i, p in enumerate(high_value[:8], 1):
+            rec = p.get("Recommendation", "")
+            side = "OVER" if "OVER" in rec else "UNDER"
+            adv = p.get("DvP_Advantage_%", 0)
+            emoji = "🟢" if abs(adv) >= 15 else "🟡"
+            parts.append(
+                f"\n{emoji} <b>#{i} {ReportFormatter._escape(p.get('Player', ''))} "
+                f"{side} {p.get('Stat_Category', '')} {p.get('Sportsbook_Line', '')}</b>\n"
+                f"   {p.get('Team', '')} vs {p.get('Opponent', '')} [{p.get('Position', '')}]\n"
+                f"   Proj: <code>{p.get('Projected_Line', 0)}</code>  |  "
+                f"DvP Edge: <code>{adv:+.1f}%</code>"
+            )
+
+        # Then leans (up to 4)
+        if leans:
+            parts.append("\n<b>📊 Leans:</b>")
+            for p in leans[:4]:
+                rec = p.get("Recommendation", "")
+                side = "O" if "OVER" in rec else "U"
+                adv = p.get("DvP_Advantage_%", 0)
+                parts.append(
+                    f"  {side} {ReportFormatter._escape(p.get('Player', ''))} "
+                    f"{p.get('Stat_Category', '')} {p.get('Sportsbook_Line', '')} "
+                    f"(<code>{adv:+.1f}%</code>)"
+                )
+
+        parts.append("\n<i>DvP = Defense vs Position matchup advantage. Cross-ref with prop lines.</i>")
+        return "\n".join(parts)
 
     # ------------------------------------------------------------------
     # Utilities

@@ -70,6 +70,15 @@ class DvPAgent(BaseAgent):
             totals = self.analyzer.compute_all_implied_totals()
             return {"implied_totals": totals}
 
+        # Auto-populate slate from Odds API when no explicit slate is provided
+        if not slate_data:
+            import asyncio
+            try:
+                await self.analyzer.load_slate_from_odds_api()
+            except Exception as e:
+                logger.warning("Odds API slate failed, using file slate: {}", e)
+                self.analyzer.load_slate()
+
         if task_type == "single_player":
             return self._analyze_single_player(task, slate_data, num_recent)
 
