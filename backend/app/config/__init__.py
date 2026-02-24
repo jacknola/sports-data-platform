@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     QDRANT_PORT: int = 6333
     QDRANT_API_KEY: Optional[str] = None
     QDRANT_COLLECTION_GAMES: str = "game_scenarios"
+    QDRANT_COLLECTION_PLAYERS: str = "player_performances"
 
     # Celery
     CELERY_BROKER_URL: str = "redis://localhost:6379/1"

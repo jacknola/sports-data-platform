@@ -28,37 +28,39 @@ class VectorStoreService:
             )
         # 384 dimensions for all-MiniLM-L6-v2
         self.encoder = SentenceTransformer("all-MiniLM-L6-v2")
-        self.collection_name = settings.QDRANT_COLLECTION_GAMES
-        self._ensure_collection()
+        self._ensure_collections()
 
-    def _ensure_collection(self):
-        """Create collection if it doesn't exist."""
+    def _ensure_collections(self):
+        """Create collections if they don't exist."""
         collections = self.client.get_collections().collections
-        exists = any(c.name == self.collection_name for c in collections)
         
-        if not exists:
-            logger.info(f"Creating Qdrant collection: {self.collection_name}")
-            self.client.create_collection(
-                collection_name=self.collection_name,
-                vectors_config=models.VectorParams(
-                    size=384, 
-                    distance=models.Distance.COSINE
+        for name in [settings.QDRANT_COLLECTION_GAMES, settings.QDRANT_COLLECTION_PLAYERS]:
+            exists = any(c.name == name for c in collections)
+            if not exists:
+                logger.info(f"Creating Qdrant collection: {name}")
+                self.client.create_collection(
+                    collection_name=name,
+                    vectors_config=models.VectorParams(
+                        size=384, 
+                        distance=models.Distance.COSINE
+                    )
                 )
-            )
 
-    def upsert_game_scenario(self, game_id: str, description: str, metadata: Dict[str, Any]):
+    def upsert_game_scenario(self, game_id: str, description: str, metadata: Dict[str, Any], collection: Optional[str] = None):
         """
         Embed and store a game scenario.
         
         Args:
             game_id: Unique identifier for the game.
             description: Qualitative description of the scenario.
-            metadata: Additional quantitative data (splits, moves, outcome).
+            metadata: Additional quantitative data.
+            collection: Target collection name.
         """
+        coll_name = collection or settings.QDRANT_COLLECTION_GAMES
         vector = self.encoder.encode(description).tolist()
         
         self.client.upsert(
-            collection_name=self.collection_name,
+            collection_name=coll_name,
             points=[
                 models.PointStruct(
                     id=hash(game_id) % (2**63 - 1),  # Simple deterministic int ID
@@ -71,16 +73,17 @@ class VectorStoreService:
                 )
             ]
         )
-        logger.debug(f"Upserted vector for game {game_id}")
+        logger.debug(f"Upserted vector for {game_id} into {coll_name}")
 
-    def search_similar_scenarios(self, description: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def search_similar_scenarios(self, description: str, limit: int = 5, collection: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Search for similar historical game scenarios.
         """
+        coll_name = collection or settings.QDRANT_COLLECTION_GAMES
         vector = self.encoder.encode(description).tolist()
         
         results = self.client.query_points(
-            collection_name=self.collection_name,
+            collection_name=coll_name,
             query=vector,
             limit=limit
         )
