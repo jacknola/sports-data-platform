@@ -39,13 +39,13 @@ This plan outlines the steps to ingest historical data and implement vector-base
     - [ ] Implement utility to find similar games for a given slate entry.
 - [x] **Task 3: Conductor - User Manual Verification 'Phase 3: Game Profile Vectorization & Similarity Search' (Protocol in workflow.md)**
 
-## Phase 4: Agent Integration (RAG)
+## Phase 4: Agent Integration (RAG) [checkpoint: 2635879]
 
 ### Goal: Enhance Agent reasoning with retrieved historical context.
 
 - [x] **Task 1: ExpertAgent RAG Enhancement** 9feb710
     - [ ] Update `ExpertAgent` to perform a similarity search during analysis.
     - [ ] Update prompts to incorporate retrieved historical results.
-- [ ] **Task 2: Comprehensive End-to-End Validation**
+- [x] **Task 2: Comprehensive End-to-End Validation**
     - [ ] Run a full analysis on a live game and verify the presence of historical situational context.
-- [ ] **Task 3: Conductor - User Manual Verification 'Phase 4: Agent Integration (RAG)' (Protocol in workflow.md)**
+- [x] **Task 3: Conductor - User Manual Verification 'Phase 4: Agent Integration (RAG)' (Protocol in workflow.md)**
