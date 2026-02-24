@@ -14,7 +14,7 @@ This plan outlines the steps to ingest historical player stats, implement situat
     - [ ] Implement `NBAPlayerBackfillService` to pull logs via `nba_api`.
 - [x] **Task 3: Conductor - User Manual Verification 'Phase 1: Player Game Log Backfill' (Protocol in workflow.md)**
 
-## Phase 2: Player-Centric Situational Analysis
+## Phase 2: Player-Centric Situational Analysis [checkpoint: 0f9cadf]
 
 ### Goal: Vectorize player performances for RAG-enhanced prop analysis.
 
@@ -23,7 +23,7 @@ This plan outlines the steps to ingest historical player stats, implement situat
     - [ ] Write tests for player situational embeddings.
 - [x] **Task 2: Bulk Vectorization Script** 2d3a8c7
     - [ ] Implement script to vectorize all historical player logs into a new Qdrant collection `player_performances`.
-- [ ] **Task 3: Conductor - User Manual Verification 'Phase 2: Player-Centric Situational Analysis' (Protocol in workflow.md)**
+- [x] **Task 3: Conductor - User Manual Verification 'Phase 2: Player-Centric Situational Analysis' (Protocol in workflow.md)**
 
 ## Phase 3: Sheets Export & Automation
 
