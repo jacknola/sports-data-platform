@@ -84,3 +84,44 @@ class ComparisonRunner:
         
         logger.info("Comparison complete")
         return results
+
+    @staticmethod
+    def format_report(results: Dict[str, Any]) -> str:
+        """
+        Format comparison results into a human-readable report.
+        """
+        if not results:
+            return "No results to report."
+            
+        sport = results["sport"].upper()
+        days = results["days"]
+        n = results["sample_size"]
+        
+        bayesian = results["bayesian"]
+        rf = results["random_forest"]
+        
+        report = [
+            f"{"="*40}",
+            f" {sport} MODEL COMPARISON REPORT ({days} DAYS)",
+            f" Sample Size: {n} bets",
+            f"{"="*40}",
+            "",
+            "Bayesian Model:",
+            f"  Brier Score: {bayesian['brier_score']:.4f}",
+            f"  ROI:         {bayesian['roi']*100:.2f}%",
+            f"  Win Rate:    {bayesian['win_rate']*100:.2f}%",
+            "",
+            "Random Forest Model:",
+            f"  Brier Score: {rf['brier_score']:.4f}",
+            f"  ROI:         {rf['roi']*100:.2f}%",
+            f"  Win Rate:    {rf['win_rate']*100:.2f}%",
+            "",
+            "Feature Importances (RF):"
+        ]
+        
+        for feat, imp in list(results.get("feature_importance", {}).items())[:5]:
+            report.append(f"  {feat:15}: {imp:.4f}")
+            
+        report.append(f"{"="*40}")
+        
+        return "\n".join(report)
