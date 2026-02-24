@@ -36,60 +36,7 @@ async def get_best_bets(
 
     try:
         if sport.lower() == "nba":
-            # Use NBA ML predictor
-            game_predictions = await nba_predictor.predict_today_games("nba")
-
-            best_bets = []
-            for pred in game_predictions:
-                # Check if prediction has positive EV
-                if pred.get("expected_value", {}).get("home_ev", 0) > min_edge:
-                    best_bets.append(
-                        {
-                            "sport": "NBA",
-                            "game": f"{pred['away_team']} @ {pred['home_team']}",
-                            "market": "Moneyline",
-                            "selection": pred["expected_value"]["best_bet"],
-                            "edge": pred["expected_value"][
-                                f"{pred['expected_value']['best_bet']}_ev"
-                            ],
-                            "probability": pred["moneyline_prediction"].get(
-                                "home_win_prob", 0
-                            ),
-                            "confidence": pred.get("confidence", 0),
-                            "current_odds": pred["expected_value"].get(
-                                f"{pred['expected_value']['best_bet']}_odds"
-                            ),
-                            "kelly_fraction": pred.get("kelly_criterion", 0),
-                            "method": "ml_xgboost",
-                            "ml_prediction": pred,
-                        }
-                    )
-
-                # Check under/over if available
-                if pred.get("underover_prediction"):
-                    uo_pred = pred["underover_prediction"]
-                    if abs(uo_pred["over_prob"] - 0.5) > 0.1:  # Strong prediction
-                        best_bets.append(
-                            {
-                                "sport": "NBA",
-                                "game": f"{pred['away_team']} @ {pred['home_team']}",
-                                "market": f"Total {uo_pred['total_points']}",
-                                "selection": uo_pred["recommendation"],
-                                "edge": abs(uo_pred["over_prob"] - 0.5),
-                                "probability": uo_pred["over_prob"]
-                                if uo_pred["recommendation"] == "over"
-                                else uo_pred["under_prob"],
-                                "confidence": abs(uo_pred["over_prob"] - 0.5) * 2,
-                                "method": "ml_xgboost",
-                                "ml_prediction": pred,
-                            }
-                        )
-
-            # Sort by edge and limit
-            best_bets = sorted(best_bets, key=lambda x: x["edge"], reverse=True)[:limit]
-
-            return best_bets
-
+            return await _get_nba_best_bets(min_edge, limit)
         else:
             # Fallback for other sports
             return [
@@ -148,3 +95,81 @@ async def get_nba_predictions_today() -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"NBA prediction error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _get_nba_best_bets(min_edge: float, limit: int) -> List[Dict[str, Any]]:
+    """
+    Process NBA predictions and return best bets sorted by edge.
+    """
+    game_predictions = await nba_predictor.predict_today_games("nba")
+    best_bets = []
+
+    for pred in game_predictions:
+        # Process Moneyline
+        ml_bet = _process_nba_moneyline(pred, min_edge)
+        if ml_bet:
+            best_bets.append(ml_bet)
+
+        # Process Total (Over/Under)
+        total_bet = _process_nba_total(pred)
+        if total_bet:
+            best_bets.append(total_bet)
+
+    # Sort by edge and limit
+    return sorted(best_bets, key=lambda x: x["edge"], reverse=True)[:limit]
+
+
+def _process_nba_moneyline(
+    pred: Dict[str, Any], min_edge: float
+) -> Optional[Dict[str, Any]]:
+    """Extract moneyline bet from prediction if it meets the edge criteria."""
+    ev_data = pred.get("expected_value", {})
+    home_ev = ev_data.get("home_ev", 0)
+
+    if home_ev <= min_edge:
+        return None
+
+    best_bet_selection = ev_data.get("best_bet")
+    if not best_bet_selection:
+        return None
+
+    return {
+        "sport": "NBA",
+        "game": f"{pred['away_team']} @ {pred['home_team']}",
+        "market": "Moneyline",
+        "selection": best_bet_selection,
+        "edge": ev_data.get(f"{best_bet_selection}_ev"),
+        "probability": pred.get("moneyline_prediction", {}).get("home_win_prob", 0),
+        "confidence": pred.get("confidence", 0),
+        "current_odds": ev_data.get(f"{best_bet_selection}_odds"),
+        "kelly_fraction": pred.get("kelly_criterion", 0),
+        "method": "ml_xgboost",
+        "ml_prediction": pred,
+    }
+
+
+def _process_nba_total(pred: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Extract total (over/under) bet from prediction if available."""
+    uo_pred = pred.get("underover_prediction")
+    if not uo_pred:
+        return None
+
+    over_prob = uo_pred.get("over_prob", 0.5)
+    # Strong prediction threshold check (hardcoded 0.1 delta from 0.5 as per original code)
+    if abs(over_prob - 0.5) <= 0.1:
+        return None
+
+    recommendation = uo_pred.get("recommendation")
+    probability = over_prob if recommendation == "over" else uo_pred.get("under_prob")
+
+    return {
+        "sport": "NBA",
+        "game": f"{pred['away_team']} @ {pred['home_team']}",
+        "market": f"Total {uo_pred.get('total_points')}",
+        "selection": recommendation,
+        "edge": abs(over_prob - 0.5),
+        "probability": probability,
+        "confidence": abs(over_prob - 0.5) * 2,
+        "method": "ml_xgboost",
+        "ml_prediction": pred,
+    }
