@@ -21,7 +21,7 @@ This plan outlines the steps to implement and compare a Random Forest baseline a
 - [x] **Task 1: Random Forest Model Implementation** 4f6f971
     - [ ] Write tests for model training and prediction interfaces.
     - [ ] Implement `RandomForestAnalysisAgent` (or similar service).
-- [ ] **Task 3: Evaluation Metrics Module**
+- [x] **Task 3: Evaluation Metrics Module** c61db0f
     - [ ] Write tests for Brier Score and ROI calculation logic.
     - [ ] Implement evaluation module to compare predictions against actual outcomes.
 - [ ] **Task 4: Conductor - User Manual Verification 'Phase 2: Model Implementation & Evaluation' (Protocol in workflow.md)**
