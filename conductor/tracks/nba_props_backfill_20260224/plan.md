@@ -29,7 +29,7 @@ This plan outlines the steps to ingest historical player stats, implement situat
 
 ### Goal: Automate the RAG-enhanced prop export to Google Sheets.
 
-- [ ] **Task 1: Enhance Sheets Service**
+- [x] **Task 1: Enhance Sheets Service** c1fdebf
     - [ ] Update `GoogleSheetsService` to include situational context in the 'Props' tab.
     - [ ] Write unit tests for the updated export logic.
 - [ ] **Task 2: Prop Analysis Runner**
