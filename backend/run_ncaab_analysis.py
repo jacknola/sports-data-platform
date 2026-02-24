@@ -39,6 +39,7 @@ from app.services.multivariate_kelly import (
 )
 from app.services.bet_tracker import BetTracker
 from app.services.open_line_cache import get_or_set_open_line
+from app.services.ncaab_stats_service import NCAABStatsService
 
 # ============================================================================
 # TONIGHT'S NCAAB SLATE
@@ -108,6 +109,43 @@ def estimate_public_splits(spread: float) -> Tuple[float, float]:
     else:
         # Pick'em
         return (0.50, 0.50)
+
+
+def calculate_model_prob(home: str, away: str, spread: float, team_stats: Optional[Dict[str, Any]] = None) -> float:
+    """Calculate model win probability using real team stats or spread fallback."""
+    if not team_stats:
+        return estimate_model_prob(spread)
+
+    # Fuzzy lookup helper
+    def get_stats(team_name):
+        if team_name in team_stats:
+            return team_stats[team_name]
+        for name, data in team_stats.items():
+            if name.lower() in team_name.lower() or team_name.lower() in name.lower():
+                return data
+        return None
+
+    h_stats = get_stats(home)
+    a_stats = get_stats(away)
+
+    if h_stats and a_stats:
+        # League averages from NCAABStatsService
+        league_avg = 106.0
+        
+        # Projected points per 100 possessions
+        h_proj_ortg = (h_stats["AdjOE"] * a_stats["AdjDE"]) / league_avg
+        a_proj_ortg = (a_stats["AdjOE"] * h_stats["AdjDE"]) / league_avg
+        
+        # Pythagorean win probability (exponent 11.5 for CBB)
+        try:
+            h_prob = (h_proj_ortg ** 11.5) / (h_proj_ortg ** 11.5 + a_proj_ortg ** 11.5)
+            # Add home court advantage (~3 points or ~3-4% win prob)
+            h_prob += 0.03 
+            return min(0.95, max(0.05, h_prob))
+        except (OverflowError, ZeroDivisionError):
+            return estimate_model_prob(spread)
+            
+    return estimate_model_prob(spread)
 
 
 def estimate_model_prob(spread: float) -> float:
@@ -246,7 +284,7 @@ def _parse_bookmaker_spreads(
     }
 
 
-async def get_live_ncaab_games() -> Tuple[List[Dict[str, Any]], str]:
+async def get_live_ncaab_games(team_stats: Optional[Dict[str, Any]] = None) -> Tuple[List[Dict[str, Any]], str]:
     """Fetch today's NCAAB games using a multi-source waterfall.
 
     Waterfall:
@@ -309,7 +347,12 @@ async def get_live_ncaab_games() -> Tuple[List[Dict[str, Any]], str]:
                     continue
 
                 ticket_pct, money_pct = estimate_public_splits(spread_val)
-                model_prob = estimate_model_prob(spread_val)
+                model_prob = calculate_model_prob(
+                    matched_odds.get("home_team", home),
+                    matched_odds.get("away_team", away),
+                    spread_val,
+                    team_stats
+                )
 
                 game_id = f"NCAAB_{matched_odds.get('id', espn_game.get('espn_id', ''))}"
                 cached = get_or_set_open_line(
@@ -351,7 +394,7 @@ async def get_live_ncaab_games() -> Tuple[List[Dict[str, Any]], str]:
                 continue
 
             ticket_pct, money_pct = estimate_public_splits(spread_val)
-            model_prob = estimate_model_prob(spread_val)
+            model_prob = calculate_model_prob(home, away, spread_val, team_stats)
 
             cached = get_or_set_open_line(
                 game_id, "spread", spread_val,
@@ -411,7 +454,11 @@ def run_analysis() -> Dict[str, Any]:
             "game_analyses": List[dict],   # per-game analysis data
         }
     """
-    games_to_analyze, data_source = asyncio.run(get_live_ncaab_games())
+    # Fetch real team stats
+    stats_service = NCAABStatsService()
+    team_stats = asyncio.run(stats_service.fetch_all_team_stats())
+
+    games_to_analyze, data_source = asyncio.run(get_live_ncaab_games(team_stats))
 
     # Initialized here; populated after portfolio optimization
     bets: List[Dict[str, Any]] = []

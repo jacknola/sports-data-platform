@@ -199,26 +199,34 @@ class NBAMLPredictor:
             except Exception as e:
                 logger.error(f"Moneyline prediction error: {e}")
 
-        # Fallback to placeholder (slight home court advantage)
+        # Fallback to robust statistical model (Pythagorean Expectation)
         home_win_prob = 0.54
         if (
             "home_off_rating" in features.columns
             and "away_off_rating" in features.columns
         ):
-            # Advanced net rating comparison
-            # Based on research: (Home_ORtg - Away_DRtg) vs (Away_ORtg - Home_DRtg)
-            home_matchup_edge = features["home_off_rating"].iloc[0] - features["away_def_rating"].iloc[0]
-            away_matchup_edge = features["away_off_rating"].iloc[0] - features["home_def_rating"].iloc[0]
+            h_off = features["home_off_rating"].iloc[0]
+            h_def = features["home_def_rating"].iloc[0]
+            a_off = features["away_off_rating"].iloc[0]
+            a_def = features["away_def_rating"].iloc[0]
             
-            # Form factor: Win percentage weight (0.3)
-            win_pct_diff = features["home_win_pct"].iloc[0] - features["away_win_pct"].iloc[0]
+            # League average baseline
+            league_avg = 115.0
             
-            # Composite edge
-            net_diff = (home_matchup_edge - away_matchup_edge) + (win_pct_diff * 10)
+            # Projected points per 100 possessions
+            h_proj = (h_off * a_def) / league_avg
+            a_proj = (a_off * h_def) / league_avg
             
-            # 1 point composite diff ~ 2.5% win prob change
-            home_win_prob = 0.54 + (net_diff * 0.025)
-            home_win_prob = max(0.1, min(0.9, home_win_prob))
+            logger.debug(f"Ratings: H_Off={h_off}, H_Def={h_def}, A_Off={a_off}, A_Def={a_def} | Proj: H={h_proj:.1f}, A={a_proj:.1f}")
+            
+            try:
+                # Pythagorean win prob
+                home_win_prob = (h_proj ** 14.0) / (h_proj ** 14.0 + a_proj ** 14.0)
+                # Home court advantage (~3% boost)
+                home_win_prob += 0.03
+                home_win_prob = max(0.05, min(0.95, home_win_prob))
+            except (OverflowError, ZeroDivisionError):
+                home_win_prob = 0.54
 
         return {
             "winner": "home" if home_win_prob > 0.5 else "away",

@@ -213,6 +213,9 @@ The agent learns from mistakes:
 # OpenAI API (for LLM extraction)
 OPENAI_API_KEY=your_key
 
+# Hugging Face (for sentiment analysis)
+HUGGINGFACE_API_KEY=your_key
+
 # Crawl4AI
 CRAWL4AI_MODE=async
 CRAWL4AI_TIMEOUT=30
