@@ -26,7 +26,12 @@ Market Data (Odds API, Scrapers)
 
 ### ACTIVE STATUS (Feb 23, 2026)
 - **Agent:** Gemini CLI
-- **Last Sync:** Finalized merging remote branches (`analyze-test-coverage`, `cleanup-branches-testing`, `sports-betting-edge-tool`, `research-nba-data`, `structure-and-save-parlays`).
+- **Last Sync:** Finalized merging remote branches and integrated research references.
+- **Reference Updates:**
+    - `prediction-models.md`: Documentation on integrated XGBoost and Bayesian models.
+    - `research-sources.md`: Core bibliography and market signal theories.
+- **Logic Enhancements:**
+    - Updated `NBAMLPredictor` fallback model to use a composite edge calculation (Matchup ORtg/DRtg + Win Pct weighting).
 - **Critical Fixes:** 
     - Fixed SQLAlchemy `InvalidRequestError` by adding `extend_existing=True` to all models.
     - Updated `NBADvPAnalyzer` to use fallback player data when API times out.

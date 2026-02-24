@@ -438,7 +438,7 @@ class SharpMoneyDetector:
             'sharp_signals': signals,
             'sharp_side': sharp_side,
             'signal_confidence': round(avg_confidence, 3),
-            'pinnacle_implied': round(pinnacle_implied, 4),
+            'pinnacle_implied': round(pinnacle_home_implied, 4),
             'retail_implied': round(retail_implied, 4),
             'ev_edge': round(edge, 4),
             'ev_edge_pct': round(edge * 100, 2),
