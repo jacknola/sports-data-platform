@@ -9,7 +9,7 @@ This plan outlines the steps to ingest historical data and implement vector-base
 - [x] **Task 1: NBA API Backfill Script** 8199c87
     - [ ] Write unit tests for NBA historical ingestion.
     - [ ] Implement script to pull and save last 3 seasons of NBA data.
-- [ ] **Task 2: NCAAB Historical Scraper**
+- [x] **Task 2: NCAAB Historical Scraper** 8e99f99
     - [ ] Write tests for historical NCAAB scraping logic.
     - [ ] Implement scraper for historical college basketball odds and scores.
 - [ ] **Task 3: Conductor - User Manual Verification 'Phase 1: PostgreSQL Historical Backfill' (Protocol in workflow.md)**
