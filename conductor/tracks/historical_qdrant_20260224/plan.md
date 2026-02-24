@@ -34,7 +34,7 @@ This plan outlines the steps to ingest historical data and implement vector-base
     - [ ] Define the feature vector for a "Game Profile".
     - [ ] Write tests for embedding generation.
     - [ ] Implement script to vectorize all historical games into Qdrant.
-- [ ] **Task 2: Similarity Search Utility**
+- [x] **Task 2: Similarity Search Utility** 026361b
     - [ ] Write tests for the similarity search interface.
     - [ ] Implement utility to find similar games for a given slate entry.
 - [ ] **Task 3: Conductor - User Manual Verification 'Phase 3: Game Profile Vectorization & Similarity Search' (Protocol in workflow.md)**
