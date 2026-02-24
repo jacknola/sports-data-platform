@@ -9,7 +9,7 @@ from loguru import logger
 
 from app.config import settings
 from app.database import init_db
-from app.routers import bets, analyze, odds, sentiment, predictions, notion, agents, google_sheets, props, live_props, dvp, cbb_sharp
+from app.routers import bets, analyze, odds, sentiment, predictions, notion, agents, google_sheets, props, live_props, dvp, cbb_sharp, parlays
 from app.services.cache import RedisCache
 
 
@@ -91,6 +91,7 @@ app.include_router(props.router, prefix="/api/v1", tags=["props"])
 app.include_router(live_props.router, prefix="/api/v1", tags=["live-props"])
 app.include_router(dvp.router, prefix="/api/v1", tags=["dvp"])
 app.include_router(cbb_sharp.router, prefix="/api/v1", tags=["cbb-sharp-money"])
+app.include_router(parlays.router, prefix="/api/v1", tags=["parlays"])
 
 
 if __name__ == "__main__":
