@@ -113,8 +113,18 @@ class GoogleSheetsService:
     ) -> int:
         """Write headers + data rows in a single batch update."""
         all_data = [headers] + rows
+        
+        # Proper A1 notation for more than 26 columns
+        def _col_name(n):
+            name = ""
+            while n > 0:
+                n, remainder = divmod(n - 1, 26)
+                name = chr(65 + remainder) + name
+            return name
+
+        col_end = _col_name(len(headers))
         worksheet.update(
-            range_name=f"A1:{chr(64 + len(headers))}{len(all_data)}",
+            range_name=f"A1:{col_end}{len(all_data)}",
             values=all_data,
         )
         # Bold + freeze header row
@@ -363,6 +373,9 @@ class GoogleSheetsService:
                 "Blend Home %", "Blend Away %",
                 "Home Edge %", "Away Edge %",
                 "Sharp Side", "Signals", "Signal Conf %",
+                "Home AdjOE", "Home AdjDE",
+                "Away AdjOE", "Away AdjDE",
+                "BPI Home", "BPI Away",
                 "Pick", "Kelly %", "Bet Size",
             ]
 
@@ -384,6 +397,10 @@ class GoogleSheetsService:
                 signals = a.get("sharp_signals", [])
                 he = a.get("home_edge", 0)
                 ae = a.get("away_edge", 0)
+
+                # Efficiency stats
+                h_eff = game.get("home_eff") or {}
+                a_eff = game.get("away_eff") or {}
 
                 # Find bet for this game
                 bet = bets_lookup.get(gid + "_HOME") or bets_lookup.get(
@@ -410,6 +427,12 @@ class GoogleSheetsService:
                     a.get("sharp_side", ""),
                     ", ".join(signals) if signals else "",
                     round(a.get("signal_confidence", 0) * 100, 1),
+                    h_eff.get("AdjOE", ""),
+                    h_eff.get("AdjDE", ""),
+                    a_eff.get("AdjOE", ""),
+                    a_eff.get("AdjDE", ""),
+                    h_eff.get("BPI", ""),
+                    a_eff.get("BPI", ""),
                     bet.get("side", "") if bet else "",
                     round(bet.get("portfolio_fraction_pct", 0), 2) if bet else "",
                     round(bet.get("bet_size_$", 0), 2) if bet else "",

@@ -70,10 +70,10 @@ class NCAABDvPAgent(BaseAgent):
                 logger.warning("Odds API slate failed for NCAAB, using file slate: {}", e)
                 self.analyzer.load_slate()
 
-        result = self.analyzer.run_analysis(slate_data=slate_data)
+        result = await self.analyzer.run_analysis(slate_data=slate_data)
 
         if task_type == "high_value_only":
-            hv_plays = self.analyzer.get_high_value_plays(result)
+            hv_plays = await self.analyzer.get_high_value_plays(result)
             result["projections"] = hv_plays
             result["count"] = len(hv_plays)
 

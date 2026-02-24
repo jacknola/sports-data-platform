@@ -347,6 +347,20 @@ async def get_live_ncaab_games(team_stats: Optional[Dict[str, Any]] = None) -> T
                     continue
 
                 ticket_pct, money_pct = estimate_public_splits(spread_val)
+                
+                # Extract efficiency stats for display
+                h_stats = None
+                a_stats = None
+                if team_stats:
+                    def get_stats(team_name):
+                        if team_name in team_stats: return team_stats[team_name]
+                        for name, data in team_stats.items():
+                            if name.lower() in team_name.lower() or team_name.lower() in name.lower():
+                                return data
+                        return None
+                    h_stats = get_stats(matched_odds.get("home_team", home))
+                    a_stats = get_stats(matched_odds.get("away_team", away))
+
                 model_prob = calculate_model_prob(
                     matched_odds.get("home_team", home),
                     matched_odds.get("away_team", away),
@@ -372,6 +386,8 @@ async def get_live_ncaab_games(team_stats: Optional[Dict[str, Any]] = None) -> T
                         "home_money_pct": round(money_pct, 3),
                         "model_home_prob": round(model_prob, 3),
                         "total": spreads.get("total", 0.0),
+                        "home_eff": h_stats,
+                        "away_eff": a_stats,
                         "notes": f"Live ESPN + Odds API. Spread-implied public splits. Model prob from logistic.",
                     }
                 )
@@ -394,6 +410,20 @@ async def get_live_ncaab_games(team_stats: Optional[Dict[str, Any]] = None) -> T
                 continue
 
             ticket_pct, money_pct = estimate_public_splits(spread_val)
+            
+            # Extract efficiency stats for display
+            h_stats = None
+            a_stats = None
+            if team_stats:
+                def get_stats(team_name):
+                    if team_name in team_stats: return team_stats[team_name]
+                    for name, data in team_stats.items():
+                        if name.lower() in team_name.lower() or team_name.lower() in name.lower():
+                            return data
+                    return None
+                h_stats = get_stats(home)
+                a_stats = get_stats(away)
+
             model_prob = calculate_model_prob(home, away, spread_val, team_stats)
 
             cached = get_or_set_open_line(
@@ -413,6 +443,8 @@ async def get_live_ncaab_games(team_stats: Optional[Dict[str, Any]] = None) -> T
                     "home_money_pct": round(money_pct, 3),
                     "model_home_prob": round(model_prob, 3),
                     "total": spreads.get("total", 0.0),
+                    "home_eff": h_stats,
+                    "away_eff": a_stats,
                     "notes": "Live Odds API only (ESPN unavailable). Spread-implied public splits.",
                 }
             )

@@ -27,10 +27,10 @@ async def init_db():
     """Initialize database"""
     import os
     logger.info("Initializing database...")
-    # Import all models to register them
-    from app.models import bet, game, team, player, api_cache
+    # Import all models to register them with SQLAlchemy Base
+    from app.models import bet, game, team, player, api_cache, parlay
     
-    # Create tables (skip during tests where stubs might cause issues or DB is handled by fixtures)
+    # Create tables
     if os.getenv("ENVIRONMENT") != "test":
         Base.metadata.create_all(bind=engine)
         logger.info("Database initialized")
