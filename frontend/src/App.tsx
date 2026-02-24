@@ -5,6 +5,7 @@ import Agents from './pages/Agents'
 import Bets from './pages/Bets'
 import Analysis from './pages/Analysis'
 import Settings from './pages/Settings'
+import CollegeBasketball from './pages/CollegeBasketball'
 
 function App() {
   return (
@@ -12,8 +13,9 @@ function App() {
       <Layout>
         <Routes>
           <Route path="/" element={<Dashboard />} />
-          <Route path="/agents" element={<Agents />} />
           <Route path="/bets" element={<Bets />} />
+          <Route path="/college-basketball" element={<CollegeBasketball />} />
+          <Route path="/agents" element={<Agents />} />
           <Route path="/analysis" element={<Analysis />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>
