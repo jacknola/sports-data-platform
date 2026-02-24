@@ -14,7 +14,18 @@ class VectorStoreService:
     """
     
     def __init__(self):
-        self.client = QdrantClient(host=settings.QDRANT_HOST, port=settings.QDRANT_PORT)
+        # Handle cloud URL (https) vs local host
+        if settings.QDRANT_HOST.startswith("http"):
+            self.client = QdrantClient(
+                url=settings.QDRANT_HOST, 
+                api_key=settings.QDRANT_API_KEY
+            )
+        else:
+            self.client = QdrantClient(
+                host=settings.QDRANT_HOST, 
+                port=settings.QDRANT_PORT,
+                api_key=settings.QDRANT_API_KEY
+            )
         # 384 dimensions for all-MiniLM-L6-v2
         self.encoder = SentenceTransformer("all-MiniLM-L6-v2")
         self.collection_name = settings.QDRANT_COLLECTION_GAMES
