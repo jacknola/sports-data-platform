@@ -1,4 +1,4 @@
-# Track baseline_comparison_20260224 Context
+# Track historical_qdrant_20260224 Context
 
 - [Specification](./spec.md)
 - [Implementation Plan](./plan.md)
