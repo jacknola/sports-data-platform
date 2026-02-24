@@ -3,6 +3,7 @@ Application configuration
 """
 
 from pathlib import Path
+import os
 from pydantic_settings import BaseSettings
 from typing import Optional
 
@@ -18,6 +19,7 @@ class Settings(BaseSettings):
     API_PORT: int = 8000
     DEBUG: bool = True
     ENVIRONMENT: str = "development"
+    CURRENT_SEASON: str = "2025-26"
 
     # Database
     DATABASE_URL: str = "sqlite:///./test.db"
@@ -100,3 +102,8 @@ class Settings(BaseSettings):
 
 # Ensure required environment variables are set, or provide defaults for development
 settings = Settings()
+
+# Post-initialization check: prioritize DATABASE_URL from environment if available
+_db_url = os.getenv("DATABASE_URL")
+if _db_url:
+    settings.DATABASE_URL = _db_url

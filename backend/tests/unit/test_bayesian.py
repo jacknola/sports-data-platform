@@ -58,34 +58,46 @@ class TestProbToAmericanOdds:
 
 class TestKellyCriterion:
     def test_positive_edge_returns_positive_fraction(self, analyzer):
-        k = analyzer.calculate_kelly_criterion(0.55, 2.0)
-        assert 0.0 < k <= 0.25
+        # 5% edge -> Half Kelly (0.5). Prob 0.55, Odds 2.0 -> Full Kelly 0.1. Result 0.05.
+        k = analyzer.calculate_kelly_criterion(0.55, 2.0, edge=0.05)
+        assert 0.0 < k <= 0.05
+        assert k == pytest.approx(0.05)
+
+    def test_low_edge_returns_quarter_kelly(self, analyzer):
+        # 3% edge -> Quarter Kelly (0.25). Prob 0.53, Odds 2.0 -> Full Kelly 0.06. Result 0.015.
+        k = analyzer.calculate_kelly_criterion(0.53, 2.0, edge=0.03)
+        assert k == pytest.approx(0.015)
+
+    def test_below_threshold_returns_zero(self, analyzer):
+        # 2% edge < 3% threshold
+        k = analyzer.calculate_kelly_criterion(0.52, 2.0, edge=0.02)
+        assert k == 0.0
 
     def test_breakeven_returns_zero(self, analyzer):
         # 50% at decimal 2.0 -> (0.5*2 - 1) / (2-1) = 0
-        k = analyzer.calculate_kelly_criterion(0.5, 2.0)
+        k = analyzer.calculate_kelly_criterion(0.5, 2.0, edge=0.03)
         assert k == pytest.approx(0.0, abs=1e-9)
 
     def test_negative_edge_clamped_to_zero(self, analyzer):
-        k = analyzer.calculate_kelly_criterion(0.3, 1.5)
+        k = analyzer.calculate_kelly_criterion(0.3, 1.5, edge=0.05)
         assert k == 0.0
 
-    def test_capped_at_25_percent(self, analyzer):
-        # Extreme edge: prob=0.99, decimal=10 -> raw kelly >> 0.25
-        k = analyzer.calculate_kelly_criterion(0.99, 10.0)
-        assert k == 0.25
+    def test_capped_at_five_percent(self, analyzer):
+        # Extreme edge: prob=0.99, decimal=10, edge=0.8 -> raw half-kelly >> 0.05
+        k = analyzer.calculate_kelly_criterion(0.99, 10.0, edge=0.20)
+        assert k == 0.05
 
     def test_odds_equal_to_one_returns_zero(self, analyzer):
-        assert analyzer.calculate_kelly_criterion(0.9, 1.0) == 0.0
+        assert analyzer.calculate_kelly_criterion(0.9, 1.0, edge=0.05) == 0.0
 
     def test_odds_below_one_returns_zero(self, analyzer):
-        assert analyzer.calculate_kelly_criterion(0.9, 0.5) == 0.0
+        assert analyzer.calculate_kelly_criterion(0.9, 0.5, edge=0.05) == 0.0
 
-    def test_fraction_never_exceeds_25_percent(self, analyzer):
+    def test_fraction_never_exceeds_five_percent(self, analyzer):
         for prob in [0.6, 0.7, 0.8, 0.9]:
             for odds in [2.0, 3.0, 5.0]:
-                k = analyzer.calculate_kelly_criterion(prob, odds)
-                assert k <= 0.25
+                k = analyzer.calculate_kelly_criterion(prob, odds, edge=0.1)
+                assert k <= 0.05
 
 
 # ---------------------------------------------------------------------------

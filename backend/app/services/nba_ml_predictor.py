@@ -286,23 +286,33 @@ class NBAMLPredictor:
         }
 
     def _calculate_kelly(self, edge: float, probability: float) -> float:
-        """Calculate Kelly Criterion bet size"""
+        """Calculate Kelly Criterion bet size using dynamic settings"""
+        from app.config import settings
+
         if edge <= 0 or probability <= 0 or probability >= 1:
             return 0.0
 
         # Kelly fraction = p - (q / b) = edge / b
         # where p = win prob, q = lose prob = 1-p
         # edge = p * b - q (if b is decimal odds - 1)
-        # It's better to just do: kelly = edge / (decimal_odds - 1)
-        # But based on the original code:
-        # edge / (1 - prob) is a simplification (assumes odds = 1/prob_implied)
-        kelly = edge / (1 - probability)
+        # kelly = edge / b
+        # Re-derive b from edge and p: b = (edge + q) / p
+        q = 1.0 - probability
+        b = (edge + q) / probability
+        full_kelly = edge / b
 
-        # Scale to quarter Kelly (0.25)
-        kelly = kelly * 0.25
+        # Determine fractional multiplier based on edge thresholds
+        if edge >= settings.EDGE_THRESHOLD_MEDIUM:
+            multiplier = settings.KELLY_FRACTION_HALF
+        elif edge >= settings.EDGE_THRESHOLD_LOW:
+            multiplier = settings.KELLY_FRACTION_QUARTER
+        else:
+            return 0.0
 
-        # Cap at 5% of bankroll for safety per bet
-        return min(kelly, 0.05)
+        kelly_stake = full_kelly * multiplier
+
+        # Cap at global max bet percentage (5% by default)
+        return max(0.0, min(kelly_stake, settings.MAX_BET_PERCENTAGE))
 
     async def predict_today_games(self, sport: str = "nba") -> List[Dict[str, Any]]:
         """

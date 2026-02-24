@@ -79,8 +79,9 @@ class NBADvPAnalyzer:
         6. Output a clean DataFrame with recommendations
     """
 
-    def __init__(self, slate_path: Optional[str] = None, season: str = "2025-26"):
-        self.season = season
+    def __init__(self, slate_path: Optional[str] = None, season: Optional[str] = None):
+        from app.config import settings
+        self.season = season or settings.CURRENT_SEASON
         self.slate_path = slate_path or DEFAULT_SLATE_PATH
         self.slate: Dict[str, Any] = {}
         self.team_pace: Dict[str, float] = {}

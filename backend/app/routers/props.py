@@ -443,7 +443,9 @@ def _build_prop_analysis(prop: Dict) -> Dict:
     # Sharp signal boost on Kelly
     signal_boost = posterior["edge"] * 0.1 if sharp["sharp_signals"] else 0.0
     decimal_odds = american_to_decimal(bayesian_input["current_american_odds"])
-    kelly = _bayesian.calculate_kelly_criterion(posterior["posterior_p"], decimal_odds)
+    kelly = _bayesian.calculate_kelly_criterion(
+        posterior["posterior_p"], decimal_odds, edge=posterior["edge"]
+    )
 
     # 4. EVCalculator (complementary hit-rate model)
     ev_data: Dict[str, Any] = {}

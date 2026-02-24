@@ -33,7 +33,20 @@ class ExpertAgent(BaseAgent):
         logger.info(f"ExpertAgent: Analyzing bet for {bet_analysis.get('market')}")
         
         try:
-            # Use sequential thinking to make expert decision
+            # Step 1: Research the market context using NotebookLM
+            market = bet_analysis.get('market', 'unknown')
+            sport = bet_analysis.get('sport', 'unknown')
+            teams = bet_analysis.get('teams', [])
+            
+            research_query = f"{sport} {market} for {' vs '.join(teams)}"
+            logger.info(f"ExpertAgent: Researching topic: {research_query}")
+            
+            research_findings = await self.thinking_service.research_topic(research_query)
+            
+            # Step 2: Use sequential thinking to make expert decision
+            # Add research findings to context
+            bet_analysis['research_findings'] = research_findings
+            
             expert_decision = await self.thinking_service.decide_if_bet(bet_analysis)
             
             # Record execution
@@ -42,7 +55,8 @@ class ExpertAgent(BaseAgent):
                 'agent': self.name,
                 'expertise_level': self.expertise_level,
                 'decision': expert_decision,
-                'thinking_process': expert_decision.get('thinking_process')
+                'thinking_process': expert_decision.get('thinking_process'),
+                'research': research_findings
             }
             
             self.record_execution(task, result)

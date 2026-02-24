@@ -22,6 +22,33 @@ Market Data (Odds API, Scrapers)
 - **Reporting:** Telegram bot (3x daily), Notion sync, Google Sheets export
 - **Logging:** Loguru everywhere (`from loguru import logger`). No `print()` in services.
 
+## Current State & Agent Coordination (Handover)
+
+### ACTIVE STATUS (Feb 23, 2026)
+- **Agent:** Gemini CLI
+- **Last Sync:** Finalized merging remote branches (`analyze-test-coverage`, `cleanup-branches-testing`, `sports-betting-edge-tool`, `research-nba-data`, `structure-and-save-parlays`).
+- **Critical Fixes:** 
+    - Fixed SQLAlchemy `InvalidRequestError` by adding `extend_existing=True` to all models.
+    - Updated `NBADvPAnalyzer` to use fallback player data when API times out.
+    - Fixed test suite (262/262 passing).
+    - Resolved dependency conflicts in `requirements.txt` (pinned `nba_api` and `requests` loosened).
+- **MCP Infrastructure:**
+    - `mcp-config.json` created in root.
+    - `ExpertAgent` now uses `notebooklm` for research and `sequentialthinking` for reasoning.
+    - `Redis` MCP added for cache visibility.
+- **Database:** `DATABASE_URL` prioritized from environment; defaults to SQLite for tests.
+
+### NEXT TASKS
+- [ ] Implement frontend dashboard for Parlay RAG pipeline.
+- [ ] Enhance `ExpertAgent` to use `sheets-reporting` MCP for manual override logging.
+- [ ] Monitor `NBADvPAnalyzer` API stability.
+
+### COORDINATION RULES
+1. **Always run tests** before and after changes: `cd backend && source venv/bin/activate && pytest`.
+2. **Update this section** after every major implementation or commit.
+3. **Avoid hardcoding:** Use `settings` from `app.config`.
+4. **Communicate logic changes** here first if they impact shared services (Bayesian, Kelly, Orchestrator).
+
 ## Build, Run, and Test Commands
 
 ### Backend
