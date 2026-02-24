@@ -1,0 +1,14 @@
+[run]
+source = app
+omit =
+    */tests/*
+    app/services/notion_integration.py
+
+[report]
+show_missing = true
+fail_under = 60
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    @abstractmethod
+    \.\.\.
