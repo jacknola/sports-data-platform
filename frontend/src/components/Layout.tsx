@@ -1,12 +1,13 @@
 import { ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { 
-  LayoutDashboard, 
-  Bot, 
-  TrendingUp, 
-  BarChart3, 
+import {
+  LayoutDashboard,
+  Bot,
+  TrendingUp,
+  BarChart3,
   Settings,
-  Zap
+  Zap,
+  Trophy
 } from 'lucide-react'
 import { clsx } from 'clsx'
 
@@ -20,6 +21,7 @@ export default function Layout({ children }: LayoutProps) {
   const navItems = [
     { path: '/', label: 'Dashboard', icon: LayoutDashboard },
     { path: '/bets', label: 'Best Bets', icon: TrendingUp },
+    { path: '/college-basketball', label: 'College Basketball', icon: Trophy },
     { path: '/agents', label: 'Agents', icon: Bot },
     { path: '/analysis', label: 'Analysis', icon: BarChart3 },
     { path: '/settings', label: 'Settings', icon: Settings },
