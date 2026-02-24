@@ -4,5 +4,5 @@ This file tracks all major tracks for the project. Each track has its own detail
 
 ---
 
-- [ ] **Track: Implement Baseline Model Comparison (Bayesian vs. Random Forest)**
+- [x] **Track: Implement Baseline Model Comparison (Bayesian vs. Random Forest)**
   *Link: [./tracks/baseline_comparison_20260224/](./tracks/baseline_comparison_20260224/)*
