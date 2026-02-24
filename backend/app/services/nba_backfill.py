@@ -3,6 +3,7 @@ NBA historical data backfill service.
 """
 from typing import List, Dict, Any
 from datetime import datetime
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from nba_api.stats.endpoints import leaguegamefinder
 from app.models.game import Game
@@ -55,7 +56,8 @@ class NBABackfillService:
             ext_id = f"NBA_{gid}"
             
             # Check if exists
-            existing = self.db.query(Game).filter_by(external_game_id=ext_id).first()
+            stmt = select(Game).where(Game.external_game_id == ext_id)
+            existing = self.db.execute(stmt).scalars().first()
             if existing:
                 continue
                 

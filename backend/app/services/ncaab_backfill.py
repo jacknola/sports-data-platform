@@ -5,6 +5,7 @@ from typing import List, Dict, Any
 import httpx
 from bs4 import BeautifulSoup
 from datetime import datetime, timezone
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.models.game import Game
 from loguru import logger
@@ -45,7 +46,8 @@ class NCAABBackfillService:
                 ext_id = f"NCAAB_SCRAPE_{home_team}_{away_team}_{game_date_str}".replace(" ", "")
                 
                 # Check if exists
-                existing = self.db.query(Game).filter_by(external_game_id=ext_id).first()
+                stmt = select(Game).where(Game.external_game_id == ext_id)
+                existing = self.db.execute(stmt).scalars().first()
                 if existing:
                     continue
                     

@@ -22,11 +22,14 @@ import os
 import uuid
 import sqlite3
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from loguru import logger
 
 from app.config import settings
 from app.services.supabase_service import SupabaseService, TABLE_BETS
+from app.database import SessionLocal
+from app.models.bet import Bet
+from sqlalchemy import select
 
 LOCAL_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "bets.db")
 
@@ -73,13 +76,13 @@ class BetTracker:
         Returns the generated bet ID.
         """
         bet_id = str(uuid.uuid4())
-        now = datetime.utcnow().isoformat()
+        now_iso = datetime.now(timezone.utc).isoformat()
 
         # Standardize record
         record = {
             "id": bet_id,
-            "created_at": now,
-            "date": bet_data.get("date", datetime.utcnow().strftime("%Y-%m-%d")),
+            "created_at": now_iso,
+            "date": bet_data.get("date", datetime.now(timezone.utc).strftime("%Y-%m-%d")),
             "game_id": bet_data.get("game_id", ""),
             "sport": bet_data.get("sport", "ncaab"),
             "side": bet_data.get("side", ""),
@@ -93,6 +96,10 @@ class BetTracker:
             "settled_at": None,
         }
 
+        # 1. Save to PostgreSQL (for model comparison)
+        self._save_postgres(bet_data, record)
+
+        # 2. Save to Supabase or SQLite
         if self.use_supabase:
             try:
                 self.supabase.client.table(TABLE_BETS).insert(record).execute()
@@ -106,6 +113,48 @@ class BetTracker:
             self._save_sqlite(record)
 
         return bet_id
+
+    def _save_postgres(self, original_data: Dict[str, Any], record: Dict[str, Any]):
+        """Save to PostgreSQL bets table for Analysis services."""
+        try:
+            db = SessionLocal()
+            # Try to map internal game_id to postgres game.id
+            # In run_ncaab_analysis it's like 'NCAAB_12345'
+            game_ext_id = record["game_id"]
+            
+            from app.models.game import Game
+            stmt = select(Game).where(Game.external_game_id == game_ext_id)
+            game = db.execute(stmt).scalars().first()
+            
+            postgres_game_id = game.id if game else None
+            
+            # Convert american to implied
+            odds = record["odds"]
+            if odds > 0:
+                implied = 100 / (odds + 100)
+            else:
+                implied = abs(odds) / (abs(odds) + 100)
+
+            # We create a Bet model instance
+            new_bet = Bet(
+                selection_id=record["id"],
+                sport=record["sport"],
+                game_id=postgres_game_id,
+                team=record["side"],
+                market=record["market"],
+                current_odds=float(odds),
+                implied_prob=float(implied),
+                devig_prob=original_data.get("true_prob") or implied,
+                posterior_prob=original_data.get("true_prob"), # Use as placeholder
+                edge=record["edge"],
+                features=original_data.get("features", {})
+            )
+            db.add(new_bet)
+            db.commit()
+            db.close()
+            logger.info(f"Saved bet {record['id']} to PostgreSQL")
+        except Exception as e:
+            logger.error(f"PostgreSQL save failed: {e}")
 
     def _save_sqlite(self, record: Dict[str, Any]):
         with sqlite3.connect(LOCAL_DB_PATH) as conn:

@@ -565,11 +565,24 @@ class ReportFormatter:
         market_label = market_labels.get(market, market.upper())
         market_tag = f" [{market_label}]" if market_label else ""
 
+        # Efficiency metrics for NCAAB
+        efficiency_line = ""
+        if sport == "NCAAB":
+            # Check if we have raw metrics in the pick (from run_ncaab_analysis)
+            h_eff = pick.get("home_eff")
+            a_eff = pick.get("away_eff")
+            if h_eff and a_eff:
+                efficiency_line = (
+                    f"\n   🏠 <code>AdjOE:{h_eff.get('AdjOE','')} DE:{h_eff.get('AdjDE','')}</code>"
+                    f"\n   ✈️ <code>AdjOE:{a_eff.get('AdjOE','')} DE:{a_eff.get('AdjDE','')}</code>"
+                )
+
         line = (
             f"{emoji} <b>#{rank} {ReportFormatter._escape(str(bet_on))} "
             f"{odds_str}</b>{signal_tag}{fd_tag}\n"
             f"   {sport_tag}{market_tag} <i>{ReportFormatter._escape(str(matchup))}</i>\n"
             f"   Edge: <code>{edge_str}</code>  |  Score: <code>{score:.1f}</code>"
+            f"{efficiency_line}"
         )
         if signals and str(signals).strip():
             line += f"\n   Signals: {ReportFormatter._escape(str(signals))}"

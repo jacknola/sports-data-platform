@@ -787,13 +787,47 @@ def run_analysis() -> Dict[str, Any]:
 
     # --- Save bets to tracker ---
     if bets:
+        # First save games to PostgreSQL so bets can reference them
+        try:
+            from app.database import SessionLocal
+            from app.models.game import Game
+            from sqlalchemy import select
+            
+            db = SessionLocal()
+            for game_analysis in game_analyses:
+                game_data = game_analysis["game"]
+                ext_id = game_data["game_id"]
+                
+                # Check if exists
+                stmt = select(Game).where(Game.external_game_id == ext_id)
+                existing = db.execute(stmt).scalars().first()
+                
+                if not existing:
+                    new_game = Game(
+                        external_game_id=ext_id,
+                        sport="ncaab",
+                        home_team=game_data["home"],
+                        away_team=game_data["away"],
+                        game_date=datetime.now(timezone.utc).replace(tzinfo=None) # Approximation
+                    )
+                    db.add(new_game)
+            db.commit()
+            db.close()
+            logger.info("Games synced to PostgreSQL")
+        except Exception as e:
+            logger.error(f"Failed to sync games to PostgreSQL: {e}")
+
         tracker = BetTracker()
         for b in bets:
+            # Find the original opportunity to get true_prob
+            opp_id = b["game_id"]
+            orig_opp = next((o for o in opportunities if o.game_id == opp_id), None)
+            
             # We only track bets that actually have a bet size
             if float(b["bet_size_$"]) > 0:
                 tracker.save_bet(
                     {
-                        "game_id": b["game_id"],
+                        "game_id": b["game_id"].replace("_HOME", "").replace("_AWAY", ""),
                         "sport": "ncaab",
                         "side": b["side"],
                         "market": b["market"],
@@ -805,7 +839,8 @@ def run_analysis() -> Dict[str, Any]:
                         "line": float(b.get("line", 0.0)),
                         "edge": float(b["edge_pct"]) / 100,
                         "bet_size": float(b["bet_size_$"]),
-                        "date": datetime.utcnow().strftime("%Y-%m-%d"),
+                        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                        "true_prob": orig_opp.true_prob if orig_opp else None
                     }
                 )
         print(f"\n  Saved {len(bets)} pending bets to tracker.")
