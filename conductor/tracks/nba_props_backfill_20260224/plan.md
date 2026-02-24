@@ -18,7 +18,7 @@ This plan outlines the steps to ingest historical player stats, implement situat
 
 ### Goal: Vectorize player performances for RAG-enhanced prop analysis.
 
-- [ ] **Task 1: Player Performance Profiler**
+- [x] **Task 1: Player Performance Profiler** d225537
     - [ ] Implement `PlayerProfiler` to vectorize game logs (Scenario + Outcome).
     - [ ] Write tests for player situational embeddings.
 - [ ] **Task 2: Bulk Vectorization Script**
