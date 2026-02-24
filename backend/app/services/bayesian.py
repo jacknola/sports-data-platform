@@ -203,19 +203,44 @@ class BayesianAnalyzer:
         else:
             return 100 * (1 - prob) / prob
 
-    def calculate_kelly_criterion(self, prob: float, odds: float) -> float:
+    def calculate_kelly_criterion(
+        self, prob: float, odds: float, edge: float = 0.0
+    ) -> float:
         """
         Calculate Kelly Criterion for bet sizing
 
         Args:
             prob: Probability of winning
             odds: Decimal odds
+            edge: Edge (posterior_p - implied_p) to determine fraction
 
         Returns:
             Kelly fraction (percentage of bankroll to bet)
         """
+        from app.config import settings
+
         if odds <= 1:
             return 0.0
 
-        kelly = (prob * odds - 1) / (odds - 1)
-        return max(0.0, min(kelly, 0.05))  # Cap at 5% of bankroll per AGENTS.md rules
+        # Full Kelly formula: (p*b - q) / b where b is decimal odds - 1
+        b = odds - 1
+        q = 1 - prob
+        full_kelly = (prob * b - q) / b
+
+        if full_kelly <= 0:
+            return 0.0
+
+        # Determine fractional multiplier based on edge thresholds
+        # AGENTS.md: >=3% edge (0.03) = Quarter Kelly, >=5% edge (0.05) = Half Kelly
+        if edge >= settings.EDGE_THRESHOLD_MEDIUM:
+            multiplier = settings.KELLY_FRACTION_HALF
+        elif edge >= settings.EDGE_THRESHOLD_LOW:
+            multiplier = settings.KELLY_FRACTION_QUARTER
+        else:
+            # Below minimum threshold (3% by default), don't recommend a bet
+            return 0.0
+
+        kelly_stake = full_kelly * multiplier
+
+        # Apply global max bet cap (5% by default)
+        return max(0.0, min(kelly_stake, settings.MAX_BET_PERCENTAGE))

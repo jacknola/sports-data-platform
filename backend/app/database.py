@@ -25,13 +25,17 @@ Base = declarative_base()
 
 async def init_db():
     """Initialize database"""
+    import os
     logger.info("Initializing database...")
     # Import all models to register them
     from app.models import bet, game, team, player
     
-    # Create tables
-    Base.metadata.create_all(bind=engine)
-    logger.info("Database initialized")
+    # Create tables (skip during tests where stubs might cause issues or DB is handled by fixtures)
+    if os.getenv("ENVIRONMENT") != "test":
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database initialized")
+    else:
+        logger.info("Database initialization skipped (test environment)")
 
 
 def get_db():

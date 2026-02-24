@@ -9,6 +9,7 @@ import datetime
 
 class Bet(Base):
     __tablename__ = "bets"
+    __table_args__ = {"extend_existing": True}
     
     id = Column(Integer, primary_key=True, index=True)
     selection_id = Column(String, unique=True, index=True)

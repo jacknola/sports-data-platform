@@ -9,6 +9,7 @@ import datetime
 
 class Parlay(Base):
     __tablename__ = "parlays"
+    __table_args__ = {"extend_existing": True}
     
     id = Column(Integer, primary_key=True, index=True)
     parlay_id = Column(String, unique=True, index=True)
@@ -86,6 +87,7 @@ class Parlay(Base):
 class ParlayLeg(Base):
     """Individual leg of a parlay for detailed tracking"""
     __tablename__ = "parlay_legs"
+    __table_args__ = {"extend_existing": True}
     
     id = Column(Integer, primary_key=True, index=True)
     parlay_id = Column(String, index=True)

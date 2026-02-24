@@ -772,6 +772,10 @@ class NBADvPAnalyzer:
         except Exception as e:
             logger.error("Player fetch failed: {}", e)
 
+        if not players:
+            logger.warning("No players fetched from API, using fallback player baselines")
+            return self._fallback_player_baselines()
+
         logger.info("Fetched baselines for {} players on slate", len(players))
         return players
 

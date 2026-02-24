@@ -2,9 +2,12 @@
 Application configuration
 """
 
-import os
+from pathlib import Path
 from pydantic_settings import BaseSettings
 from typing import Optional
+
+# Resolve .env from project root regardless of CWD
+_ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
 
 
 class Settings(BaseSettings):
@@ -17,14 +20,14 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
 
     # Database
-    DATABASE_URL: str
+    DATABASE_URL: str = "sqlite:///./test.db"
 
     # Redis
-    REDIS_URL: str
+    REDIS_URL: str = "redis://localhost:6379/0"
 
     # Celery
-    CELERY_BROKER_URL: str
-    CELERY_RESULT_BACKEND: str
+    CELERY_BROKER_URL: str = "redis://localhost:6379/1"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
 
     # API Keys
     SPORTSRADAR_API_KEY: Optional[str] = None
@@ -73,6 +76,13 @@ class Settings(BaseSettings):
 
     # Betting
     BETTING_BANKROLL: float = 1000.0
+    KELLY_FRACTION_QUARTER: float = 0.25
+    KELLY_FRACTION_HALF: float = 0.5
+    MAX_BET_PERCENTAGE: float = 0.05
+    EDGE_THRESHOLD_LOW: float = 0.03
+    EDGE_THRESHOLD_MEDIUM: float = 0.05
+    EDGE_THRESHOLD_HIGH: float = 0.07
+    EDGE_THRESHOLD_MAX: float = 0.10
 
     # Google Sheets
     GOOGLE_SERVICE_ACCOUNT_PATH: Optional[str] = None
@@ -84,16 +94,9 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
     class Config:
-        env_file = os.path.join(os.path.dirname(__file__), "..", ".env")
+        env_file = str(_ENV_FILE)
         case_sensitive = True
 
 
 # Ensure required environment variables are set, or provide defaults for development
-settings = Settings(
-    DATABASE_URL=os.getenv("DATABASE_URL", "sqlite:///./test.db"),
-    REDIS_URL=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
-    CELERY_BROKER_URL=os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/1"),
-    CELERY_RESULT_BACKEND=os.getenv(
-        "CELERY_RESULT_BACKEND", "redis://localhost:6379/2"
-    ),
-)
+settings = Settings()
