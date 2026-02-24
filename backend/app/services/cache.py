@@ -73,3 +73,32 @@ class RedisCache:
         except Exception as e:
             logger.error(f"Cache delete error: {e}")
 
+    # Convenience helpers
+    def get_json(self, key: str) -> Optional[Any]:
+        """Get a JSON-serialized value and decode it"""
+        import json
+        value = self.get(key)
+        if value is None:
+            return None
+        try:
+            return json.loads(value)
+        except Exception as e:
+            logger.error(f"Cache JSON decode error for {key}: {e}")
+            return None
+
+    def set_json(self, key: str, value: Any, ttl: int = 3600) -> None:
+        """Serialize value as JSON and store it"""
+        import json
+        try:
+            payload = json.dumps(value)
+            self.set(key, payload, ttl)
+        except Exception as e:
+            logger.error(f"Cache JSON encode error for {key}: {e}")
+
+    @classmethod
+    def get_sync(cls) -> 'RedisCache':
+        """Synchronous accessor for code paths that aren't async"""
+        if cls._instance is None:
+            cls()
+        return cls._instance  # type: ignore[return-value]
+
