@@ -2,7 +2,7 @@
 Unit tests for data extraction utility.
 """
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from app.models.game import Game
 from app.models.bet import Bet
 from app.services.data_extraction import DataExtractor
@@ -14,7 +14,7 @@ def test_fetch_historical_data(db_session):
         sport="nba",
         home_team="LAL",
         away_team="GSW",
-        game_date=datetime.utcnow() - timedelta(days=1),
+        game_date=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1),
         home_score=110,
         away_score=105
     )

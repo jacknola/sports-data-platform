@@ -4,7 +4,7 @@ Bet model
 from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import relationship
 from app.database import Base
-import datetime
+from datetime import datetime, timezone
 
 
 class Bet(Base):
@@ -34,8 +34,8 @@ class Bet(Base):
     confidence_interval = Column(JSON)
     
     # Timestamps
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     # Relationships
     game = relationship("Game", back_populates="bets")

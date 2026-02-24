@@ -4,7 +4,7 @@ Game model
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 from app.database import Base
-import datetime
+from datetime import datetime, timezone
 
 
 class Game(Base):
@@ -24,8 +24,8 @@ class Game(Base):
     home_score = Column(Integer, nullable=True)
     away_score = Column(Integer, nullable=True)
     
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     # Relationships
     bets = relationship("Bet", back_populates="game")

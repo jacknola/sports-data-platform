@@ -2,7 +2,8 @@
 Data extraction utility for historical game and bet data.
 """
 from typing import List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 from app.models.game import Game
 from app.models.bet import Bet
@@ -27,20 +28,20 @@ class DataExtractor:
         Returns:
             A list of game dictionaries with nested bet data.
         """
-        start_date = datetime.utcnow() - timedelta(days=days)
+        start_date = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
         
         logger.info(f"Fetching historical {sport} data for the last {days} days (since {start_date})")
         
         # Query games with their bets
-        games = (
-            self.db.query(Game)
-            .filter(Game.sport == sport)
-            .filter(Game.game_date >= start_date)
-            .filter(Game.home_score.isnot(None))  # Only completed games
-            .filter(Game.away_score.isnot(None))
+        stmt = (
+            select(Game)
+            .where(Game.sport == sport)
+            .where(Game.game_date >= start_date)
+            .where(Game.home_score.isnot(None))  # Only completed games
+            .where(Game.away_score.isnot(None))
             .options(joinedload(Game.bets))
-            .all()
         )
+        games = self.db.execute(stmt).unique().scalars().all()
         
         result = []
         for game in games:
