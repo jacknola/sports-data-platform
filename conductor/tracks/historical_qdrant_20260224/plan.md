@@ -14,7 +14,7 @@ This plan outlines the steps to ingest historical data and implement vector-base
     - [ ] Implement scraper for historical college basketball odds and scores.
 - [x] **Task 3: Conductor - User Manual Verification 'Phase 1: PostgreSQL Historical Backfill' (Protocol in workflow.md)**
 
-## Phase 2: Qdrant Infrastructure & Vector Store Service
+## Phase 2: Qdrant Infrastructure & Vector Store Service [checkpoint: 6cddeec]
 
 ### Goal: Integrate Qdrant and implement the core vector management logic.
 
@@ -24,7 +24,7 @@ This plan outlines the steps to ingest historical data and implement vector-base
 - [x] **Task 2: VectorStoreService Implementation** 6fa4d58
     - [ ] Write tests for `VectorStoreService` (insert, search, delete).
     - [ ] Implement service to handle embeddings and Qdrant queries.
-- [ ] **Task 3: Conductor - User Manual Verification 'Phase 2: Qdrant Infrastructure & Vector Store Service' (Protocol in workflow.md)**
+- [x] **Task 3: Conductor - User Manual Verification 'Phase 2: Qdrant Infrastructure & Vector Store Service' (Protocol in workflow.md)**
 
 ## Phase 3: Game Profile Vectorization & Similarity Search
 
