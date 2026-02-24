@@ -93,3 +93,5 @@ python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
 telebot>=0.0.5
 pyTelegramBotAPI>=4.31.0
+qdrant-client>=1.7.0
+lxml>=4.9.3
