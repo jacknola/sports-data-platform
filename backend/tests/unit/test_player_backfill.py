@@ -19,7 +19,7 @@ def test_backfill_player_logs(db_session):
     mock_gamelog.get_data_frames.return_value = [
         MagicMock(iterrows=lambda: iter([
             (0, {
-                "GAME_ID": "0022300001",
+                "GAME_ID": "9999999",
                 "GAME_DATE": "OCT 24, 2023",
                 "MATCHUP": "LAL @ GSW",
                 "PTS": 21,
