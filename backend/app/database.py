@@ -28,7 +28,7 @@ async def init_db():
     import os
     logger.info("Initializing database...")
     # Import all models to register them
-    from app.models import bet, game, team, player
+    from app.models import bet, game, team, player, api_cache
     
     # Create tables (skip during tests where stubs might cause issues or DB is handled by fixtures)
     if os.getenv("ENVIRONMENT") != "test":

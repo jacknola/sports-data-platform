@@ -82,8 +82,75 @@ class TTLCache:
         return (time.time() - entry.ts) if entry else None
 
 
-# Module-level singleton so cache persists across calls within a process
+class PersistentCache:
+    """Database-backed persistent cache for API responses."""
+
+    def __init__(self, default_ttl: int = 3600):
+        from app.database import SessionLocal, engine, Base
+        from app.models.api_cache import APICache
+        self._Session = SessionLocal
+        self._Model = APICache
+        self._default_ttl = default_ttl
+        
+        # Ensure tables are created
+        try:
+            Base.metadata.create_all(bind=engine)
+        except Exception as e:
+            logger.error(f"Failed to initialize persistent cache tables: {e}")
+
+    def get(self, key: str, ttl: Optional[int] = None) -> Optional[FetchResult]:
+        """Retrieve from database if not expired."""
+        session = self._Session()
+        try:
+            entry = session.query(self._Model).filter_by(key=key).first()
+            if not entry:
+                return None
+
+            age = (datetime.utcnow() - entry.timestamp).total_seconds()
+            if age > (ttl or self._default_ttl):
+                return None  # Expired
+
+            import json
+            return FetchResult(
+                data=json.loads(entry.data),
+                source="cached_db",
+                game_count=0  # FetchResult __post_init__ handles this
+            )
+        except Exception as e:
+            logger.error(f"Persistent cache retrieval failed: {e}")
+            return None
+        finally:
+            session.close()
+
+    def set(self, key: str, data: Any, source: str = "live"):
+        """Save to database, updating if key exists."""
+        session = self._Session()
+        try:
+            import json
+            entry = session.query(self._Model).filter_by(key=key).first()
+            if entry:
+                entry.data = json.dumps(data)
+                entry.source = source
+                entry.timestamp = datetime.utcnow()
+            else:
+                new_entry = self._Model(
+                    key=key,
+                    data=json.dumps(data),
+                    source=source,
+                    timestamp=datetime.utcnow()
+                )
+                session.add(new_entry)
+            session.commit()
+        except Exception as e:
+            logger.error(f"Persistent cache storage failed: {e}")
+            session.rollback()
+        finally:
+            session.close()
+
+
+# Module-level singletons so cache persists across calls within a process
 _cache = TTLCache(default_ttl=300)  # 5 minute default
+_db_cache = PersistentCache(default_ttl=3600)  # 1 hour default
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -107,6 +174,7 @@ class FetchResult:
             "oddsapi_live": "[LIVE - Odds API]",
             "oddsapi_events": "[LIVE - Odds API Events]",
             "cached": "[CACHED]",
+            "cached_db": "[DB CACHE]",
             "stale_cache": "[STALE CACHE]",
             "fallback": "[FALLBACK]",
         }
@@ -190,6 +258,18 @@ class SportsAPIService:
         url = f"https://site.api.espn.com/apis/site/v2/sports/{espn_path}/scoreboard"
         cache_key = f"espn_scoreboard_{sport}"
 
+        # 1. Check in-memory cache
+        mem_cached = _cache.get(cache_key)
+        if mem_cached:
+            return FetchResult(data=mem_cached.data, source="cached")
+
+        # 2. Check persistent database cache
+        db_cached = _db_cache.get(cache_key, ttl=3600)  # 1 hour persistence
+        if db_cached:
+            # Re-populate in-memory cache
+            _cache.set(cache_key, db_cached.data, source="cached_db")
+            return db_cached
+
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 response = await client.get(url)
@@ -260,6 +340,7 @@ class SportsAPIService:
             result = FetchResult(data=games, source="espn_live")
             if games:
                 _cache.set(cache_key, games, source="espn_live")
+                _db_cache.set(cache_key, games, source="espn_live")
                 logger.info(
                     f"ESPN scoreboard: {len(games)} games for "
                     f"{ODDS_API_SPORT_DISPLAY.get(sport, sport)}"
@@ -308,6 +389,18 @@ class SportsAPIService:
             return FetchResult(data=[], source="oddsapi_events")
 
         cache_key = f"oddsapi_events_{sport}"
+
+        # 1. Check in-memory cache
+        mem_cached = _cache.get(cache_key)
+        if mem_cached:
+            return FetchResult(data=mem_cached.data, source="cached")
+
+        # 2. Check persistent database cache
+        db_cached = _db_cache.get(cache_key, ttl=14400)  # 4 hours persistence for events
+        if db_cached:
+            _cache.set(cache_key, db_cached.data, source="cached_db")
+            return db_cached
+
         url = f"{self.base_url}/sports/{sport}/events"
 
         try:
@@ -328,6 +421,7 @@ class SportsAPIService:
             )
             if events:
                 _cache.set(cache_key, events, source="oddsapi_events")
+                _db_cache.set(cache_key, events, source="oddsapi_events")
                 logger.info(
                     f"Odds API /events: {len(events)} events for "
                     f"{ODDS_API_SPORT_DISPLAY.get(sport, sport)}"
@@ -381,6 +475,17 @@ class SportsAPIService:
 
         cache_key = f"oddsapi_odds_{sport}"
 
+        # 1. Check in-memory cache
+        mem_cached = _cache.get(cache_key)
+        if mem_cached:
+            return mem_cached.data
+
+        # 2. Check persistent database cache
+        db_cached = _db_cache.get(cache_key, ttl=1800)  # 30 mins persistence for odds
+        if db_cached:
+            _cache.set(cache_key, db_cached.data, source="cached_db")
+            return db_cached.data
+
         try:
             params: Dict[str, Any] = {
                 "regions": "us",
@@ -404,7 +509,7 @@ class SportsAPIService:
             data = response.json()
 
             # ── Phase 2: commence_time filtering ──
-            # Only keep games starting within the next 14 hours
+            # Only keep games starting within the next 24 hours
             now_ts = datetime.now(timezone.utc)
             filtered = []
             for game in data:
@@ -414,7 +519,7 @@ class SportsAPIService:
                         game_time = datetime.fromisoformat(ct.replace("Z", "+00:00"))
                         hours_until = (game_time - now_ts).total_seconds() / 3600
                         # Keep games: not yet started OR started within last 3 hours
-                        if -3.0 <= hours_until <= 14.0:
+                        if -3.0 <= hours_until <= 24.0:
                             filtered.append(game)
                     except (ValueError, TypeError):
                         filtered.append(game)  # keep if unparseable
@@ -423,9 +528,10 @@ class SportsAPIService:
 
             if filtered:
                 _cache.set(cache_key, filtered, source="oddsapi_live")
+                _db_cache.set(cache_key, filtered, source="oddsapi_live")
             logger.info(
                 f"Odds API: {len(filtered)}/{len(data)} games for {sport} "
-                f"(filtered to ±14h window) | "
+                f"(filtered to ±24h window) | "
                 f"Quota: {self._last_quota_remaining} remaining"
             )
             return filtered

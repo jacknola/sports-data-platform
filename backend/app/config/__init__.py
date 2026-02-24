@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     API_PORT: int = 8000
     DEBUG: bool = True
     ENVIRONMENT: str = "development"
+    CURRENT_SEASON: str = "2025-26"
 
     # Database
     DATABASE_URL: str = "sqlite:///./test.db"
@@ -68,6 +69,16 @@ class Settings(BaseSettings):
 
     # Slack
     SLACK_WEBHOOK_URL: Optional[str] = None
+
+    # Betting
+    BETTING_BANKROLL: float = 1000.0
+    KELLY_FRACTION_QUARTER: float = 0.25
+    KELLY_FRACTION_HALF: float = 0.5
+    MAX_BET_PERCENTAGE: float = 0.05
+    EDGE_THRESHOLD_LOW: float = 0.03
+    EDGE_THRESHOLD_MEDIUM: float = 0.05
+    EDGE_THRESHOLD_HIGH: float = 0.07
+    EDGE_THRESHOLD_MAX: float = 0.10
 
     # Google Sheets
     GOOGLE_SERVICE_ACCOUNT_PATH: Optional[str] = None

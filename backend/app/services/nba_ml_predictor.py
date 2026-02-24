@@ -205,18 +205,19 @@ class NBAMLPredictor:
             "home_off_rating" in features.columns
             and "away_off_rating" in features.columns
         ):
-            # Simple heuristic for placeholder
-            net_home = (
-                features["home_off_rating"].iloc[0]
-                - features["home_def_rating"].iloc[0]
-            )
-            net_away = (
-                features["away_off_rating"].iloc[0]
-                - features["away_def_rating"].iloc[0]
-            )
-            diff = net_home - net_away
-            # 1 point diff ~ 3% win prob change
-            home_win_prob = 0.54 + (diff * 0.03)
+            # Advanced net rating comparison
+            # Based on research: (Home_ORtg - Away_DRtg) vs (Away_ORtg - Home_DRtg)
+            home_matchup_edge = features["home_off_rating"].iloc[0] - features["away_def_rating"].iloc[0]
+            away_matchup_edge = features["away_off_rating"].iloc[0] - features["home_def_rating"].iloc[0]
+            
+            # Form factor: Win percentage weight (0.3)
+            win_pct_diff = features["home_win_pct"].iloc[0] - features["away_win_pct"].iloc[0]
+            
+            # Composite edge
+            net_diff = (home_matchup_edge - away_matchup_edge) + (win_pct_diff * 10)
+            
+            # 1 point composite diff ~ 2.5% win prob change
+            home_win_prob = 0.54 + (net_diff * 0.025)
             home_win_prob = max(0.1, min(0.9, home_win_prob))
 
         return {
