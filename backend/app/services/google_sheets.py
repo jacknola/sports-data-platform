@@ -163,8 +163,8 @@ class GoogleSheetsService:
                 "Date", "Player", "Team", "Opponent", "Game",
                 "Stat", "Line", "Side", "Odds", "Projected",
                 "Edge %", "Bayesian P", "EV Class", "Confidence",
-                "Kelly %", "Sharp Signals", "Best Book",
-                "Books #", "Over Odds", "Under Odds",
+                "Kelly %", "Sharp Signals", "Situational Context",
+                "Best Book", "Books #", "Over Odds", "Under Odds",
             ]
 
             # Use ALL analyzed props, sorted by edge descending
@@ -196,6 +196,9 @@ class GoogleSheetsService:
                 away = p.get("away_team", "")
                 game = f"{away} @ {home}" if home and away else ""
                 signals = ", ".join(p.get("sharp_signals", []))
+                
+                # Extract situational RAG context
+                situational_context = p.get("situational_context", "No historical analogs found.")
 
                 rows.append([
                     today,
@@ -214,6 +217,7 @@ class GoogleSheetsService:
                     _confidence_label(edge, ev_class),
                     round(p.get("kelly_fraction", 0) * 100, 2),
                     signals,
+                    situational_context,
                     best_book,
                     p.get("books_offering", 0),
                     _fmt_odds(int(p.get("over_odds", -110))),
