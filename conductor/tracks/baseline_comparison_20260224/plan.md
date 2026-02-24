@@ -9,7 +9,7 @@ This plan outlines the steps to implement and compare a Random Forest baseline a
 - [x] **Task 1: Define Data Extraction Schema** b6e92ca
     - [ ] Write unit tests for data extraction utility.
     - [ ] Implement utility to fetch historical game/odds data from PostgreSQL.
-- [ ] **Task 2: Feature Engineering Pipeline**
+- [x] **Task 2: Feature Engineering Pipeline** 21cdf37
     - [ ] Write tests for feature transformation logic.
     - [ ] Implement standardized feature scaling and encoding for Random Forest.
 - [ ] **Task 3: Conductor - User Manual Verification 'Phase 1: Data Infrastructure & Preparation' (Protocol in workflow.md)**
