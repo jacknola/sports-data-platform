@@ -21,7 +21,7 @@ This plan outlines the steps to ingest historical data and implement vector-base
 - [x] **Task 1: Infrastructure Setup** 1dac9e6
     - [ ] Add Qdrant to `docker-compose.yml`.
     - [ ] Verify connection and collection initialization.
-- [ ] **Task 2: VectorStoreService Implementation**
+- [x] **Task 2: VectorStoreService Implementation** 6fa4d58
     - [ ] Write tests for `VectorStoreService` (insert, search, delete).
     - [ ] Implement service to handle embeddings and Qdrant queries.
 - [ ] **Task 3: Conductor - User Manual Verification 'Phase 2: Qdrant Infrastructure & Vector Store Service' (Protocol in workflow.md)**
