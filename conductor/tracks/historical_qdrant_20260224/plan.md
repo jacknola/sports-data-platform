@@ -6,7 +6,7 @@ This plan outlines the steps to ingest historical data and implement vector-base
 
 ### Goal: Populate the relational database with multi-season historical data.
 
-- [ ] **Task 1: NBA API Backfill Script**
+- [x] **Task 1: NBA API Backfill Script** 8199c87
     - [ ] Write unit tests for NBA historical ingestion.
     - [ ] Implement script to pull and save last 3 seasons of NBA data.
 - [ ] **Task 2: NCAAB Historical Scraper**
