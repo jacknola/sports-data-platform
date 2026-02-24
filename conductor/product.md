@@ -24,7 +24,8 @@ To create a high-performance, automated intelligence layer for sports betting th
 - **Omnichannel Reporting:** Seamless automated updates to Notion, Google Sheets, and Telegram.
 - **Advanced Predictive Modeling:** A modular core supporting Bayesian modeling and potential expansion into classical ML methods (Linear Regression, Random Forests).
 - **Model Comparison Framework:** Rigorous evaluation system to compare different model architectures (e.g., Bayesian vs. Random Forest) using Brier Score, ROI, and CLV.
-- **Situational Similarity Analysis (RAG):** Vector-search based retrieval system (Qdrant) that identifies historical game analogs to provide deep situational context for decision making.
+- **Situational Similarity Analysis (RAG):** Vector-search based retrieval system (Qdrant) that identifies historical game and player performance analogs to provide deep situational context for decision making.
+- **Player-Specific Historical Backfill:** Comprehensive ingestion system for multi-season NBA player game logs, enabling granular prop analysis.
 
 ## Success Metrics
 - **CLV (Closing Line Value) Beats:** Frequency of beating the closing line on sharp books.
