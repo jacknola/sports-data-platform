@@ -33,6 +33,6 @@ This plan outlines the steps to implement and compare a Random Forest baseline a
 - [x] **Task 1: Comparison Runner Script** b60c709
     - [ ] Write tests for the comparison orchestrator.
     - [ ] Implement script to run both models on historical data and collect metrics.
-- [ ] **Task 2: Reporting & Visualization**
+- [x] **Task 2: Reporting & Visualization** f83a3e4
     - [ ] Implement reporting logic to output results to logs and/or console.
 - [ ] **Task 3: Conductor - User Manual Verification 'Phase 3: Analysis & Reporting' (Protocol in workflow.md)**
