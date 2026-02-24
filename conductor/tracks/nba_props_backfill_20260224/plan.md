@@ -21,7 +21,7 @@ This plan outlines the steps to ingest historical player stats, implement situat
 - [x] **Task 1: Player Performance Profiler** d225537
     - [ ] Implement `PlayerProfiler` to vectorize game logs (Scenario + Outcome).
     - [ ] Write tests for player situational embeddings.
-- [ ] **Task 2: Bulk Vectorization Script**
+- [x] **Task 2: Bulk Vectorization Script** 2d3a8c7
     - [ ] Implement script to vectorize all historical player logs into a new Qdrant collection `player_performances`.
 - [ ] **Task 3: Conductor - User Manual Verification 'Phase 2: Player-Centric Situational Analysis' (Protocol in workflow.md)**
 
