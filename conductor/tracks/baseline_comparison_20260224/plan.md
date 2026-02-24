@@ -6,7 +6,7 @@ This plan outlines the steps to implement and compare a Random Forest baseline a
 
 ### Goal: Prepare a clean, standardized dataset for model training and evaluation.
 
-- [ ] **Task 1: Define Data Extraction Schema**
+- [x] **Task 1: Define Data Extraction Schema** b6e92ca
     - [ ] Write unit tests for data extraction utility.
     - [ ] Implement utility to fetch historical game/odds data from PostgreSQL.
 - [ ] **Task 2: Feature Engineering Pipeline**
