@@ -30,7 +30,7 @@ This plan outlines the steps to ingest historical data and implement vector-base
 
 ### Goal: Enable searching for similar historical game scenarios.
 
-- [ ] **Task 1: Scenario Vectorization Logic**
+- [x] **Task 1: Scenario Vectorization Logic** d4700df
     - [ ] Define the feature vector for a "Game Profile".
     - [ ] Write tests for embedding generation.
     - [ ] Implement script to vectorize all historical games into Qdrant.
