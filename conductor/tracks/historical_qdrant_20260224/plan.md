@@ -18,7 +18,7 @@ This plan outlines the steps to ingest historical data and implement vector-base
 
 ### Goal: Integrate Qdrant and implement the core vector management logic.
 
-- [ ] **Task 1: Infrastructure Setup**
+- [x] **Task 1: Infrastructure Setup** 1dac9e6
     - [ ] Add Qdrant to `docker-compose.yml`.
     - [ ] Verify connection and collection initialization.
 - [ ] **Task 2: VectorStoreService Implementation**
