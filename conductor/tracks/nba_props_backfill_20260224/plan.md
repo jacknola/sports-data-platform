@@ -2,7 +2,7 @@
 
 This plan outlines the steps to ingest historical player stats, implement situational search for props, and export results to Google Sheets.
 
-## Phase 1: Player Game Log Backfill
+## Phase 1: Player Game Log Backfill [checkpoint: 3a2c838]
 
 ### Goal: Ingest multi-season player stats into PostgreSQL.
 
@@ -12,7 +12,7 @@ This plan outlines the steps to ingest historical player stats, implement situat
 - [x] **Task 2: Ingestion Script Implementation** 931a035
     - [ ] Write unit tests for player log ingestion.
     - [ ] Implement `NBAPlayerBackfillService` to pull logs via `nba_api`.
-- [ ] **Task 3: Conductor - User Manual Verification 'Phase 1: Player Game Log Backfill' (Protocol in workflow.md)**
+- [x] **Task 3: Conductor - User Manual Verification 'Phase 1: Player Game Log Backfill' (Protocol in workflow.md)**
 
 ## Phase 2: Player-Centric Situational Analysis
 
