@@ -1,6 +1,54 @@
 version: '3.8'
 
 services:
+  # Sports Betting Analysis MCP Server
+  betting-analysis:
+    build:
+      context: ./mcp-servers/betting-analysis
+      dockerfile: Dockerfile
+    container_name: mcp-betting-analysis
+    restart: unless-stopped
+    networks:
+      - mcp-network
+    environment:
+      - MCP_MODE=stdio
+      - LOG_LEVEL=info
+    stdin_open: true
+    tty: true
+
+  # Google Sheets Reporting MCP Server
+  sheets-reporting:
+    build:
+      context: ./mcp-servers/sheets-reporting
+      dockerfile: Dockerfile
+    container_name: mcp-sheets-reporting
+    restart: unless-stopped
+    networks:
+      - mcp-network
+    environment:
+      - MCP_MODE=stdio
+      - LOG_LEVEL=info
+      - GOOGLE_CREDENTIALS_PATH=/app/credentials/google-sa.json
+    volumes:
+      - ./backend/credentials/google-sa.json:/app/credentials/google-sa.json:ro
+    stdin_open: true
+    tty: true
+
+  # NotebookLM MCP Server (Google Research)
+  notebooklm:
+    image: node:20-slim
+    container_name: mcp-notebooklm
+    restart: unless-stopped
+    working_dir: /app
+    command: npx notebooklm-mcp@latest
+    networks:
+      - mcp-network
+    environment:
+      - MCP_MODE=stdio
+      - LOG_LEVEL=info
+    stdin_open: true
+    tty: true
+
   # Sequential Thinking MCP Server
   sequentialthinking:
     image: mcp/sequentialthinking:latest

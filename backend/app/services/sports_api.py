@@ -554,13 +554,16 @@ class SportsAPIService:
     # Player Props — per-event odds endpoint
     # ──────────────────────────────────────────────────────────────
 
-    # Core 5 prop markets (best credit/value ratio)
+    # Core 8 prop markets — singles + combos (good credit/value ratio)
     CORE_PROP_MARKETS: List[str] = [
         "player_points",
         "player_rebounds",
         "player_assists",
         "player_threes",
         "player_points_rebounds_assists",
+        "player_points_rebounds",
+        "player_points_assists",
+        "player_rebounds_assists",
     ]
 
     # Extended markets (use when credit budget allows)
@@ -569,9 +572,6 @@ class SportsAPIService:
         "player_steals",
         "player_blocks_steals",
         "player_turnovers",
-        "player_points_rebounds",
-        "player_points_assists",
-        "player_rebounds_assists",
         "player_double_double",
     ]
 
@@ -705,18 +705,24 @@ class SportsAPIService:
             logger.info(f"Serving cached prop scan for {sport}")
             return cached.data
 
-        # Step 1: Discover events
-        discovery = await self.discover_games(sport)
-        events = discovery.data
-        if not events:
-            logger.warning(f"No events found for {sport} — cannot scan props")
+        # Step 1: Get events with Odds API IDs (required for prop endpoints).
+        # discover_games() often returns ESPN data which lacks Odds API UUIDs,
+        # so we fetch from get_odds() which always has 'id' fields.
+        odds_events = await self.get_odds(sport, markets="h2h")
+        if not odds_events:
+            # Fallback: try /events endpoint directly
+            events_result = await self.get_events(sport)
+            odds_events = events_result.data if events_result.data else []
+
+        if not odds_events:
+            logger.warning(f"No Odds API events for {sport} — cannot scan props")
             return []
 
         # Step 2: Get event IDs
         event_ids: List[str] = []
         event_meta: Dict[str, Dict[str, str]] = {}
 
-        for ev in events:
+        for ev in odds_events:
             eid = ev.get("id", "")
             if not eid:
                 continue

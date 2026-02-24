@@ -350,9 +350,14 @@ class NBAMLPredictor:
 
                 # Try to find pinnacle or fanduel/draftkings
                 target_books = ["pinnacle", "fanduel", "draftkings", "circa", "bovada"]
+                spread_data: Dict[str, Any] = {}
+                total_data: Dict[str, Any] = {}
+                best_book_used = ""
+
                 for book in target_books:
                     b_data = next((b for b in bookmakers if b["key"] == book), None)
                     if b_data:
+                        # --- h2h (moneyline) ---
                         h2h = next(
                             (m for m in b_data["markets"] if m["key"] == "h2h"), None
                         )
@@ -362,7 +367,39 @@ class NBAMLPredictor:
                                     home_odds = round(out["price"])
                                 elif out["name"] == away_team:
                                     away_odds = round(out["price"])
-                            break
+
+                        # --- spreads ---
+                        sp = next(
+                            (m for m in b_data["markets"] if m["key"] == "spreads"),
+                            None,
+                        )
+                        if sp and not spread_data:
+                            for out in sp.get("outcomes", []):
+                                if out["name"] == home_team:
+                                    spread_data["home_point"] = out.get("point", 0)
+                                    spread_data["home_odds"] = round(out.get("price", -110))
+                                elif out["name"] == away_team:
+                                    spread_data["away_point"] = out.get("point", 0)
+                                    spread_data["away_odds"] = round(out.get("price", -110))
+                            spread_data["book"] = b_data["key"]
+
+                        # --- totals ---
+                        tot = next(
+                            (m for m in b_data["markets"] if m["key"] == "totals"),
+                            None,
+                        )
+                        if tot and not total_data:
+                            for out in tot.get("outcomes", []):
+                                if out["name"] == "Over":
+                                    total_data["over_odds"] = round(out.get("price", -110))
+                                    total_data["point"] = out.get("point", 0)
+                                elif out["name"] == "Under":
+                                    total_data["under_odds"] = round(out.get("price", -110))
+                            total_data["book"] = b_data["key"]
+
+                        if not best_book_used:
+                            best_book_used = b_data["key"]
+                        break
 
                 features = {"odds": {"home": home_odds, "away": away_odds}}
 
@@ -390,6 +427,9 @@ class NBAMLPredictor:
                         "home_team": home_team,
                         "away_team": away_team,
                         "features": features,
+                        "spread": spread_data,
+                        "total": total_data,
+                        "book": best_book_used,
                     }
                 )
 
@@ -418,6 +458,10 @@ class NBAMLPredictor:
             pred = await self.predict_game(
                 game["home_team"], game["away_team"], game["features"]
             )
+            # Attach market data from raw odds
+            pred["spread"] = game.get("spread", {})
+            pred["total"] = game.get("total", {})
+            pred["book"] = game.get("book", "")
             predictions.append(pred)
 
         return predictions
