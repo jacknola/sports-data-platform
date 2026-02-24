@@ -407,12 +407,17 @@ class SharpMoneyDetector:
             confidence_scores.append(0.70)
 
         # --- +EV Calculation ---
-        # Need both sides of Pinnacle to properly devig - use symmetric assumption
-        # For spread markets, assume pinnacle_away_odds is symmetric (-108/-108 typical)
-        pinnacle_away_symmetric = pinnacle_home_odds if pinnacle_home_odds == -108 else -108
-        devigged_home, _ = SharpMoneyDetector.devig_odds(pinnacle_home_odds, pinnacle_away_symmetric)
+        # Infer the other side of Pinnacle odds for devigging.
+        # Pinnacle spreads typically carry ~2.5% total overround.
+        # When we only have one side, estimate the other by mirroring
+        # the vig structure rather than assuming a fixed -108.
+        pinnacle_home_implied = SharpMoneyDetector._american_to_implied_static(pinnacle_home_odds)
+        total_vig_estimate = 0.025  # Pinnacle typical ~2.5% total overround
+        pinnacle_home_implied_adj = pinnacle_home_implied + (total_vig_estimate / 2)
+        pinnacle_away_implied_adj = (1.0 - pinnacle_home_implied) + (total_vig_estimate / 2)
+        total_implied = pinnacle_home_implied_adj + pinnacle_away_implied_adj
+        devigged_home = pinnacle_home_implied_adj / total_implied
 
-        pinnacle_implied = SharpMoneyDetector._american_to_implied_static(pinnacle_home_odds)
         retail_implied = SharpMoneyDetector._american_to_implied_static(retail_home_odds)
 
         # True edge = Pinnacle devigged prob vs retail implied

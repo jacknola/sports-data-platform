@@ -385,3 +385,119 @@ def run_prop_analysis_pipeline(sport: str = "nba") -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Prop analysis pipeline failed: {e}")
         return None
+
+
+# ---------------------------------------------------------------------------
+# Google Sheets export pipeline
+# ---------------------------------------------------------------------------
+
+
+def run_sheets_export_pipeline(
+    ncaab_data: Optional[Dict[str, Any]] = None,
+    nba_data: Optional[Dict[str, Any]] = None,
+    prop_data: Optional[Dict[str, Any]] = None,
+    spreadsheet_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Export all daily picks to Google Sheets.
+
+    Called after Telegram sends complete.  Collects NCAAB, NBA, and
+    prop data produced by the other pipeline stages and writes them
+    to the configured Google Spreadsheet (Props / NBA / NCAAB / Summary tabs).
+
+    Args:
+        ncaab_data: Result from run_ncaab_analysis() (contains game_analyses + bets)
+        nba_data: Result from run_nba_analysis() (contains predictions + bets)
+        prop_data: Result from run_prop_analysis() (contains props + best_props)
+        spreadsheet_id: Override sheet ID (defaults to GOOGLE_SPREADSHEET_ID)
+
+    Returns:
+        Dict with per-tab results, or None on failure.
+    """
+    try:
+        from app.config import settings
+        from app.services.google_sheets import GoogleSheetsService
+
+        sid = spreadsheet_id or getattr(settings, "GOOGLE_SPREADSHEET_ID", None)
+        if not sid:
+            logger.warning("Google Sheets export skipped: no GOOGLE_SPREADSHEET_ID")
+            return None
+
+        sheets = GoogleSheetsService()
+        if not sheets.is_configured:
+            logger.warning("Google Sheets export skipped: service not configured")
+            return None
+
+        # Extract NBA predictions + bets from nba_data
+        nba_predictions = (nba_data or {}).get("predictions", [])
+        nba_bets = (nba_data or {}).get("bets", [])
+
+        result = sheets.export_daily_picks(
+            spreadsheet_id=sid,
+            ncaab_data=ncaab_data,
+            nba_predictions=nba_predictions,
+            nba_bets=nba_bets,
+            prop_data=prop_data,
+        )
+
+        tabs_ok = sum(
+            1
+            for r in result.values()
+            if isinstance(r, dict) and r.get("status") == "success"
+        )
+        logger.info(f"Google Sheets export: {tabs_ok}/{len(result)} tabs written")
+        return result
+
+    except Exception as e:
+        logger.error(f"Google Sheets export pipeline failed: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Slack report pipeline
+# ---------------------------------------------------------------------------
+
+
+def run_slack_report_pipeline(
+    ncaab_data: Optional[Dict[str, Any]] = None,
+    nba_data: Optional[Dict[str, Any]] = None,
+    prop_data: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Format and send unified picks report to Slack.
+
+    Args:
+        ncaab_data: Result from run_ncaab_analysis()
+        nba_data: Result from run_nba_analysis() (contains predictions + bets)
+        prop_data: Result from run_prop_analysis()
+
+    Returns:
+        True if sent successfully.
+    """
+    try:
+        from app.services.slack_service import SlackService
+        from app.services.slack_formatter import format_unified_slack_report
+
+        nba_predictions = (nba_data or {}).get("predictions", [])
+        nba_bets = (nba_data or {}).get("bets", [])
+
+        blocks = format_unified_slack_report(
+            ncaab_data=ncaab_data,
+            nba_predictions=nba_predictions,
+            nba_bets=nba_bets,
+            prop_data=prop_data,
+        )
+
+        if not blocks:
+            logger.info("Slack report skipped: no blocks to send")
+            return False
+
+        slack = SlackService()
+        ok = slack.send_blocks(blocks, text="Daily Picks Report")
+        if ok:
+            logger.info("Slack report sent successfully")
+        else:
+            logger.error("Slack report send FAILED")
+        return ok
+
+    except Exception as e:
+        logger.error(f"Slack report pipeline failed: {e}")
+        return False

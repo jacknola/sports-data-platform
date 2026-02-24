@@ -44,7 +44,11 @@ async def run_nba_analysis() -> Dict[str, Any]:
         print("\n  No NBA games found today.")
         return {"sport": "nba", "game_count": 0, "predictions": [], "bets": []}
 
-    BANKROLL = 25.0
+    try:
+        from app.config import settings
+        BANKROLL = getattr(settings, "BETTING_BANKROLL", 1000.0)
+    except Exception:
+        BANKROLL = float(os.getenv("BETTING_BANKROLL", "1000"))
     bets_to_save = []
 
     print("\n" + "─" * 76)
@@ -111,32 +115,47 @@ async def run_nba_analysis() -> Dict[str, Any]:
         else:
             print("  → PASS (No qualifying ML edge)")
 
-        # Check under/over if available
-        if p.get("underover_prediction"):
+        # Check under/over if available (use real odds from API)
+        total_data = p.get("total", {})
+        if p.get("underover_prediction") and total_data.get("over_odds"):
             uo = p["underover_prediction"]
-            uo_prob = uo["over_prob"] if uo["recommendation"] == "over" else uo["under_prob"]
-            uo_edge = abs(uo["over_prob"] - 0.5) # simplified edge for placeholder
-            
-            # Use same retail odds for EV/Kelly if available, otherwise default -110
-            uo_odds = -110 
-            uo_decimal = 1.909
+            rec = uo["recommendation"]  # 'over' or 'under'
+            uo_prob = uo["over_prob"] if rec == "over" else uo["under_prob"]
+
+            # Use real odds from the API
+            uo_odds = total_data["over_odds"] if rec == "over" else total_data.get("under_odds", -110)
+
+            # Convert American odds to decimal and implied probability
+            if uo_odds >= 100:
+                uo_decimal = uo_odds / 100.0 + 1.0
+                uo_implied = 100.0 / (uo_odds + 100.0)
+            else:
+                uo_decimal = 100.0 / abs(uo_odds) + 1.0
+                uo_implied = abs(uo_odds) / (abs(uo_odds) + 100.0)
+
+            # Proper edge: model probability minus book implied probability
+            uo_edge = uo_prob - uo_implied
+
+            # EV = (true_prob * net_payout) - (loss_prob * stake)
             uo_ev = (uo_prob * (uo_decimal - 1)) - (1 - uo_prob)
-            
-            if uo_ev > 0.025:
-                uo_kelly = (uo_ev / (uo_decimal - 1)) * 0.25
+
+            if uo_edge > 0.025 and uo_ev > 0:
+                uo_kelly = (uo_ev / (uo_decimal - 1)) * 0.25  # quarter-Kelly
+                uo_kelly = min(uo_kelly, 0.05)  # cap at 5% per AGENTS.md
                 uo_bet_size = uo_kelly * BANKROLL
-                
-                if uo_bet_size > 0.5: # At least $0.50 bet
-                    print(f"  ★ TOTAL BET: {uo['recommendation'].upper()} {uo['total_points']} ({uo_odds:+d}) → ${uo_bet_size:.0f} ({uo_kelly * 100:.2f}% of bankroll)")
-                    
+
+                if uo_bet_size >= 5.0:  # minimum $5 bet
+                    total_line = total_data.get("point", uo["total_points"])
+                    print(f"  ★ TOTAL BET: {rec.upper()} {total_line} ({uo_odds:+d}) → ${uo_bet_size:.0f} ({uo_kelly * 100:.2f}% of bankroll) [edge {uo_edge*100:+.1f}%]")
+
                     bets_to_save.append({
                         "game_id": f"NBA_TOTAL_{h}_{a}_{datetime.now().strftime('%Y%m%d')}".replace(" ", ""),
                         "sport": "nba",
-                        "side": f"{uo['recommendation'].upper()} {uo['total_points']}",
+                        "side": f"{rec.upper()} {total_line}",
                         "market": "total",
                         "odds": uo_odds,
-                        "line": uo["total_points"],
-                        "edge": uo_ev,
+                        "line": total_line,
+                        "edge": uo_edge,
                         "bet_size": uo_bet_size,
                         "date": datetime.utcnow().strftime("%Y-%m-%d"),
                     })

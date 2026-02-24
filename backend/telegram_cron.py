@@ -41,6 +41,8 @@ from app.services.analysis_runner import (
     run_orchestrated_analysis,
     run_prop_analysis_pipeline,
     run_dvp_analysis_pipeline,
+    run_sheets_export_pipeline,
+    run_slack_report_pipeline,
 )
 
 
@@ -187,6 +189,41 @@ def send_report(picks_only: bool = False) -> bool:
             logger.info("No HIGH VALUE DvP plays — skipping DvP report")
     except Exception as e:
         logger.error(f"DvP analysis/send failed (non-fatal): {e}")
+
+    # 7. Google Sheets export (all tabs: Props + NBA + NCAAB + Summary)
+    try:
+        ncaab_for_sheets = data.get("ncaab") if data else None
+        nba_for_sheets = data.get("nba") if data else None
+        sheets_result = run_sheets_export_pipeline(
+            ncaab_data=ncaab_for_sheets,
+            nba_data=nba_for_sheets,
+            prop_data=prop_data,
+        )
+        if sheets_result:
+            tabs_ok = sum(
+                1
+                for r in sheets_result.values()
+                if isinstance(r, dict) and r.get("status") == "success"
+            )
+            logger.info(f"Google Sheets export: {tabs_ok} tabs written")
+        else:
+            logger.info("Google Sheets export skipped (not configured or no data)")
+    except Exception as e:
+        logger.error(f"Google Sheets export failed (non-fatal): {e}")
+
+    # 8. Slack report (unified picks message)
+    try:
+        slack_ok = run_slack_report_pipeline(
+            ncaab_data=data.get("ncaab") if data else None,
+            nba_data=data.get("nba") if data else None,
+            prop_data=prop_data,
+        )
+        if slack_ok:
+            logger.info("Slack report sent")
+        else:
+            logger.info("Slack report skipped or failed")
+    except Exception as e:
+        logger.error(f"Slack report failed (non-fatal): {e}")
 
     return ok
 

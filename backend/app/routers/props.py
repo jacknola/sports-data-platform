@@ -110,8 +110,8 @@ async def _get_live_props(sport: str) -> List[Dict]:
     #   - Diversify across stat types (not just threes)
     #   - Cap at MAX_ENRICHED to avoid 200+ NBA.com calls
     MIN_DEVIG_EDGE = 0.01  # Very permissive — let model decide, not devig
-    MAX_PER_STAT = 6  # Max props per stat type (prevents threes monopoly)
-    MAX_ENRICHED = 30  # Hard cap total
+    MAX_PER_STAT = 5  # Max props per stat type (prevents single-market monopoly)
+    MAX_ENRICHED = 40  # Hard cap total (8 markets × 5)
 
     # Score and bucket by stat type
     stat_buckets: Dict[str, List[tuple]] = {}
@@ -560,8 +560,8 @@ async def run_prop_analysis(sport: str = "nba") -> Dict[str, Any]:
     #
     # Rules:
     #   - EVCalc fired + says "pass"  → ALWAYS block
-    #   - EVCalc fired + says non-pass → require Bayesian edge >= 2% to confirm
-    #   - EVCalc did NOT fire (no game logs, empty ev_classification) → require Bayesian >= 5%
+    #   - EVCalc fired + says non-pass → require Bayesian edge >= 1.5% to confirm
+    #   - EVCalc did NOT fire (no game logs, empty ev_classification) → require Bayesian >= 3%
     def _is_positive(p: Dict[str, Any]) -> bool:
         ev_class = p.get("ev_classification", "")
         bayesian_edge = p.get("bayesian_edge", 0)
@@ -569,14 +569,30 @@ async def run_prop_analysis(sport: str = "nba") -> Dict[str, Any]:
         if ev_class == "pass":
             return False  # EVCalc explicitly says no edge — block
         elif ev_class in ("strong_play", "good_play", "lean"):
-            # EVCalc found edge — Bayesian must confirm (>=2%)
-            return bayesian_edge >= 0.02
+            # EVCalc found edge — Bayesian must confirm (>=1.5%)
+            return bayesian_edge >= 0.015
         else:
             # EVCalc didn't fire (empty string, or unexpected value)
-            # Require stronger Bayesian signal alone
-            return bayesian_edge >= 0.05
+            # Require Bayesian signal alone
+            return bayesian_edge >= 0.03
 
     best = [p for p in analyzed if _is_positive(p)]
+
+    # ── Diversity guarantee: ensure at least 1 pick per stat type ──
+    # If a stat type has no +EV pick, include the best-edge prop from that type
+    # as long as it has positive edge (>0%).
+    stat_types_in_best = {p.get("stat_type") for p in best}
+    all_stat_types = {p.get("stat_type") for p in analyzed}
+    for st in all_stat_types - stat_types_in_best:
+        candidates = [
+            p for p in analyzed
+            if p.get("stat_type") == st
+            and p.get("bayesian_edge", 0) > 0
+            and p.get("ev_classification", "") != "pass"
+        ]
+        if candidates:
+            candidates.sort(key=lambda x: x.get("bayesian_edge", 0), reverse=True)
+            best.append(candidates[0])
 
     # Sort: strong_play first, then by bayesian_edge descending
     ev_rank = {"strong_play": 0, "good_play": 1, "lean": 2, "": 3}
@@ -593,7 +609,7 @@ async def run_prop_analysis(sport: str = "nba") -> Dict[str, Any]:
         "total_props": len(analyzed),
         "positive_ev_count": len(best),
         "props": analyzed,
-        "best_props": best[:15],
+        "best_props": best[:20],
     }
 
 

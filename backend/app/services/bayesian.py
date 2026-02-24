@@ -218,4 +218,4 @@ class BayesianAnalyzer:
             return 0.0
 
         kelly = (prob * odds - 1) / (odds - 1)
-        return max(0.0, min(kelly, 0.25))  # Cap at 25% of bankroll
+        return max(0.0, min(kelly, 0.05))  # Cap at 5% of bankroll per AGENTS.md rules

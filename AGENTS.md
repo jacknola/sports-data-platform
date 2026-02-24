@@ -1,124 +1,120 @@
-# Sports Data Intelligence Platform - Agent Instructions (AGENTS.md)
+# AGENTS.md
 
-This document contains essential context, build/test commands, and code style guidelines for AI coding agents operating within this repository. It supplements `CLAUDE.md` and provides strict operational directives.
+This file provides guidance to WARP (warp.dev) when working with code in this repository.
 
-## 1. Project Context & Architecture
-- **Goal:** Quantitative sports betting platform using Bayesian modeling, ML (XGBoost), and sharp money signals (RLM, Steam).
-- **Core Principle:** Identify +EV wagers by comparing devigged market-maker odds (Pinnacle/Circa) against retail books (FanDuel, DraftKings).
-- **Sizing:** Use Multivariate Fractional Kelly Criterion (Half or Quarter Kelly) via convex optimization to manage bankroll and correlated risks.
-- **Infrastructure:** FastAPI backend, Supabase DB (with local SQLite fallback), Telegram bot for reporting, Loguru for logging, Pytest for testing.
+## Project Context
+Quantitative sports betting platform that identifies +EV wagers by comparing devigged market-maker odds (Pinnacle/Circa) against retail books (FanDuel, DraftKings). Uses Bayesian modeling, XGBoost ML, and sharp money signals (RLM, Steam, CLV). Bet sizing via Multivariate Fractional Kelly Criterion (Half or Quarter Kelly) with convex optimization for correlated risks.
 
-## 2. Build, Run, and Test Commands
+### Pipeline
+```
+Market Data (Odds API, Scrapers)
+  → Sharp Signal Detection (RLM, Steam, CLV)
+  → Bayesian + Monte Carlo Probability Engine
+  → ML Prediction Layer (XGBoost)
+  → Multivariate Kelly Criterion (Correlated Portfolio)
+  → Expert Agent Review (Sequential Thinking)
+  → Final Slate Recommendations
+```
 
-### Core Execution
-- **Run NCAAB Analysis:** `python3 backend/run_ncaab_analysis.py`
-- **Run Telegram Daemon:** `python3 backend/telegram_cron.py --daemon`
-- **Send Ad-Hoc Report:** `python3 backend/telegram_cron.py --send-now`
+### Infrastructure
+- **Backend:** FastAPI (Python 3.9+), Supabase/PostgreSQL (SQLite fallback), Redis cache, Celery tasks
+- **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, React Query
+- **Reporting:** Telegram bot (3x daily), Notion sync, Google Sheets export
+- **Logging:** Loguru everywhere (`from loguru import logger`). No `print()` in services.
+
+## Build, Run, and Test Commands
+
+### Backend
+```bash
+pip install -r backend/requirements.txt
+python3 backend/run_server.py              # FastAPI server (port 8000)
+python3 backend/run_ncaab_analysis.py      # NCAAB sharp money analysis
+python3 backend/run_nba_analysis.py        # NBA XGBoost predictions
+python3 backend/telegram_cron.py --daemon  # 3x daily report scheduler
+python3 backend/telegram_cron.py --send-now # Send report immediately
+```
+
+### Frontend
+```bash
+cd frontend && npm install
+npm run dev       # Dev server (port 3000, proxies /api → backend:8000)
+npm run build     # tsc && vite build
+npm run lint      # ESLint (ts,tsx)
+```
+
+### Docker (full stack)
+```bash
+docker-compose up --build
+# Frontend: http://localhost:3000 | Backend: http://localhost:8000 | Docs: http://localhost:8000/docs
+```
 
 ### Testing
-- **Run all tests:** `pytest backend/`
-- **Run a single test file:** `pytest backend/tests/path/to/test_file.py`
-- **Run a specific test function:** `pytest backend/tests/path/to/test_file.py::test_function_name`
-- *Note:* Ensure you set `PYTHONPATH=$(pwd)/backend` if tests fail to resolve module imports.
+```bash
+pytest backend/                                       # All tests
+pytest backend/tests/path/to/test_file.py             # Single file
+pytest backend/tests/path/to/test_file.py::test_func  # Single test
+```
+Set `PYTHONPATH=$(pwd)/backend` if module imports fail.
 
 ### Linting & Formatting
-*(While strict linters may not be globally enforced in CI yet, adhere to these standards)*
-- **Formatting:** Use `black` and `isort` conventions. Maximum line length is usually 88-100 characters.
-- **Linting:** Use `ruff` or `flake8` for basic static analysis to catch unused imports/variables.
+Use `black` + `isort` conventions (88-100 char lines). Use `ruff` or `flake8` for static analysis.
 
-### Dependencies
-- **Install dependencies:** `pip install -r backend/requirements.txt`
-- Avoid adding heavy ML dependencies (like `torch` or `crawl4ai`) unless absolutely necessary, to keep deployment and inference fast. Add new dependencies to `backend/requirements.txt`.
+## Code Style
 
-## 3. Code Style & Engineering Guidelines
+### Python
+- **Imports:** Absolute imports starting with `app.` (e.g., `from app.services.bet_tracker import BetTracker`).
+- **Entry scripts** (`backend/run_*.py`): Add `sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))` at top.
+- **Config:** Load via `app.config.settings` (pydantic-settings). Use explicit `.env` path resolution: `os.path.join(os.path.dirname(__file__), "..", ".env")`.
+- **Type hints:** Required on all function arguments and return types (`typing.Dict`, `List`, `Optional`, `Any`).
+- **Docstrings:** Concise, on all classes and public methods. Explain *what* and *why* (business logic).
+- **Async:** Use `httpx.AsyncClient` for HTTP with `timeout=15.0`. Wrap network/DB calls in `try/except`, log with `logger.error`.
+- **Graceful degradation:** Services must handle unavailable APIs/DBs (e.g., `BetTracker` falls back to SQLite when Supabase is down).
 
-### General Python Standards
-- **Python Version:** 3.9+ syntax is expected.
-- **Type Hinting:** Use strict type hints (`typing.Dict`, `List`, `Optional`, `Any`) for all function arguments and return types. 
-- **Docstrings:** Provide concise docstrings for all classes and public methods explaining *what* it does and *why* (business logic).
+### Frontend (TypeScript/React)
+- Functional components with hooks. No class components.
+- React Query (`@tanstack/react-query`) for server state; no Redux/Context for global state.
+- Tailwind CSS only (no inline styles unless dynamic). Custom colors: `primary-*`, `accent-*`.
+- Axios client in `src/utils/api.ts` unwraps `response.data` via interceptor — callers receive `T` directly.
+- Path alias: `@/*` maps to `./src/*`.
+- All frontend API requests must be prefixed with `/api` for Vite proxy routing.
 
-### Imports & Path Resolution
-- **Internal Imports:** Use absolute imports starting with `app.` (e.g., `from app.services.bet_tracker import BetTracker`).
-- **Script Execution:** For root executable scripts (`backend/run_*.py`), include the following at the top to ensure module resolution:
-  ```python
-  import sys
-  import os
-  sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-  ```
-- **Environment Variables:** Load variables via `app.config.settings` (powered by `pydantic-settings`). Always use explicit path resolution for `.env` files: `os.path.join(os.path.dirname(__file__), "..", ".env")`. Provide sensible defaults for local development.
+## Betting Logic Conventions (Strict)
 
-### Logging & Output
-- **Loguru:** Use `loguru` for all logging (`from loguru import logger`).
-- **No Prints:** Do not use standard `print()` statements in service or library code. Use `logger.info`, `logger.warning`, `logger.error`. `print()` is only allowed in CLI output scripts (like `run_ncaab_analysis.py`) for user-facing formatting.
+- **Devigging:** Always derive true probability from Pinnacle/sharp books before calculating EV. `EV = (True Probability × Decimal Odds) - 1`.
+- **Odds format:** Internal calculations use Decimal odds or True Probabilities. Convert American odds via `american_to_decimal`.
+- **Kelly sizing:** Always Fractional Kelly (Quarter or Half). Never Full Kelly. Cap single bet at 5% of bankroll.
+- **Minimum edge thresholds:** Low confidence ≥3% (quarter-Kelly), Medium ≥5% (half-Kelly), High ≥7%, Max conviction ≥10%.
+- **Stake rounding:** Round Kelly outputs to human-like denominations ($412.37 → $425) to avoid algorithmic profiling by retail books.
+- **CLV tracking:** `CLV > 0` consistently = profitable strategy. `CLV < 0` = no edge.
+- **Drawdown rule:** If EMDD > 30% of bankroll, reduce Kelly fraction across portfolio until EMDD < 20%.
 
-### Error Handling & Resilience
-- **Graceful Degradation:** Services should gracefully degrade if a third-party API or database is unavailable. Example: `BetTracker` falling back to local SQLite if Supabase connection fails.
-- **API Requests:** Use `httpx.AsyncClient` for async HTTP requests (e.g. Odds API, scraping) and include reasonable timeouts (`timeout=15.0`).
-- **Catching Exceptions:** Wrap network calls and DB queries in `try/except` blocks. Log the exact error with `logger.error` rather than crashing the daemon or cron job.
+## Sharp Money Signals
+- **RLM:** ≥65% public tickets + line moves against public + ≥10% ticket/money gap.
+- **Steam:** >0.5 point shift across 3+ books within 60 seconds. Only act if execution latency < 3 seconds.
+- **Line Freeze:** ≥80% tickets on one side, line doesn't move → fade the public.
+- **Head Fake Filter:** Sudden movement that reverses within 15 minutes in low-liquidity markets.
+- **Juice Shift (Props):** Line unchanged but vig shifts ≥10 cents → sharp money signal.
 
-### Betting Logic Conventions (Strict)
-- **Odds Format:** Calculations expect Decimal odds or True Probabilities. When parsing American odds, explicitly convert them using `american_to_decimal`.
-- **Devigging:** Always derive true probability from Pinnacle/sharp books using a devigging formula before calculating Expected Value (EV). EV is calculated as `(True Probability × Decimal Odds) - 1`.
-- **Stake Denominations:** Round calculated Kelly bet fractions to human-readable increments (e.g., $412.37 → $425) to avoid algorithmic behavioral profiling by retail sportsbooks.
+## Key Services
+- `bayesian.py` — Posterior probability, Monte Carlo (20k iterations), Kelly sizing
+- `sharp_money_detector.py` — RLM, steam, CLV, head fake detection
+- `multivariate_kelly.py` — Correlated portfolio optimization via convex optimization
+- `nba_ml_predictor.py` — XGBoost predictions (optimize for probability calibration, not accuracy)
+- `prop_analyzer.py` — Player prop analysis with sharp signal identification
+- `sports_api.py` — Unified interface for Odds API, ESPN, scrapers
+- `telegram_service.py` — Bot messaging (4096 char limit, HTML parse mode, 30 msg/sec)
+- `bet_tracker.py` — Wager lifecycle management with Supabase/SQLite fallback
+- `nba_stats_service.py` — nba_api integration for player stats, game logs, team advanced stats
 
-## 4. Operational Directives for Agents
-- **Do not introduce breaking schema changes** to Supabase or SQLite without verifying existing data flow.
-- **Do not modify `CLAUDE.md`** unless specifically requested by the user.
-- **Self-Verification:** Before concluding a task, run the main execution scripts (e.g., `python3 backend/run_ncaab_analysis.py > /dev/null`) to verify that your changes did not introduce syntax errors, import errors, or runtime crashes.
-
-
-
-## 5. Entry Points
-| Script | Purpose |
-|--------|---------|
-| `backend/run_ncaab_analysis.py` | NCAAB sharp money analysis (main) |
-| `backend/run_nba_analysis.py` | NBA XGBoost predictions |
-| `backend/run_server.py` | FastAPI server (uvicorn wrapper) |
-| `backend/telegram_cron.py --daemon` | 3x daily betting report scheduler |
-| `backend/telegram_cron.py --send-now` | Send report immediately |
-
-## 6. Directory Structure
-```
-backend/
-├── app/
-│   ├── agents/      # Multi-agent system (7 agents)
-│   ├── routers/    # FastAPI endpoints (11 routers)
-│   ├── services/   # Core business logic (20 services)
-│   ├── models/     # SQLAlchemy models
-│   └── core/       # Core utilities
-├── run_*.py        # Entry scripts
-└── telegram_cron.py
-frontend/
-├── src/
-│   ├── components/ # React components
-│   ├── pages/      # Page components
-│   └── utils/     # API client
-```
-
-## 7. Anti-Patterns (THIS PROJECT)
+## Anti-Patterns
 - **Bare except** — Use `except Exception:` or specific types
 - **print() in services** — Use `logger` from loguru
-- **Full Kelly** — Always use Quarter or Half Kelly
+- **Full Kelly** — Always Quarter or Half Kelly
 - **Type suppression** (`as any`, `@ts-ignore`) — Never
-- **Schema changes** — Don't modify without verifying data flow
+- **Schema changes** — Don't modify Supabase/SQLite schema without verifying data flow
+- **Heavy deps** — Don't add `torch`, `crawl4ai` etc. unless absolutely necessary
 
-## 8. Missing Infrastructure (Non-Standard)
-- No `.env.example` file
-- No `tests/` directory (tests are flat files in `backend/`)
-- No `pytest.ini` or `conftest.py`
-- No GitHub Actions CI/CD
-- No Pydantic request models (uses `Dict[str, Any]`)
-
-## 9. Key Dependencies
-```
-# Core
-fastapi, uvicorn, pydantic, sqlalchemy
-# ML/Stats
-xgboost, scikit-learn, pandas, numpy, pymc
-# Data
-httpx, requests, beautifulsoup4
-# Integrations
-telegram, notion-client, gspread, tweepy
-# Infra
-loguru, redis, celery, postgres
-```
+## Operational Directives
+- **Self-verify:** Before concluding a task, run `python3 backend/run_ncaab_analysis.py > /dev/null` to check for syntax/import/runtime errors.
+- **Dependencies:** Add new packages to `backend/requirements.txt`.
+- Subdirectory-specific guidance lives in `AGENTS.md` files under `frontend/`, `backend/app/agents/`, `backend/app/routers/`, and `backend/app/services/`.

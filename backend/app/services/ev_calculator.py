@@ -150,7 +150,11 @@ class EVCalculator:
     @staticmethod
     def _hit_rate(values: List[float], line: float, n: Optional[int] = None) -> float:
         """
-        Compute the fraction of games in *values* that went **over** *line*.
+        Compute the fraction of games in *values* that went **over or pushed** *line*.
+
+        Most sportsbooks treat landing exactly on the line as a push (refund),
+        so pushes are NOT losses.  Using ``>=`` avoids systematically
+        underestimating P(over).
 
         Args:
             values: Per-game stat values (most-recent first).
@@ -164,7 +168,7 @@ class EVCalculator:
         subset = values[:n] if n is not None else values
         if not subset:
             return 0.0
-        hits = sum(1 for v in subset if v > line)
+        hits = sum(1 for v in subset if v >= line)
         return hits / len(subset)
 
     # ------------------------------------------------------------------

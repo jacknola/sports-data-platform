@@ -68,6 +68,16 @@ class Settings(BaseSettings):
     TELEGRAM_CRON_AFTERNOON: str = "0 14 * * *"
     TELEGRAM_CRON_EVENING: str = "0 19 * * *"
 
+    # Slack
+    SLACK_WEBHOOK_URL: Optional[str] = None
+
+    # Betting
+    BETTING_BANKROLL: float = 1000.0
+
+    # Google Sheets
+    GOOGLE_SERVICE_ACCOUNT_PATH: Optional[str] = None
+    GOOGLE_SPREADSHEET_ID: Optional[str] = None
+
     # Security
     SECRET_KEY: str = "dev_secret_key_change_in_production"
     ALGORITHM: str = "HS256"
