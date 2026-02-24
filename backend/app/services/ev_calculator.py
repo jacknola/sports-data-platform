@@ -36,15 +36,6 @@ MODEL_WEIGHTS: Dict[str, float] = {
     "trend": 0.05,
 }
 
-# ---------------------------------------------------------------------------
-# Classification thresholds (edge %)
-# ---------------------------------------------------------------------------
-EDGE_THRESHOLDS: Dict[str, float] = {
-    "strong_play": 0.08,
-    "good_play": 0.05,
-    "lean": 0.02,
-}
-
 
 class EVCalculator:
     """
@@ -376,31 +367,26 @@ class EVCalculator:
     @staticmethod
     def classify_bet(edge: float, confidence: float) -> str:
         """
-        Classify a bet based on edge and confidence.
+        Classify a bet based on edge and confidence using dynamic settings.
 
         Classification rules (edge thresholds are confidence-adjusted):
-            - ``"strong_play"`` : edge > 8 %
-            - ``"good_play"``   : edge > 5 %
-            - ``"lean"``        : edge > 2 %
-            - ``"pass"``        : otherwise
+            - "strong_play" : edge >= HIGH threshold
+            - "good_play"   : edge >= MEDIUM threshold
+            - "lean"        : edge >= LOW threshold
+            - "pass"        : otherwise
 
         A low-confidence estimate (< 0.40) downgrades the classification
         by one tier.
-
-        Args:
-            edge:       Raw edge (true_prob - implied_prob).
-            confidence: Confidence score in [0, 1].
-
-        Returns:
-            One of ``"strong_play"``, ``"good_play"``, ``"lean"``, ``"pass"``.
         """
+        from app.config import settings
+
         tiers = ["strong_play", "good_play", "lean", "pass"]
 
-        if edge >= EDGE_THRESHOLDS["strong_play"]:
+        if edge >= settings.EDGE_THRESHOLD_HIGH:
             tier_idx = 0
-        elif edge >= EDGE_THRESHOLDS["good_play"]:
+        elif edge >= settings.EDGE_THRESHOLD_MEDIUM:
             tier_idx = 1
-        elif edge >= EDGE_THRESHOLDS["lean"]:
+        elif edge >= settings.EDGE_THRESHOLD_LOW:
             tier_idx = 2
         else:
             tier_idx = 3
@@ -424,7 +410,7 @@ class EVCalculator:
         true_prob: float,
         decimal_odds: float,
         bankroll: float,
-        fraction: float = 0.25,
+        fraction: Optional[float] = None,
     ) -> float:
         """
         Calculate the recommended stake via fractional Kelly Criterion.
@@ -433,18 +419,10 @@ class EVCalculator:
             full_kelly = (p * b - q) / b
             where p = true_prob, q = 1 - p, b = decimal_odds - 1
 
-        A *fraction* < 1.0 is used for safety (default quarter-Kelly).
-
-        Args:
-            true_prob:    Model's true probability of winning.
-            decimal_odds: Decimal odds offered by sportsbook.
-            bankroll:     Current bankroll size.
-            fraction:     Kelly fraction (0.25 = quarter Kelly).
-
-        Returns:
-            Recommended stake in bankroll currency units.
-            Returns 0.0 when the bet is not +EV.
+        Uses fractional multiplier and max bet cap from settings.
         """
+        from app.config import settings
+
         if decimal_odds <= 1.0 or true_prob <= 0.0 or true_prob >= 1.0:
             return 0.0
 
@@ -455,17 +433,18 @@ class EVCalculator:
         if full_kelly <= 0.0:
             return 0.0
 
-        fractional_kelly = full_kelly * fraction
+        # Edge-based multiplier (simplified here as edge isn't passed)
+        # Use provided fraction or default to settings.KELLY_FRACTION_QUARTER
+        multiplier = fraction if fraction is not None else settings.KELLY_FRACTION_QUARTER
+        fractional_kelly = full_kelly * multiplier
 
-        # Hard cap at 5 % of bankroll regardless of Kelly output
-        max_fraction = 0.05
-        capped = min(fractional_kelly, max_fraction)
+        # Hard cap from settings (default 5%)
+        capped = min(fractional_kelly, settings.MAX_BET_PERCENTAGE)
         stake = round(capped * bankroll, 2)
 
         logger.debug(
-            f"Kelly stake: full={full_kelly:.4f}, fractional({fraction})="
-            f"{fractional_kelly:.4f}, capped={capped:.4f}, "
-            f"stake=${stake:.2f}"
+            f"Kelly stake: full={full_kelly:.4f}, multiplier={multiplier}, "
+            f"capped={capped:.4f}, stake=${stake:.2f}"
         )
 
         return stake

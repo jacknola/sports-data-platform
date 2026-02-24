@@ -14,8 +14,8 @@ class SequentialThinkingService:
     
     def __init__(self):
         self.mcp_config = {
-            "command": "docker",
-            "args": ["run", "--rm", "-i", "mcp/sequentialthinking"]
+            "command": "npx -y @modelcontextprotocol/server-sequential-thinking",
+            "research_command": "npx -y notebooklm-mcp@latest"
         }
         self._process = None
     
@@ -83,20 +83,114 @@ Available Data:
         if context.get('stats'):
             formatted += f"- Stats: {json.dumps(context['stats'], indent=2)}\n"
         
+        # Add research findings
+        if context.get('research_findings'):
+            formatted += f"\nResearch Findings:\n{context['research_findings']}\n"
+        
         formatted += f"\nProblem: {problem}\n"
         formatted += "\nAnalyze step-by-step like an expert sports bettor would."
         
         return formatted
     
+    async def research_topic(self, topic: str) -> str:
+        """
+        Use NotebookLM MCP to research a betting topic.
+        """
+        try:
+            cmd = self.mcp_config["research_command"].split()
+            process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            # Call the 'query' tool of notebooklm-mcp
+            rpc_call = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "call_tool",
+                "params": {
+                    "name": "query",
+                    "arguments": {
+                        "question": f"Research this sports betting topic: {topic}"
+                    }
+                }
+            }
+            
+            stdout, stderr = process.communicate(input=json.dumps(rpc_call), timeout=60)
+            
+            if process.returncode != 0:
+                logger.error(f"NotebookLM MCP error: {stderr}")
+                return f"Research failed for {topic}"
+                
+            response = json.loads(stdout)
+            return response.get("result", {}).get("content", [{}])[0].get("text", "No research found.")
+            
+        except Exception as e:
+            logger.error(f"Failed to execute NotebookLM research: {e}")
+            return f"Error researching {topic}: {str(e)}"
+
     async def _execute_thinking(self, problem: str) -> List[Dict[str, Any]]:
         """
-        Execute sequential thinking using MCP
-        
-        This would integrate with the sequential thinking Docker container
+        Execute sequential thinking using MCP server.
         """
-        # For now, implement a structured sequential thinking process
-        # In production, this would call the MCP sequential thinking service
-        
+        try:
+            # Use command from config
+            cmd = self.mcp_config["command"].split() if isinstance(self.mcp_config["command"], str) else self.mcp_config["command"]
+            if not isinstance(cmd, list):
+                cmd = ["npx", "-y", "@modelcontextprotocol/server-sequential-thinking"]
+            
+            # Start process
+            process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            # MCP uses JSON-RPC over stdio. This is a simplified call to the 'sequentialThinking' tool.
+            # In a full implementation, we'd use an MCP client library.
+            rpc_call = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "call_tool",
+                "params": {
+                    "name": "sequentialThinking",
+                    "arguments": {
+                        "thought": problem,
+                        "thoughtNumber": 1,
+                        "totalThoughts": 1
+                    }
+                }
+            }
+            
+            stdout, stderr = process.communicate(input=json.dumps(rpc_call), timeout=30)
+            
+            if process.returncode != 0:
+                logger.error(f"MCP server error: {stderr}")
+                return self._get_fallback_steps(problem)
+                
+            response = json.loads(stdout)
+            result = response.get("result", {}).get("content", [{}])[0].get("text", "")
+            
+            # Parse the response into structured steps
+            return [{
+                'step': 1,
+                'title': 'MCP Sequential Thinking Result',
+                'reasoning': result,
+                'detailed_reasoning': result,
+                'status': 'complete'
+            }]
+            
+        except Exception as e:
+            logger.error(f"Failed to execute MCP thinking: {e}")
+            return self._get_fallback_steps(problem)
+
+    def _get_fallback_steps(self, problem: str) -> List[Dict[str, Any]]:
+        """Fallback when MCP is unavailable"""
         steps = [
             {
                 'step': 1,
@@ -136,7 +230,6 @@ Available Data:
             }
         ]
         
-        # Simulate reasoning for each step
         for step in steps:
             step['detailed_reasoning'] = self._generate_step_reasoning(
                 step['title'],
@@ -178,6 +271,7 @@ Available Data:
             'odds': bet_analysis.get('odds', {}),
             'sentiment': bet_analysis.get('sentiment', {}),
             'stats': bet_analysis.get('stats', {}),
+            'research_findings': bet_analysis.get('research_findings'),
             'edge': bet_analysis.get('edge'),
             'posterior_prob': bet_analysis.get('posterior_prob')
         }
