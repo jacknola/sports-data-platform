@@ -55,8 +55,10 @@ class GoogleSheetsService:
     ]
 
     def __init__(self, credentials_path: Optional[str] = None):
+        from app.config import settings
+
         self.client: Optional[gspread.Client] = None
-        creds_path = credentials_path or os.getenv("GOOGLE_SERVICE_ACCOUNT_PATH")
+        creds_path = credentials_path or settings.GOOGLE_SERVICE_ACCOUNT_PATH
         if creds_path:
             self._init_client(creds_path)
         else:

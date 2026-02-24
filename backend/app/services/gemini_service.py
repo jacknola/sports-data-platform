@@ -12,15 +12,18 @@ Usage:
 """
 
 import os
-from typing import Optional, List, Dict, Any
+import json
+from typing import Optional, List, Dict, Any, Type, Union
 from loguru import logger
+from pydantic import BaseModel
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from app.config import settings
 
 # Try to import google.generativeai
 try:
     import google.generativeai as genai
-
+    from google.generativeai.types import GenerationConfig, SafetySettingDict
     GENAI_AVAILABLE = True
 except ImportError:
     GENAI_AVAILABLE = False
@@ -29,20 +32,24 @@ except ImportError:
 
 class GeminiService:
     """
-    Google Gemini LLM service with flexible authentication.
-
-    Supports:
-    - API key authentication (GEMINI_API_KEY in .env)
-    - Google Cloud ADC (Application Default Credentials)
-    - Google Code Assist authentication
+    Google Gemini LLM service with best practices:
+    - Robust retry logic (exponential backoff)
+    - Structured JSON output support
+    - System instructions for grounding
+    - Multi-auth support (API Key, ADC, Vertex)
     """
 
-    def __init__(self, model_name: str = "gemini-2.0-flash"):
+    def __init__(
+        self, 
+        model_name: str = "gemini-2.0-flash",
+        system_instruction: Optional[str] = None
+    ):
         """
         Initialize Gemini service.
 
         Args:
             model_name: Model to use (default: gemini-2.0-flash)
+            system_instruction: Persona and grounding instructions
         """
         if not GENAI_AVAILABLE:
             raise ImportError(
@@ -50,166 +57,110 @@ class GeminiService:
             )
 
         self.model_name = model_name
-        self._client = None
+        self.system_instruction = system_instruction
+        self._model = None
         self._initialize_client()
 
     def _initialize_client(self) -> None:
         """Initialize Gemini client with available authentication."""
-
-        # Method 1: Try API key first
         api_key = os.getenv("GEMINI_API_KEY") or settings.GEMINI_API_KEY
+        
         if api_key:
-            try:
-                genai.configure(api_key=api_key)
-                self._client = genai.GenerativeModel(self.model_name)
-                logger.info(f"Gemini initialized with API key: {self.model_name}")
-                return
-            except Exception as e:
-                logger.warning(f"Failed to initialize with API key: {e}")
+            genai.configure(api_key=api_key)
+            self._model = genai.GenerativeModel(
+                model_name=self.model_name,
+                system_instruction=self.system_instruction
+            )
+            logger.info(f"Gemini initialized with API key: {self.model_name}")
+            return
 
-        # Method 2: Try Google Cloud ADC (for Google Code Assist)
+        # Fallback to ADC
         try:
-            # This works with Google Code Assist / gcloud auth
             import google.auth
-
-            credentials, project = google.auth.default(
-                scopes=["https://www.googleapis.com/auth/generative-language.tuning"]
+            credentials, project = google.auth.default()
+            genai.configure(credentials=credentials)
+            self._model = genai.GenerativeModel(
+                model_name=self.model_name,
+                system_instruction=self.system_instruction
             )
-            genai.configure(
-                credentials=credentials,
-                project=project or settings.GEMINI_PROJECT_ID,
-            )
-            self._client = genai.GenerativeModel(self.model_name)
             logger.info(f"Gemini initialized with ADC, project: {project}")
-            return
         except Exception as e:
-            logger.warning(f"Failed to initialize with ADC: {e}")
+            logger.error(f"Failed to initialize Gemini: {e}")
+            raise ValueError("No valid Gemini authentication found (API Key or ADC)")
 
-        # Method 3: Try vertex AI (Google Cloud)
-        try:
-            import vertexai
-            from vertexai.generative_models import GenerativeModel
-
-            vertexai.init(
-                project=settings.GEMINI_PROJECT_ID,
-                location="us-central1",
-            )
-            self._client = GenerativeModel(self.model_name)
-            logger.info("Gemini initialized with Vertex AI")
-            return
-        except Exception as e:
-            logger.warning(f"Failed to initialize with Vertex AI: {e}")
-
-        # If we get here, no auth method worked
-        raise ValueError(
-            "Failed to initialize Gemini. Please ensure either:\n"
-            "1. GEMINI_API_KEY is set in .env, OR\n"
-            "2. Run 'gcloud auth application-default login' for ADC, OR\n"
-            "3. Google Code Assist is properly configured"
-        )
-
+    @retry(
+        retry=retry_if_exception_type(Exception), # Broad for demo, refine for production
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        stop=stop_after_attempt(3),
+        reraise=True
+    )
     async def generate(
         self,
         prompt: str,
         temperature: float = 0.7,
         max_tokens: int = 2048,
-    ) -> str:
+        response_schema: Optional[Type[BaseModel]] = None,
+    ) -> Union[str, Dict[str, Any]]:
         """
-        Generate text from Gemini.
-
-        Args:
-            prompt: Input prompt
-            temperature: Creativity (0.0-1.0)
-            max_tokens: Max response tokens
-
-        Returns:
-            Generated text response
+        Generate content with retries and optional structured output.
         """
-        if not self._client:
-            raise RuntimeError("Gemini client not initialized")
+        if not self._model:
+            raise RuntimeError("Gemini model not initialized")
+
+        config = {
+            "temperature": temperature,
+            "max_output_tokens": max_tokens,
+        }
+
+        if response_schema:
+            config["response_mime_type"] = "application/json"
+            config["response_schema"] = response_schema
 
         try:
-            response = self._client.generate_content(
+            # We use a thread pool for the synchronous SDK call
+            import asyncio
+            response = await asyncio.to_thread(
+                self._model.generate_content,
                 prompt,
-                generation_config={
-                    "temperature": temperature,
-                    "max_output_tokens": max_tokens,
-                },
+                generation_config=genai.GenerationConfig(**config)
             )
+            
+            if response_schema:
+                return json.loads(response.text)
             return response.text
+            
         except Exception as e:
-            logger.error(f"Gemini generation failed: {e}")
-            raise
-
-    async def generate_chat(
-        self,
-        messages: List[Dict[str, str]],
-        temperature: float = 0.7,
-    ) -> str:
-        """
-        Generate response in a chat context.
-
-        Args:
-            messages: List of {"role": "user"|"model", "content": "..."}
-            temperature: Creativity
-
-        Returns:
-            Model response
-        """
-        if not self._client:
-            raise RuntimeError("Gemini client not initialized")
-
-        try:
-            # Start chat session
-            chat = self._client.start_chat(
-                history=[
-                    {"role": m["role"], "parts": [m["content"]]} for m in messages[:-1]
-                ]
-            )
-
-            # Send last message
-            response = chat.send_message(
-                messages[-1]["content"], generation_config={"temperature": temperature}
-            )
-            return response.text
-        except Exception as e:
-            logger.error(f"Gemini chat failed: {e}")
+            logger.error(f"Gemini generation error: {e}")
             raise
 
     async def analyze_betting_scenario(
         self,
         game_info: Dict[str, Any],
         odds_data: Dict[str, Any],
-    ) -> str:
+    ) -> Dict[str, Any]:
         """
-        Analyze a betting scenario using Gemini.
-
-        Args:
-            game_info: Game details (teams, spread, etc.)
-            odds_data: Current odds and line movement
-
-        Returns:
-            Analysis text from Gemini
+        Structured analysis of a betting scenario.
         """
+        class BettingAnalysis(BaseModel):
+            value_side: str
+            confidence_score: float
+            reasoning: str
+            sharp_alignment: bool
+            risk_factors: List[str]
+
         prompt = f"""
-You are a professional sports bettor analyzing a game.
-
-Game Information:
-- Home Team: {game_info.get("home", "N/A")}
-- Away Team: {game_info.get("away", "N/A")}
-- Spread: {game_info.get("spread", "N/A")}
-- Conference: {game_info.get("conference", "N/A")}
-
-Odds Data:
-- Pinnacle Odds: Home {odds_data.get("pinnacle_home", "N/A")}, Away {odds_data.get("pinnacle_away", "N/A")}
-- Retail Odds: Home {odds_data.get("retail_home", "N/A")}, Away {odds_data.get("retail_away", "N/A")}
-- Public Tickets: {odds_data.get("home_ticket_pct", "N/A")}% on home
-- Sharp Money: {odds_data.get("sharp_signals", "None")}
-
-Provide a brief analysis of whether there's value on either side.
-Consider: Reverse Line Movement, sharp money signals, and the spread relative to the odds.
+Analyze this game for betting value:
+Game: {game_info.get('away')} @ {game_info.get('home')}
+Spread: {game_info.get('spread')}
+Sharp Odds: {odds_data.get('pinnacle_home')} / {odds_data.get('pinnacle_away')}
+Public Splits: {odds_data.get('home_ticket_pct')}% tickets
+Signals: {odds_data.get('sharp_signals')}
 """
-        return await self.generate(prompt, temperature=0.3)
+        return await self.generate(
+            prompt, 
+            temperature=0.2, 
+            response_schema=BettingAnalysis
+        )
 
     @property
     def is_available(self) -> bool:

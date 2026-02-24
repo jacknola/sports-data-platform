@@ -265,6 +265,7 @@ TWITTER_ACCESS_TOKEN=your_access_token
 TWITTER_ACCESS_TOKEN_SECRET=your_access_token_secret
 
 # ML Models
+HUGGINGFACE_API_KEY=your_key
 HUGGINGFACE_MODEL=cardiffnlp/twitter-roberta-base-sentiment-latest
 EMBEDDING_MODEL=sentence-transformers/all-mpnet-base-v2
 ```

@@ -716,10 +716,16 @@ class SportsAPIService:
         markets_csv = ",".join(markets)
         cache_key = f"props_{sport}_{event_id}_{markets_csv}"
 
-        # Check fresh cache first
-        cached = _cache.get(cache_key, ttl=180)  # 3-min TTL for props
-        if cached:
-            return cached.data
+        # 1. Check in-memory cache
+        mem_cached = _cache.get(cache_key, ttl=180)  # 3-min TTL for props
+        if mem_cached:
+            return mem_cached.data
+
+        # 2. Check persistent database cache
+        db_cached = _db_cache.get(cache_key, ttl=3600)  # 1 hour persistence for props
+        if db_cached:
+            _cache.set(cache_key, db_cached.data, source="cached_db")
+            return db_cached.data
 
         try:
             async with httpx.AsyncClient(timeout=25.0) as client:
@@ -739,6 +745,7 @@ class SportsAPIService:
             data = response.json()
             if data:
                 _cache.set(cache_key, data, source="oddsapi_props")
+                _db_cache.set(cache_key, data, source="oddsapi_props")
             logger.info(
                 f"Props for event {event_id[:8]}...: "
                 f"{len(data.get('bookmakers', []))} bookmakers, "
@@ -806,10 +813,18 @@ class SportsAPIService:
             markets = self.CORE_PROP_MARKETS
 
         cache_key = f"all_props_{sport}"
-        cached = _cache.get(cache_key, ttl=180)
-        if cached:
+
+        # 1. Check in-memory cache
+        mem_cached = _cache.get(cache_key, ttl=180)
+        if mem_cached:
             logger.info(f"Serving cached prop scan for {sport}")
-            return cached.data
+            return mem_cached.data
+
+        # 2. Check persistent database cache
+        db_cached = _db_cache.get(cache_key, ttl=600)  # 10 mins persistence for full scans
+        if db_cached:
+            _cache.set(cache_key, db_cached.data, source="cached_db")
+            return db_cached.data
 
         # Step 1: Get events with Odds API IDs (required for prop endpoints).
         # discover_games() often returns ESPN data which lacks Odds API UUIDs,
@@ -936,6 +951,7 @@ class SportsAPIService:
         )
 
         _cache.set(cache_key, grouped, source="oddsapi_props")
+        _db_cache.set(cache_key, grouped, source="oddsapi_props")
         return grouped
 
     def _group_and_enrich_props(

@@ -24,12 +24,14 @@ Market Data (Odds API, Scrapers)
 
 ## Current State & Agent Coordination (Handover)
 
-### ACTIVE STATUS (Feb 23, 2026)
+### ACTIVE STATUS (Feb 24, 2026)
 - **Agent:** Gemini CLI
 - **Last Sync:** Finalized merging remote branches and integrated research references.
 - **Reference Updates:**
     - `prediction-models.md`: Documentation on integrated XGBoost and Bayesian models.
     - `research-sources.md`: Core bibliography and market signal theories.
+- **Environment Updates:**
+    - Configured Hugging Face API for sentiment analysis and ML predictions.
 - **Logic Enhancements:**
     - Updated `NBAMLPredictor` fallback model to use a composite edge calculation (Matchup ORtg/DRtg + Win Pct weighting).
 - **Critical Fixes:** 
