@@ -177,6 +177,8 @@ class NBAMLPredictor:
             "away_win_pct": features.get("away_win_pct", 0.5),
             "home_recent_form": features.get("home_recent_form", [1, 1, 1, 0, 1]),
             "away_recent_form": features.get("away_recent_form", [1, 1, 0, 1, 0]),
+            "home_pace": features.get("home_pace", 100.0),
+            "away_pace": features.get("away_pace", 100.0),
         }
 
         return pd.DataFrame([feature_dict])
@@ -252,9 +254,31 @@ class NBAMLPredictor:
             except Exception as e:
                 logger.error(f"Under/over prediction error: {e}")
 
-        # Fallback
+        # Fallback using stats if available
+        projected_total = 220.0
+        if "home_pace" in features.columns and "home_off_rating" in features.columns:
+            try:
+                h_pace = features["home_pace"].iloc[0]
+                a_pace = features["away_pace"].iloc[0]
+                h_off = features["home_off_rating"].iloc[0]
+                a_off = features["away_off_rating"].iloc[0]
+                h_def = features["home_def_rating"].iloc[0]
+                a_def = features["away_def_rating"].iloc[0]
+
+                # Estimate game pace
+                game_pace = (h_pace + a_pace) / 2.0
+
+                # Estimate points per 100 possessions
+                # Simple avg of offense and opposing defense
+                h_ppp = (h_off + a_def) / 2.0
+                a_ppp = (a_off + h_def) / 2.0
+
+                projected_total = (game_pace / 100.0) * (h_ppp + a_ppp)
+            except (IndexError, KeyError, TypeError):
+                pass
+
         return {
-            "total_points": 220,
+            "total_points": round(projected_total, 1),
             "over_prob": 0.52,
             "under_prob": 0.48,
             "recommendation": "over",
@@ -433,6 +457,7 @@ class NBAMLPredictor:
                             features["home_off_rating"] = h_stats.iloc[0]["OFF_RATING"]
                             features["home_def_rating"] = h_stats.iloc[0]["DEF_RATING"]
                             features["home_win_pct"] = h_stats.iloc[0]["W_PCT"]
+                            features["home_pace"] = h_stats.iloc[0]["PACE"]
 
                     if away_id:
                         a_stats = stats_df[stats_df["TEAM_ID"] == away_id]
@@ -440,6 +465,7 @@ class NBAMLPredictor:
                             features["away_off_rating"] = a_stats.iloc[0]["OFF_RATING"]
                             features["away_def_rating"] = a_stats.iloc[0]["DEF_RATING"]
                             features["away_win_pct"] = a_stats.iloc[0]["W_PCT"]
+                            features["away_pace"] = a_stats.iloc[0]["PACE"]
 
                 games.append(
                     {

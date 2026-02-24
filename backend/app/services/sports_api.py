@@ -54,6 +54,34 @@ class _CacheEntry:
     source: str = "live"
 
 
+# ─────────────────────────────────────────────────────────────────
+# Data source tag
+# ─────────────────────────────────────────────────────────────────
+@dataclass
+class FetchResult:
+    """Wraps API results with provenance metadata."""
+
+    data: List[Dict[str, Any]]
+    source: str  # "espn_live", "oddsapi_live", "cached", "stale_cache", "fallback"
+    source_label: str = ""  # human-friendly, e.g. "[LIVE]"
+    game_count: int = 0
+    api_requests_remaining: Optional[int] = None
+    api_requests_used: Optional[int] = None
+
+    def __post_init__(self):
+        self.game_count = len(self.data)
+        labels = {
+            "espn_live": "[LIVE - ESPN]",
+            "oddsapi_live": "[LIVE - Odds API]",
+            "oddsapi_events": "[LIVE - Odds API Events]",
+            "cached": "[CACHED]",
+            "cached_db": "[DB CACHE]",
+            "stale_cache": "[STALE CACHE]",
+            "fallback": "[FALLBACK]",
+        }
+        self.source_label = labels.get(self.source, f"[{self.source.upper()}]")
+
+
 class TTLCache:
     """Simple in-memory cache with per-key TTL (seconds)."""
 
@@ -160,34 +188,6 @@ class PersistentCache:
 # Module-level singletons so cache persists across calls within a process
 _cache = TTLCache(default_ttl=300)  # 5 minute default
 _db_cache = PersistentCache(default_ttl=3600)  # 1 hour default
-
-
-# ─────────────────────────────────────────────────────────────────
-# Data source tag
-# ─────────────────────────────────────────────────────────────────
-@dataclass
-class FetchResult:
-    """Wraps API results with provenance metadata."""
-
-    data: List[Dict[str, Any]]
-    source: str  # "espn_live", "oddsapi_live", "cached", "stale_cache", "fallback"
-    source_label: str = ""  # human-friendly, e.g. "[LIVE]"
-    game_count: int = 0
-    api_requests_remaining: Optional[int] = None
-    api_requests_used: Optional[int] = None
-
-    def __post_init__(self):
-        self.game_count = len(self.data)
-        labels = {
-            "espn_live": "[LIVE - ESPN]",
-            "oddsapi_live": "[LIVE - Odds API]",
-            "oddsapi_events": "[LIVE - Odds API Events]",
-            "cached": "[CACHED]",
-            "cached_db": "[DB CACHE]",
-            "stale_cache": "[STALE CACHE]",
-            "fallback": "[FALLBACK]",
-        }
-        self.source_label = labels.get(self.source, f"[{self.source.upper()}]")
 
 
 # ─────────────────────────────────────────────────────────────────

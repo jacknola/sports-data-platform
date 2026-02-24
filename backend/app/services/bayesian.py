@@ -3,10 +3,9 @@ Bayesian analysis for sports betting
 """
 
 import numpy as np
-from scipy import stats
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from loguru import logger
-
+from app.config import settings
 
 # ---------------------------------------------------------------------------
 # Conference tier variance penalty for large spread markets
@@ -69,7 +68,7 @@ class BayesianAnalyzer:
         beta_prior = (1 - prior_prob) * prior_strength
 
         # Feature-based adjustments
-        adjustments = self._compute_adjustments(features, prior_prob)
+        adjustments = self._compute_adjustments(features)
 
         # Apply adjustments
         total_adjustment = sum(adjustments.values())
@@ -117,84 +116,101 @@ class BayesianAnalyzer:
 
         return result
 
-    def _compute_adjustments(
-        self, features: Dict, prior_prob: float
-    ) -> Dict[str, float]:
+    def _compute_adjustments(self, features: Dict[str, Any]) -> Dict[str, float]:
         """Compute adjustments based on feature values"""
         adjustments = {}
 
-        # Injury adjustment
-        injury_status = features.get("injury_status", "ACTIVE")
-        if injury_status == "QUESTIONABLE":
-            adjustments["injury"] = -0.05
-        elif injury_status == "OUT":
-            adjustments["injury"] = -0.99
-        else:
-            adjustments["injury"] = 0.0
+        adjustments["injury"] = self._get_injury_adjustment(features.get("injury_status", "ACTIVE"))
+        adjustments["pace"] = self._get_pace_adjustment(features)
+        adjustments["usage"] = self._get_usage_adjustment(features.get("usage", {}))
+        adjustments["weather"] = self._get_weather_adjustment(features.get("weather", {}))
+        adjustments["home_advantage"] = self._get_home_advantage_adjustment(features.get("is_home"))
+        adjustments["form"] = self._get_form_adjustment(features.get("recent_form", []))
 
-        # Pace adjustment
+        # Conference tier variance penalty for large spreads
+        spread_penalty = self._get_conference_spread_adjustment(features)
+        if spread_penalty != 0.0:
+            adjustments["conference_spread_variance"] = spread_penalty
+
+        # Remove 0.0 adjustments to keep it clean
+        return {k: v for k, v in adjustments.items() if v != 0.0}
+
+    def _get_injury_adjustment(self, injury_status: str) -> float:
+        """Calculate adjustment based on injury status."""
+        if injury_status == "QUESTIONABLE":
+            return -0.05
+        elif injury_status == "OUT":
+            return -0.99
+        return 0.0
+
+    def _get_pace_adjustment(self, features: Dict[str, Any]) -> float:
+        """Calculate adjustment based on pace comparison."""
         team_pace = features.get("team_pace", 0)
         opp_pace = features.get("opponent_pace", 0)
+
         if team_pace and opp_pace:
             pace_factor = (team_pace + opp_pace) / 2
             league_avg = features.get("league_avg_pace", pace_factor)
             if league_avg > 0:
                 pace_delta = (pace_factor - league_avg) / league_avg
-                adjustments["pace"] = pace_delta * 0.1
+                return pace_delta * 0.1
+        return 0.0
 
-        # Usage trend
-        usage = features.get("usage", {})
+    def _get_usage_adjustment(self, usage: Dict[str, Any]) -> float:
+        """Calculate adjustment based on player usage trend."""
         if usage.get("value"):
             usage_trend = usage.get("trend", 0)
-            adjustments["usage"] = usage_trend * 0.02
+            return usage_trend * 0.02
+        return 0.0
 
-        # Weather impact (for outdoor sports)
-        weather = features.get("weather", {})
+    def _get_weather_adjustment(self, weather: Dict[str, Any]) -> float:
+        """Calculate adjustment based on weather conditions (for outdoor sports)."""
         if weather.get("type") == "outdoor":
             wind = weather.get("wind_mph", 0)
             if wind > 20:
-                adjustments["weather"] = -0.03
-            else:
-                adjustments["weather"] = 0.0
+                return -0.03
+        return 0.0
 
-        # Home/away advantage
-        is_home = features.get("is_home", False)
-        if is_home:
-            adjustments["home_advantage"] = 0.03
-        else:
-            adjustments["home_advantage"] = -0.03
+    def _get_home_advantage_adjustment(self, is_home: Optional[bool]) -> float:
+        """Calculate adjustment for home/away."""
+        if is_home is None:
+            return 0.0
+        return 0.03 if is_home else -0.03
 
-        # Recent form
-        recent_form = features.get("recent_form", [])
+    def _get_form_adjustment(self, recent_form: List[float]) -> float:
+        """Calculate adjustment based on recent form."""
         if recent_form:
             avg_form = np.mean(recent_form)
-            adjustments["form"] = (avg_form - 0.5) * 0.1
+            return (float(avg_form) - 0.5) * 0.1
+        return 0.0
 
-        # Conference tier variance penalty for large spreads
-        # Mid-major large spreads are systematically overconfident — books inflate
-        # lines in low-sample-size leagues and covers come in far less often than
-        # implied probability suggests (e.g., GCU -9.5 losing outright, NM -8.5
-        # winning by 2 when -8.5 was the line).
+    def _get_conference_spread_adjustment(self, features: Dict[str, Any]) -> float:
+        """
+        Calculate conference tier variance penalty for large spreads.
+
+        Mid-major large spreads are systematically overconfident — books inflate
+        lines in low-sample-size leagues.
+        """
         conference_tier = features.get("conference_tier", "power_5")
         spread = features.get("spread", 0.0)  # signed: negative = favorite spread
         abs_spread = abs(spread)
+
+        bucket: Optional[str] = None
         if abs_spread >= LARGE_SPREAD_THRESHOLD:
             bucket = "large"
         elif abs_spread >= MEDIUM_SPREAD_THRESHOLD:
             bucket = "medium"
-        else:
-            bucket = None
 
         if bucket is not None and conference_tier in CONFERENCE_TIER_SPREAD_PENALTY:
             penalty = CONFERENCE_TIER_SPREAD_PENALTY[conference_tier].get(bucket, 0.0)
             if penalty != 0.0:
-                adjustments["conference_spread_variance"] = penalty
                 logger.debug(
                     f"Applied {conference_tier} {bucket}-spread variance penalty: {penalty:+.3f} "
                     f"(spread={spread}, tier={conference_tier})"
                 )
+            return penalty
 
-        return adjustments
+        return 0.0
 
     def _prob_to_american_odds(self, prob: float) -> float:
         """Convert probability to American odds"""
@@ -217,8 +233,6 @@ class BayesianAnalyzer:
         Returns:
             Kelly fraction (percentage of bankroll to bet)
         """
-        from app.config import settings
-
         if odds <= 1:
             return 0.0
 
