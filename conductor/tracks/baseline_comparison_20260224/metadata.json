@@ -1,0 +1,8 @@
+{
+  "track_id": "baseline_comparison_20260224",
+  "type": "feature",
+  "status": "new",
+  "created_at": "2026-02-24T10:00:00Z",
+  "updated_at": "2026-02-24T10:00:00Z",
+  "description": "Implement Baseline Model Comparison (Bayesian vs. Random Forest)"
+}
