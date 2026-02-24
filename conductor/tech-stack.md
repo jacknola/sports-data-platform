@@ -21,6 +21,8 @@
 ## Data & Analytics
 - **Bayesian Modeling:** PyMC
 - **Machine Learning:** Hugging Face Transformers, XGBoost, TensorFlow, scikit-learn
+- **Vector Database:** Qdrant (for situational similarity and RAG)
+- **Embeddings:** sentence-transformers (all-MiniLM-L6-v2)
 - **Sports Data:** nba_api
 - **Web Scraping:** Crawl4AI, Playwright, Selenium
 - **Evaluation:** Custom Brier Score and ROI metrics framework
