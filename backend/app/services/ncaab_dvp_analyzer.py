@@ -22,6 +22,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 from loguru import logger
 
+from app.services.ncaab_stats_service import NCAABStatsService
+
 
 # League-average baselines (D1 NCAAB 2024-25)
 LEAGUE_AVG_ORTG = 106.0
@@ -53,6 +55,7 @@ class NCAABDvPAnalyzer:
         self.league_avg_ortg: float = LEAGUE_AVG_ORTG
         self.league_avg_drtg: float = LEAGUE_AVG_DRTG
         self.league_avg_pace: float = LEAGUE_AVG_PACE
+        self.stats_service = NCAABStatsService()
         logger.info("NCAABDvPAnalyzer created (season={})", self.season)
 
     # ------------------------------------------------------------------
@@ -165,53 +168,88 @@ class NCAABDvPAnalyzer:
     # 3. TEAM EFFICIENCY DATA
     # ------------------------------------------------------------------
 
-    def fetch_team_efficiency(self) -> Dict[str, Dict[str, float]]:
-        """Fetch or generate team efficiency data for NCAAB teams on slate.
-
-        Since NCAAB doesn't have a free API like nba_api, this uses:
-            1. Spread + O/U to derive efficiency estimates
-            2. Fallback estimates for well-known programs
+    async def fetch_team_efficiency(self) -> Dict[str, Dict[str, float]]:
+        """Fetch real team efficiency data from NCAABStatsService (ESPN BPI).
+        Falls back to deriving from spread + O/U if service fails.
 
         Returns:
             { team_name: { "ORtg": x, "DRtg": y, "PACE": z, "NET": w } }
         """
+        # 1. Try to fetch from real stats service
+        try:
+            real_stats = await self.stats_service.fetch_all_team_stats()
+            if real_stats:
+                efficiency = {}
+                for game in self.slate.get("games", []):
+                    for team in [game["home"], game["away"]]:
+                        if team not in efficiency:
+                            stats = self.stats_service.get_team_stats(team)
+                            if stats:
+                                efficiency[team] = {
+                                    "ORtg": stats["AdjOE"],
+                                    "DRtg": stats["AdjDE"],
+                                    "PACE": self.league_avg_pace, # Pace not in BPI, use avg
+                                    "NET": stats["AdjOE"] - stats["AdjDE"],
+                                    "BPI": stats["BPI"],
+                                    "source": "espn_bpi"
+                                }
+                
+                if efficiency:
+                    logger.info("NCAAB efficiency fetched from ESPN BPI for {} teams", len(efficiency))
+                    self.team_efficiency = efficiency
+                    # Check if we need to fall back for any teams missing in BPI
+                    for game in self.slate.get("games", []):
+                        if game["home"] not in self.team_efficiency or game["away"] not in self.team_efficiency:
+                            self._derive_missing_efficiency(game)
+                    return self.team_efficiency
+        except Exception as e:
+            logger.warning("Failed to fetch real NCAAB stats: {}", e)
+
+        # 2. Fallback: Derive efficiency from Vegas lines
+        logger.info("Deriving NCAAB efficiency from Vegas lines (fallback)")
         efficiency = {}
-
         for game in self.slate.get("games", []):
-            home = game["home"]
-            away = game["away"]
-            spread = game["spread"]
-            ou = game["over_under"]
+            self._derive_missing_efficiency(game, efficiency)
 
-            # Derive efficiency from Vegas lines
-            home_implied = self.calculate_implied_team_total(ou, spread, spread < 0)
-            away_implied = self.calculate_implied_team_total(ou, spread, spread >= 0)
-
-            # Estimate pace from total: pace ≈ total / 2 / (avg_efficiency / 100)
-            est_pace = ou / 2.0 / (self.league_avg_ortg / 100.0) if self.league_avg_ortg > 0 else LEAGUE_AVG_PACE
-
-            if home not in efficiency:
-                # ORtg proxy: home implied × (100 / est_pace)
-                home_ortg = home_implied * (100.0 / est_pace) if est_pace > 0 else LEAGUE_AVG_ORTG
-                efficiency[home] = {
-                    "ORtg": round(home_ortg, 1),
-                    "DRtg": round(away_implied * (100.0 / est_pace) if est_pace > 0 else LEAGUE_AVG_DRTG, 1),
-                    "PACE": round(est_pace, 1),
-                    "NET": round(home_ortg - (away_implied * (100.0 / est_pace) if est_pace > 0 else LEAGUE_AVG_DRTG), 1),
-                }
-
-            if away not in efficiency:
-                away_ortg = away_implied * (100.0 / est_pace) if est_pace > 0 else LEAGUE_AVG_ORTG
-                efficiency[away] = {
-                    "ORtg": round(away_ortg, 1),
-                    "DRtg": round(home_implied * (100.0 / est_pace) if est_pace > 0 else LEAGUE_AVG_DRTG, 1),
-                    "PACE": round(est_pace, 1),
-                    "NET": round(away_ortg - (home_implied * (100.0 / est_pace) if est_pace > 0 else LEAGUE_AVG_DRTG), 1),
-                }
-
-        logger.info("NCAAB efficiency computed for {} teams", len(efficiency))
+        logger.info("NCAAB efficiency computed for {} teams (Vegas fallback)", len(efficiency))
         self.team_efficiency = efficiency
         return efficiency
+
+    def _derive_missing_efficiency(self, game: Dict[str, Any], efficiency_dict: Optional[Dict] = None) -> None:
+        """Helper to derive efficiency from Vegas lines for a single game."""
+        target = efficiency_dict if efficiency_dict is not None else self.team_efficiency
+        
+        home = game["home"]
+        away = game["away"]
+        spread = game["spread"]
+        ou = game["over_under"]
+
+        # Derive efficiency from Vegas lines
+        home_implied = self.calculate_implied_team_total(ou, spread, spread < 0)
+        away_implied = self.calculate_implied_team_total(ou, spread, spread >= 0)
+
+        # Estimate pace from total: pace ≈ total / 2 / (avg_efficiency / 100)
+        est_pace = ou / 2.0 / (self.league_avg_ortg / 100.0) if self.league_avg_ortg > 0 else LEAGUE_AVG_PACE
+
+        if home not in target:
+            home_ortg = home_implied * (100.0 / est_pace) if est_pace > 0 else LEAGUE_AVG_ORTG
+            target[home] = {
+                "ORtg": round(home_ortg, 1),
+                "DRtg": round(away_implied * (100.0 / est_pace) if est_pace > 0 else LEAGUE_AVG_DRTG, 1),
+                "PACE": round(est_pace, 1),
+                "NET": round(home_ortg - (away_implied * (100.0 / est_pace) if est_pace > 0 else LEAGUE_AVG_DRTG), 1),
+                "source": "vegas_derived"
+            }
+
+        if away not in target:
+            away_ortg = away_implied * (100.0 / est_pace) if est_pace > 0 else LEAGUE_AVG_ORTG
+            target[away] = {
+                "ORtg": round(away_ortg, 1),
+                "DRtg": round(home_implied * (100.0 / est_pace) if est_pace > 0 else LEAGUE_AVG_DRTG, 1),
+                "PACE": round(est_pace, 1),
+                "NET": round(away_ortg - (home_implied * (100.0 / est_pace) if est_pace > 0 else LEAGUE_AVG_DRTG), 1),
+                "source": "vegas_derived"
+            }
 
     # ------------------------------------------------------------------
     # 4. EFFICIENCY-BASED PROJECTION
@@ -309,7 +347,7 @@ class NCAABDvPAnalyzer:
     # 6. FULL PIPELINE
     # ------------------------------------------------------------------
 
-    def run_analysis(
+    async def run_analysis(
         self,
         slate_data: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
@@ -328,7 +366,7 @@ class NCAABDvPAnalyzer:
         if slate_data or not self.slate.get("games"):
             self.load_slate(slate_data)
 
-        self.fetch_team_efficiency()
+        await self.fetch_team_efficiency()
         implied_totals = self.compute_all_implied_totals()
 
         projections = []
@@ -385,8 +423,8 @@ class NCAABDvPAnalyzer:
             "projections": projections,
         }
 
-    def get_high_value_plays(self, result: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    async def get_high_value_plays(self, result: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Filter to only HIGH VALUE recommendations."""
         if result is None:
-            result = self.run_analysis()
+            result = await self.run_analysis()
         return [p for p in result.get("projections", []) if "HIGH VALUE" in p.get("Recommendation", "")]

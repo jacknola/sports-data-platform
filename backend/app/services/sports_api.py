@@ -86,20 +86,26 @@ class PersistentCache:
     """Database-backed persistent cache for API responses."""
 
     def __init__(self, default_ttl: int = 3600):
-        from app.database import SessionLocal, engine, Base
-        from app.models.api_cache import APICache
-        self._Session = SessionLocal
-        self._Model = APICache
-        self._default_ttl = default_ttl
-        
-        # Ensure tables are created
+        self._enabled = False
         try:
+            from app.database import SessionLocal, engine, Base
+            from app.models.api_cache import APICache
+            self._Session = SessionLocal
+            self._Model = APICache
+            self._default_ttl = default_ttl
+            
+            # Ensure tables are created
             Base.metadata.create_all(bind=engine)
-        except Exception as e:
-            logger.error(f"Failed to initialize persistent cache tables: {e}")
+            self._enabled = True
+            logger.info("Persistent cache initialized successfully")
+        except (ImportError, Exception) as e:
+            logger.warning(f"Persistent cache disabled: {e}")
 
     def get(self, key: str, ttl: Optional[int] = None) -> Optional[FetchResult]:
         """Retrieve from database if not expired."""
+        if not self._enabled:
+            return None
+            
         session = self._Session()
         try:
             entry = session.query(self._Model).filter_by(key=key).first()
@@ -124,6 +130,9 @@ class PersistentCache:
 
     def set(self, key: str, data: Any, source: str = "live"):
         """Save to database, updating if key exists."""
+        if not self._enabled:
+            return
+            
         session = self._Session()
         try:
             import json
