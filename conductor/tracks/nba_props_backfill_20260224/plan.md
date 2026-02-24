@@ -6,7 +6,7 @@ This plan outlines the steps to ingest historical player stats, implement situat
 
 ### Goal: Ingest multi-season player stats into PostgreSQL.
 
-- [ ] **Task 1: Define Player Game Log Schema**
+- [x] **Task 1: Define Player Game Log Schema** 103f211
     - [ ] Create or update SQLAlchemy models for player game logs.
     - [ ] Run migrations if necessary.
 - [ ] **Task 2: Ingestion Script Implementation**
