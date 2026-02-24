@@ -26,6 +26,8 @@ from app.services.nba_stats_service import NBAStatsService
 from app.services.ev_calculator import EVCalculator
 from app.services.open_line_cache import get_or_set_open_line
 from app.core.betting import american_to_decimal
+from app.services.similarity_search import SimilaritySearchService
+from app.config import settings
 
 router = APIRouter()
 
@@ -36,6 +38,7 @@ _kelly_optimizer = MultivariateKellyOptimizer(kelly_scale=0.5, min_edge=0.03)
 _sports_api = SportsAPIService()
 _nba_stats = NBAStatsService()
 _ev_calc = EVCalculator()
+_similarity = SimilaritySearchService()
 
 # Bankroll used for prop stake sizing (matches NCAAB/NBA game bankroll)
 _BANKROLL: float = 25.0
@@ -462,6 +465,21 @@ def _build_prop_analysis(prop: Dict) -> Dict:
         except Exception as e:
             logger.debug(f"EVCalculator failed for {prop['player_name']}: {e}")
 
+    # 5. Situational RAG (Similarity search in Qdrant)
+    situational_context = "No historical analogs found."
+    try:
+        # Use player-specific collection for props
+        analogs = _similarity.vector_store.search_similar_scenarios(
+            description=f"{prop['player_name']} vs {prop['opponent']} {prop['stat_type']}",
+            collection=settings.QDRANT_COLLECTION_PLAYERS,
+            limit=3
+        )
+        if analogs:
+            outcomes = [str(a.get("outcome_pra") or a.get("outcome_pts")) for a in analogs]
+            situational_context = f"Similar Hist Scenarios: {', '.join(outcomes)} | Match: {analogs[0].get('description')}"
+    except Exception as e:
+        logger.debug(f"Situational RAG failed: {e}")
+
     # Classification from EVCalculator
     ev_classification = ev_data.get("classification", "")
     ev_true_prob = ev_data.get("true_probability", None)
@@ -492,6 +510,7 @@ def _build_prop_analysis(prop: Dict) -> Dict:
         "true_over_prob": sharp["true_over_prob"],
         "true_under_prob": sharp["true_under_prob"],
         "ev_edge_pct": sharp["ev_edge_pct"],
+        "situational_context": situational_context,
         # is_positive_ev: True if EVCalculator found edge OR sharp signals confirm
         "is_positive_ev": (
             ev_classification in ("strong_play", "good_play", "lean")
