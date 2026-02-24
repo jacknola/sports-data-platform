@@ -31,7 +31,7 @@ os.environ.setdefault("SECRET_KEY", "test_secret_key_not_for_production")
 # Step 2: Pre-register the Settings module so `from app.config import settings`
 #         finds the Pydantic Settings object instead of the empty package.
 # ---------------------------------------------------------------------------
-_config_path = os.path.join(os.path.dirname(__file__), "..", "app", "config.py")
+_config_path = os.path.join(os.path.dirname(__file__), "..", "app", "config", "__init__.py")
 _config_spec = importlib.util.spec_from_file_location("app.config", _config_path)
 _config_module = importlib.util.module_from_spec(_config_spec)
 sys.modules["app.config"] = _config_module
