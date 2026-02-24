@@ -35,3 +35,6 @@ This plan outlines the steps to ingest historical player stats, implement situat
 - [x] **Task 2: Prop Analysis Runner** b4db9f4
     - [x] Create a script to run the full RAG-enhanced prop analysis for today's slate and export to Sheets.
 - [x] **Task 3: Conductor - User Manual Verification 'Phase 3: Sheets Export & Automation' (Protocol in workflow.md)**
+
+## Phase: Review Fixes
+- [x] Task: Apply review suggestions 7cd4523
