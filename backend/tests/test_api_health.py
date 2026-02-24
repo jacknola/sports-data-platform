@@ -62,6 +62,10 @@ def _inject_stubs():
         "app.routers.agents",
         "app.routers.google_sheets",
         "app.routers.dvp",
+        "app.routers.props",
+        "app.routers.live_props",
+        "app.routers.cbb_sharp",
+        "app.routers.parlays",
     ]
     for rname in router_names:
         r = types.ModuleType(rname)
@@ -82,6 +86,8 @@ def client():
     """
     Provide a TestClient for the FastAPI app with all heavy dependencies stubbed.
     """
+    import os
+    os.environ["ENVIRONMENT"] = "test"
     injected = _inject_stubs()
 
     # Remove cached main / app modules so a fresh import happens with stubs

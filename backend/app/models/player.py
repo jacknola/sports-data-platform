@@ -9,6 +9,7 @@ import datetime
 
 class Player(Base):
     __tablename__ = "players"
+    __table_args__ = {"extend_existing": True}
     
     id = Column(Integer, primary_key=True, index=True)
     external_player_id = Column(String, unique=True, index=True)

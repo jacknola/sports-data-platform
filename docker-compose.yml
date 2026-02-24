@@ -6,6 +6,22 @@ networks:
     driver: bridge
 
 services:
+  # NotebookLM MCP Server (Google Research)
+  notebooklm:
+    image: node:20-slim
+    container_name: mcp-notebooklm
+    restart: unless-stopped
+    working_dir: /app
+    command: npx notebooklm-mcp@latest
+    networks:
+      - mcp-network
+      - default
+    environment:
+      - MCP_MODE=stdio
+      - LOG_LEVEL=info
+    stdin_open: true
+    tty: true
+
   # Sequential Thinking MCP Server
   sequentialthinking:
     image: mcp/sequentialthinking:latest

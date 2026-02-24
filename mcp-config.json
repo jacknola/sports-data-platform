@@ -1,0 +1,30 @@
+{
+  "mcpServers": {
+    "betting-analysis": {
+      "command": "python",
+      "args": ["/Users/bb.jr/sports-data-platform/mcp-servers/betting-analysis/server.py"],
+      "env": {
+        "PYTHONPATH": "/Users/bb.jr/sports-data-platform/backend"
+      }
+    },
+    "sheets-reporting": {
+      "command": "python",
+      "args": ["/Users/bb.jr/sports-data-platform/mcp-servers/sheets-reporting/server.py"],
+      "env": {
+        "GOOGLE_CREDENTIALS_PATH": "/Users/bb.jr/sports-data-platform/backend/credentials/google-sa.json"
+      }
+    },
+    "notebooklm": {
+      "command": "npx",
+      "args": ["-y", "notebooklm-mcp@latest"]
+    },
+    "sequentialthinking": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+    },
+    "redis": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-redis", "redis://localhost:6379"]
+    }
+  }
+}

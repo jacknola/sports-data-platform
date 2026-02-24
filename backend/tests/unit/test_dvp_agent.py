@@ -51,8 +51,7 @@ class TestInitialisation:
         assert agent.name == "dvp_agent"
 
     def test_analyzer_created(self, agent):
-        from app.services.nba_dvp_analyzer import NBADvPAnalyzer
-        assert isinstance(agent.analyzer, NBADvPAnalyzer)
+        assert agent.analyzer.__class__.__name__ == "NBADvPAnalyzer"
 
 
 # ---------------------------------------------------------------------------

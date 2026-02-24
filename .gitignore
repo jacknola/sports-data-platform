@@ -72,3 +72,9 @@ service-account.json
 
 # Session dumps (from AI coding tools)
 session-*.md
+
+# gemini-cli settings
+.gemini/
+
+# GitHub App credentials
+gha-creds-*.json
