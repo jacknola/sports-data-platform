@@ -20,9 +20,10 @@
 
 ## Data & Analytics
 - **Bayesian Modeling:** PyMC
-- **Machine Learning:** Hugging Face Transformers, XGBoost, TensorFlow
+- **Machine Learning:** Hugging Face Transformers, XGBoost, TensorFlow, scikit-learn
 - **Sports Data:** nba_api
 - **Web Scraping:** Crawl4AI, Playwright, Selenium
+- **Evaluation:** Custom Brier Score and ROI metrics framework
 
 ## Integrations
 - **Database/Reporting:** Notion, Google Sheets

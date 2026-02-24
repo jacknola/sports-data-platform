@@ -23,6 +23,7 @@ To create a high-performance, automated intelligence layer for sports betting th
 - **Multi-Agent Synergy:** A coordinated swarm of agents (Odds, Analysis, Twitter, Expert) working together to validate every pick.
 - **Omnichannel Reporting:** Seamless automated updates to Notion, Google Sheets, and Telegram.
 - **Advanced Predictive Modeling:** A modular core supporting Bayesian modeling and potential expansion into classical ML methods (Linear Regression, Random Forests).
+- **Model Comparison Framework:** Rigorous evaluation system to compare different model architectures (e.g., Bayesian vs. Random Forest) using Brier Score, ROI, and CLV.
 
 ## Success Metrics
 - **CLV (Closing Line Value) Beats:** Frequency of beating the closing line on sharp books.
