@@ -2,7 +2,7 @@
 
 This plan outlines the steps to ingest historical data and implement vector-based situational analysis.
 
-## Phase 1: PostgreSQL Historical Backfill
+## Phase 1: PostgreSQL Historical Backfill [checkpoint: e72b285]
 
 ### Goal: Populate the relational database with multi-season historical data.
 
@@ -12,7 +12,7 @@ This plan outlines the steps to ingest historical data and implement vector-base
 - [x] **Task 2: NCAAB Historical Scraper** 8e99f99
     - [ ] Write tests for historical NCAAB scraping logic.
     - [ ] Implement scraper for historical college basketball odds and scores.
-- [ ] **Task 3: Conductor - User Manual Verification 'Phase 1: PostgreSQL Historical Backfill' (Protocol in workflow.md)**
+- [x] **Task 3: Conductor - User Manual Verification 'Phase 1: PostgreSQL Historical Backfill' (Protocol in workflow.md)**
 
 ## Phase 2: Qdrant Infrastructure & Vector Store Service
 
