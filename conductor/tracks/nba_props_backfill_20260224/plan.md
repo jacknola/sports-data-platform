@@ -25,7 +25,7 @@ This plan outlines the steps to ingest historical player stats, implement situat
     - [x] Implement script to vectorize all historical player logs into a new Qdrant collection `player_performances`.
 - [x] **Task 3: Conductor - User Manual Verification 'Phase 2: Player-Centric Situational Analysis' (Protocol in workflow.md)**
 
-## Phase 3: Sheets Export & Automation
+## Phase 3: Sheets Export & Automation [checkpoint: d81dcd5]
 
 ### Goal: Automate the RAG-enhanced prop export to Google Sheets.
 
@@ -34,4 +34,4 @@ This plan outlines the steps to ingest historical player stats, implement situat
     - [x] Write unit tests for the updated export logic.
 - [x] **Task 2: Prop Analysis Runner** b4db9f4
     - [x] Create a script to run the full RAG-enhanced prop analysis for today's slate and export to Sheets.
-- [~] **Task 3: Conductor - User Manual Verification 'Phase 3: Sheets Export & Automation' (Protocol in workflow.md)**
+- [x] **Task 3: Conductor - User Manual Verification 'Phase 3: Sheets Export & Automation' (Protocol in workflow.md)**
