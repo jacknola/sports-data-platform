@@ -9,7 +9,7 @@ This plan outlines the steps to ingest historical player stats, implement situat
 - [x] **Task 1: Define Player Game Log Schema** 103f211
     - [ ] Create or update SQLAlchemy models for player game logs.
     - [ ] Run migrations if necessary.
-- [ ] **Task 2: Ingestion Script Implementation**
+- [x] **Task 2: Ingestion Script Implementation** 931a035
     - [ ] Write unit tests for player log ingestion.
     - [ ] Implement `NBAPlayerBackfillService` to pull logs via `nba_api`.
 - [ ] **Task 3: Conductor - User Manual Verification 'Phase 1: Player Game Log Backfill' (Protocol in workflow.md)**
