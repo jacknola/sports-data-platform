@@ -6,6 +6,7 @@ from loguru import logger
 
 from app.agents.base_agent import BaseAgent
 from app.services.sequential_thinking import SequentialThinkingService
+from app.services.similarity_search import SimilaritySearchService
 
 
 class ExpertAgent(BaseAgent):
@@ -16,6 +17,7 @@ class ExpertAgent(BaseAgent):
     def __init__(self):
         super().__init__("ExpertAgent")
         self.thinking_service = SequentialThinkingService()
+        self.similarity_service = SimilaritySearchService()
         self.expertise_level = "Professional"
     
     async def execute(self, task: Dict[str, Any]) -> Dict[str, Any]:
@@ -43,9 +45,14 @@ class ExpertAgent(BaseAgent):
             
             research_findings = await self.thinking_service.research_topic(research_query)
             
-            # Step 2: Use sequential thinking to make expert decision
-            # Add research findings to context
+            # Step 2: Retrieve similar historical situational context (RAG)
+            logger.info("ExpertAgent: Performing situational similarity search")
+            historical_analogs = self.similarity_service.find_similar_games(bet_analysis, limit=3)
+            
+            # Step 3: Use sequential thinking to make expert decision
+            # Add research and historical findings to context
             bet_analysis['research_findings'] = research_findings
+            bet_analysis['historical_analogs'] = historical_analogs
             
             expert_decision = await self.thinking_service.decide_if_bet(bet_analysis)
             
