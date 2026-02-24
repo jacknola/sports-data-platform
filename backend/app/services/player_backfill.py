@@ -43,7 +43,7 @@ class NBAPlayerBackfillService:
             count = 0
             
             for _, row in df.iterrows():
-                ext_gid = str(row["GAME_ID"])
+                ext_gid = str(row["Game_ID"])
                 ext_log_id = f"NBA_LOG_{ext_gid}_{player.external_player_id}"
                 
                 # Check if exists

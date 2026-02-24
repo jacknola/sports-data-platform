@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     SPORTSRADAR_API_KEY: Optional[str] = None
     ODDSAPI_API_KEY: Optional[str] = None
     THE_ODDS_API_KEY: Optional[str] = None
+    SPORTS_GAME_ODDS_API_KEY: Optional[str] = None
 
     # Twitter
     TWITTER_BEARER_TOKEN: Optional[str] = None

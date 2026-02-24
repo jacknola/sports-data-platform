@@ -21,8 +21,7 @@ async def export_props_to_sheets():
     """
     Perform prop analysis and export to the configured spreadsheet.
     """
-    print("
-" + "=" * 76)
+    print("\n" + "=" * 76)
     print(f"  NBA PLAYER PROP EXPORT — {datetime.now().strftime('%A, %B %d, %Y')}")
     print(f"  Methodology: Bayesian + Sharp RLM + Qdrant Situational RAG")
     print("=" * 76)
@@ -32,39 +31,33 @@ async def export_props_to_sheets():
     prop_data = await run_prop_analysis(sport="nba")
     
     if not prop_data or not prop_data.get("props"):
-        print("
-  No player props found or analyzed for today's slate.")
+        print("\n  No player props found or analyzed for today's slate.")
         return
 
     # 2. Export to Sheets
     spreadsheet_id = settings.GOOGLE_SPREADSHEET_ID
     if not spreadsheet_id:
         logger.error("GOOGLE_SPREADSHEET_ID not configured in .env")
-        print("
-  Error: Google Spreadsheet ID not found. Please check your .env file.")
+        print("\n  Error: Google Spreadsheet ID not found. Please check your .env file.")
         return
 
     logger.info(f"Exporting {len(prop_data['props'])} props to Sheets ({spreadsheet_id})...")
     
     sheets_service = GoogleSheetsService()
     if not sheets_service.is_configured:
-        print("
-  Error: Google Sheets service not configured. Check service account path.")
+        print("\n  Error: Google Sheets service not configured. Check service account path.")
         return
 
     result = sheets_service.export_props(spreadsheet_id, prop_data)
     
     if "error" in result:
-        print(f"
-  Export failed: {result['error']}")
+        print(f"\n  Export failed: {result['error']}")
     else:
-        print(f"
-  ✅ Successfully exported {result['rows_written']} player props to Google Sheets!")
+        print(f"\n  ✅ Successfully exported {result['rows_written']} player props to Google Sheets!")
         info = sheets_service.get_spreadsheet_info(spreadsheet_id)
         print(f"  View here: {info.get('url')}")
     
-    print("=" * 76 + "
-")
+    print("=" * 76 + "\n")
 
 if __name__ == "__main__":
     asyncio.run(export_props_to_sheets())

@@ -1,7 +1,7 @@
 {
     "$schema": "https://opencode.ai/config.json",
     "theme": "opencode",
-    "model": ["ge"],
+    "model": "ge",
     "autoupdate": true,
     "plugin": [
         "opencode-gemini-auth@latest",
