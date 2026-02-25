@@ -11,11 +11,11 @@ class PlayerGameLog(Base):
     __tablename__ = "player_game_logs"
     __table_args__ = {"extend_existing": True}
     
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     player_id = Column(Integer, ForeignKey("players.id"))
     game_id = Column(Integer, ForeignKey("games.id"))
     
-    external_log_id = Column(String, unique=True, index=True)  # e.g., NBA_LOG_GAMEID_PLAYERID
+    external_log_id = Column(String, unique=True)
     
     team_id = Column(Integer, ForeignKey("teams.id"))
     opponent_id = Column(Integer, ForeignKey("teams.id"))

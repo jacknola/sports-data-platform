@@ -52,8 +52,18 @@ class RandomForestModel:
         X = X[self.feature_names]
         
         # Get probability for class 1
-        probs = self.model.predict_proba(X)[:, 1]
-        return probs
+        raw_probs = self.model.predict_proba(X)
+        
+        # If model only saw one class during training, predict_proba returns (n, 1)
+        if raw_probs.shape[1] == 1:
+            # Check which class it was
+            sole_class = self.model.classes_[0]
+            if sole_class == 1:
+                return np.ones(len(X))
+            else:
+                return np.zeros(len(X))
+                
+        return raw_probs[:, 1]
 
     def get_feature_importance(self) -> pd.Series:
         """

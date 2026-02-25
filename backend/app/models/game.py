@@ -11,9 +11,9 @@ class Game(Base):
     __tablename__ = "games"
     __table_args__ = {"extend_existing": True}
     
-    id = Column(Integer, primary_key=True, index=True)
-    external_game_id = Column(String, unique=True, index=True)
-    sport = Column(String, index=True)
+    id = Column(Integer, primary_key=True)
+    external_game_id = Column(String, unique=True)
+    sport = Column(String)
     
     home_team = Column(String)
     away_team = Column(String)

@@ -12,8 +12,8 @@ class APICache(Base):
     __tablename__ = "api_cache"
     __table_args__ = {"extend_existing": True}
     
-    id = Column(Integer, primary_key=True, index=True)
-    key = Column(String, unique=True, index=True)
+    id = Column(Integer, primary_key=True)
+    key = Column(String, unique=True)
     data = Column(Text)  # Store JSON as text for maximum compatibility
     source = Column(String, index=True)
     timestamp = Column(DateTime, default=datetime.datetime.utcnow)

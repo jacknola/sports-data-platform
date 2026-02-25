@@ -11,8 +11,8 @@ class Parlay(Base):
     __tablename__ = "parlays"
     __table_args__ = {"extend_existing": True}
     
-    id = Column(Integer, primary_key=True, index=True)
-    parlay_id = Column(String, unique=True, index=True)
+    id = Column(Integer, primary_key=True)
+    parlay_id = Column(String, unique=True)
     
     # Parlay metadata
     title = Column(String, index=True)  # e.g., "NBA Sunday Special"
@@ -89,7 +89,7 @@ class ParlayLeg(Base):
     __tablename__ = "parlay_legs"
     __table_args__ = {"extend_existing": True}
     
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     parlay_id = Column(String, index=True)
     
     # Leg details

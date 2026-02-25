@@ -14,15 +14,15 @@ def test_run_comparison(mock_db):
     extractor_mock = MagicMock()
     extractor_mock.fetch_historical_data.return_value = [
         {
-            "id": 1,
-            "home_team": "LAL",
-            "away_team": "GSW",
-            "home_score": 110,
-            "away_score": 105,
+            "id": i,
+            "home_team": f"TeamA_{i}",
+            "away_team": f"TeamB_{i}",
+            "home_score": 110 if i % 2 == 0 else 100,
+            "away_score": 100 if i % 2 == 0 else 110,
             "bets": [
                 {
-                    "selection_id": "bet_1",
-                    "team": "LAL",
+                    "selection_id": f"bet_{i}_1",
+                    "team": f"TeamA_{i}",
                     "market": "moneyline",
                     "current_odds": 1.9,
                     "implied_prob": 0.52,
@@ -31,8 +31,8 @@ def test_run_comparison(mock_db):
                     "edge": 0.04
                 },
                 {
-                    "selection_id": "bet_2",
-                    "team": "GSW",
+                    "selection_id": f"bet_{i}_2",
+                    "team": f"TeamB_{i}",
                     "market": "moneyline",
                     "current_odds": 2.1,
                     "implied_prob": 0.48,
@@ -41,7 +41,7 @@ def test_run_comparison(mock_db):
                     "edge": -0.02
                 }
             ]
-        }
+        } for i in range(10) # 10 games * 2 bets = 20 bets
     ]
     
     with patch("app.services.comparison_runner.DataExtractor", return_value=extractor_mock):
@@ -51,5 +51,5 @@ def test_run_comparison(mock_db):
         # Verify
         assert "bayesian" in results
         assert "random_forest" in results
-        assert results["bayesian"]["total_bets"] == 2
-        assert results["random_forest"]["total_bets"] == 2
+        assert results["bayesian"]["total_bets"] == 20
+        assert results["random_forest"]["total_bets"] == 4 # 20 * 0.2 = 4

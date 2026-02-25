@@ -11,9 +11,9 @@ class Bet(Base):
     __tablename__ = "bets"
     __table_args__ = {"extend_existing": True}
     
-    id = Column(Integer, primary_key=True, index=True)
-    selection_id = Column(String, unique=True, index=True)
-    sport = Column(String, index=True)
+    id = Column(Integer, primary_key=True)
+    selection_id = Column(String, unique=True)
+    sport = Column(String)
     game_id = Column(Integer, ForeignKey("games.id"))
     team = Column(String)
     market = Column(String)  # e.g., "moneyline", "spread", "total"

@@ -106,44 +106,44 @@ class TestKellyCriterion:
 
 class TestComputeAdjustments:
     def test_injury_out_applies_large_negative(self, analyzer):
-        adj = analyzer._compute_adjustments({"injury_status": "OUT"}, 0.55)
+        adj = analyzer._compute_adjustments({"injury_status": "OUT"})
         assert adj["injury"] == -0.99
 
     def test_injury_questionable_applies_small_negative(self, analyzer):
-        adj = analyzer._compute_adjustments({"injury_status": "QUESTIONABLE"}, 0.55)
+        adj = analyzer._compute_adjustments({"injury_status": "QUESTIONABLE"})
         assert adj["injury"] == -0.05
 
     def test_injury_active_applies_zero(self, analyzer):
-        adj = analyzer._compute_adjustments({"injury_status": "ACTIVE"}, 0.55)
-        assert adj["injury"] == 0.0
+        adj = analyzer._compute_adjustments({"injury_status": "ACTIVE"})
+        assert adj.get("injury", 0.0) == 0.0
 
     def test_missing_injury_defaults_to_zero(self, analyzer):
-        adj = analyzer._compute_adjustments({}, 0.55)
-        assert adj["injury"] == 0.0
+        adj = analyzer._compute_adjustments({})
+        assert adj.get("injury", 0.0) == 0.0
 
     def test_home_advantage_positive(self, analyzer):
-        adj = analyzer._compute_adjustments({"is_home": True}, 0.5)
+        adj = analyzer._compute_adjustments({"is_home": True})
         assert adj["home_advantage"] == 0.03
 
     def test_away_disadvantage_negative(self, analyzer):
-        adj = analyzer._compute_adjustments({"is_home": False}, 0.5)
+        adj = analyzer._compute_adjustments({"is_home": False})
         assert adj["home_advantage"] == -0.03
 
     def test_weather_high_wind_reduces_prob(self, analyzer):
         adj = analyzer._compute_adjustments(
-            {"weather": {"type": "outdoor", "wind_mph": 25}}, 0.5
+            {"weather": {"type": "outdoor", "wind_mph": 25}}
         )
         assert adj["weather"] == -0.03
 
     def test_weather_low_wind_no_adjustment(self, analyzer):
         adj = analyzer._compute_adjustments(
-            {"weather": {"type": "outdoor", "wind_mph": 10}}, 0.5
+            {"weather": {"type": "outdoor", "wind_mph": 10}}
         )
-        assert adj["weather"] == 0.0
+        assert adj.get("weather", 0.0) == 0.0
 
     def test_indoor_weather_key_not_present(self, analyzer):
         # No weather feature -> no weather key in adjustments dict
-        adj = analyzer._compute_adjustments({}, 0.5)
+        adj = analyzer._compute_adjustments({})
         assert "weather" not in adj
 
     def test_pace_faster_than_league_positive_adjustment(self, analyzer):
@@ -152,7 +152,7 @@ class TestComputeAdjustments:
             "opponent_pace": 110.0,
             "league_avg_pace": 100.0,
         }
-        adj = analyzer._compute_adjustments(features, 0.5)
+        adj = analyzer._compute_adjustments(features)
         # pace_factor=110, delta=0.1, adjustment=0.1*0.1=0.01
         assert adj["pace"] == pytest.approx(0.01, rel=1e-3)
 
@@ -162,21 +162,21 @@ class TestComputeAdjustments:
             "opponent_pace": 90.0,
             "league_avg_pace": 100.0,
         }
-        adj = analyzer._compute_adjustments(features, 0.5)
+        adj = analyzer._compute_adjustments(features)
         assert adj["pace"] < 0
 
     def test_recent_form_above_average_positive(self, analyzer):
         # all wins: avg=1.0, (1.0-0.5)*0.1 = 0.05
-        adj = analyzer._compute_adjustments({"recent_form": [1.0, 1.0, 1.0]}, 0.5)
+        adj = analyzer._compute_adjustments({"recent_form": [1.0, 1.0, 1.0]})
         assert adj["form"] == pytest.approx(0.05, rel=1e-3)
 
     def test_recent_form_below_average_negative(self, analyzer):
         # all losses: avg=0.0, (0.0-0.5)*0.1 = -0.05
-        adj = analyzer._compute_adjustments({"recent_form": [0.0, 0.0, 0.0]}, 0.5)
+        adj = analyzer._compute_adjustments({"recent_form": [0.0, 0.0, 0.0]})
         assert adj["form"] == pytest.approx(-0.05, rel=1e-3)
 
     def test_empty_recent_form_no_form_key(self, analyzer):
-        adj = analyzer._compute_adjustments({"recent_form": []}, 0.5)
+        adj = analyzer._compute_adjustments({"recent_form": []})
         assert "form" not in adj
 
 

@@ -160,6 +160,10 @@ class NBAMLPredictor:
                 "method": "ml_xgboost"
                 if XGBOOST_AVAILABLE and "moneyline" in self.models
                 else "placeholder",
+                "spread": {},
+                "total": {},
+                "book": "",
+                "features": features,
             }
 
         except Exception as e:
@@ -168,6 +172,13 @@ class NBAMLPredictor:
 
     def _prepare_features(self, features: Dict[str, Any]) -> pd.DataFrame:
         """Prepare features for ML model input"""
+        # Convert recent form list to a win rate scalar to avoid XGBoost object error
+        h_form = features.get("home_recent_form", [1, 1, 1, 0, 1])
+        a_form = features.get("away_recent_form", [1, 1, 0, 1, 0])
+        
+        h_win_rate = sum(h_form) / len(h_form) if h_form else 0.5
+        a_win_rate = sum(a_form) / len(a_form) if a_form else 0.5
+
         feature_dict = {
             "home_off_rating": features.get("home_off_rating", 110.0),
             "home_def_rating": features.get("home_def_rating", 110.0),
@@ -175,13 +186,16 @@ class NBAMLPredictor:
             "away_def_rating": features.get("away_def_rating", 110.0),
             "home_win_pct": features.get("home_win_pct", 0.5),
             "away_win_pct": features.get("away_win_pct", 0.5),
-            "home_recent_form": features.get("home_recent_form", [1, 1, 1, 0, 1]),
-            "away_recent_form": features.get("away_recent_form", [1, 1, 0, 1, 0]),
+            "home_win_rate_last_5": h_win_rate,
+            "away_win_rate_last_5": a_win_rate,
             "home_pace": features.get("home_pace", 100.0),
             "away_pace": features.get("away_pace", 100.0),
         }
 
-        return pd.DataFrame([feature_dict])
+        # Select ONLY the columns the model was trained on
+        model_cols = ["home_off_rating", "home_def_rating", "away_off_rating", "away_def_rating", "home_win_pct", "away_win_pct"]
+        df = pd.DataFrame([feature_dict])
+        return df[model_cols]
 
     def _predict_moneyline(self, features: pd.DataFrame) -> Dict[str, Any]:
         """Predict moneyline winner"""
@@ -190,13 +204,13 @@ class NBAMLPredictor:
             try:
                 # Get prediction
                 pred = model.predict_proba(features)[0]
-                winner_prob = pred[1]  # Assuming 1 is home win
+                winner_prob = float(pred[1])  # Assuming 1 is home win
 
                 return {
                     "winner": "home" if winner_prob > 0.5 else "away",
                     "home_win_prob": winner_prob,
-                    "away_win_prob": 1 - winner_prob,
-                    "confidence": abs(winner_prob - 0.5) * 2,  # 0 to 1 scale
+                    "away_win_prob": 1.0 - winner_prob,
+                    "confidence": float(abs(winner_prob - 0.5) * 2),  # 0 to 1 scale
                 }
             except Exception as e:
                 logger.error(f"Moneyline prediction error: {e}")
@@ -243,13 +257,13 @@ class NBAMLPredictor:
             model = self.models["underover"]
             try:
                 pred = model.predict(features)[0]
-                prob = model.predict_proba(features)[0]
+                total_proj = float(pred)
 
                 return {
-                    "total_points": pred,
-                    "over_prob": prob[1] if len(prob) > 1 else 0.5,
-                    "under_prob": prob[0] if len(prob) > 1 else 0.5,
-                    "recommendation": "over" if prob[1] > 0.5 else "under",
+                    "total_points": total_proj,
+                    "over_prob": 0.5, # Placeholder since regressor has no prob
+                    "under_prob": 0.5,
+                    "recommendation": "neutral",
                 }
             except Exception as e:
                 logger.error(f"Under/over prediction error: {e}")
@@ -375,6 +389,33 @@ class NBAMLPredictor:
 
         # 2. Fetch Live Odds for enrichment
         odds_data = await self.sports_api.get_odds("basketball_nba")
+
+        if not odds_data:
+            logger.warning("NBA: Odds API returned no games. Attempting emergency discovery via Scrape...")
+            try:
+                from run_tomorrow_slate import scrape_action_network
+                scraped_games = await scrape_action_network("nba")
+                if scraped_games:
+                    # Transform scraped games to look like Odds API objects
+                    odds_data = []
+                    for sg in scraped_games:
+                        odds_data.append({
+                            "id": f"SCRAPE_{sg['home']}_{sg['time']}",
+                            "home_team": sg['home'],
+                            "away_team": sg['away'],
+                            "commence_time": sg['time'],
+                            "bookmakers": [{
+                                "key": "action_consensus",
+                                "title": "Action Consensus",
+                                "markets": [
+                                    {"key": "spreads", "outcomes": [{"name": sg['home'], "point": sg['spread'] or 0}]},
+                                    {"key": "totals", "outcomes": [{"name": "Over", "point": sg['total'] or 0}]}
+                                ]
+                            }]
+                        })
+                    logger.info(f"Emergency discovery: {len(odds_data)} games via Action Network scrape")
+            except Exception as e:
+                logger.error(f"Emergency discovery failed: {e}")
 
         games = []
 
