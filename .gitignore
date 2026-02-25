@@ -85,3 +85,6 @@ gha-creds-*.json
 # Cloned external repos in mcp-servers/
 mcp-servers/postgres/
 mcp-servers/examples/
+
+# Large binaries
+toolbox
