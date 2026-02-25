@@ -4,7 +4,7 @@
 
 This phase focuses on ensuring that model predictions are always generated and correctly formatted for export, regardless of live odds API availability.
 
-- [ ] Task: Update NBAMLPredictor to ensure robust data output
+- [x] Task: Update NBAMLPredictor to ensure robust data output [f830795]
     - [ ] Analyze `backend/app/services/nba_ml_predictor.py` for potential data type or formatting inconsistencies before output.
     - [ ] Implement explicit type casting (e.g., to standard Python floats) for all numerical model outputs to prevent JSON serialization errors during export.
     - [ ] Ensure all relevant prediction data (ML, Spread, Totals, Features) is consistently structured in the output of `predict_today_games`.
