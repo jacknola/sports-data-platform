@@ -30,10 +30,6 @@ This phase focuses on refining the formatting and ensuring comprehensive data di
 
 This phase ensures player prop predictions are consistently generated and exported when available.
 
-- [ ] Task: Ensure Player Prop predictions are generated and passed to export
-    - [ ] Verify that `_run_props` in `backend/export_to_sheets.py` correctly fetches player prop data and that `run_prop_analysis` is robust to API failures.
-    - [ ] Ensure player prop data is included in `nba_predictions` or a separate structure for `export_nba` and potentially the new `ML Predictions` tab.
-- [ ] Task: Update Google Sheets export for Player Props
-    - [ ] Modify `backend/app/services/google_sheets.py`'s `export_nba` or `export_ml_predictions` (or create a new dedicated `export_props_ml` method) to include player prop predictions alongside ML and Spread data.
-    - [ ] Define appropriate formatting and headers for player prop data within the target tab(s).
-- [ ] Task: Conductor - User Manual Verification 'Player Prop Prediction Integration' (Protocol in workflow.md)
+- [x] Task: Ensure Player Prop predictions are generated and passed to export [7f89eb6]
+- [x] Task: Update Google Sheets export for Player Props [7f89eb6]
+- [x] Task: Conductor - User Manual Verification 'Player Prop Prediction Integration' (Protocol in workflow.md) [7f89eb6]
