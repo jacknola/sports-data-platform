@@ -8,7 +8,7 @@ This phase focuses on ensuring that model predictions are always generated and c
     - [ ] Analyze `backend/app/services/nba_ml_predictor.py` for potential data type or formatting inconsistencies before output.
     - [ ] Implement explicit type casting (e.g., to standard Python floats) for all numerical model outputs to prevent JSON serialization errors during export.
     - [ ] Ensure all relevant prediction data (ML, Spread, Totals, Features) is consistently structured in the output of `predict_today_games`.
-- [ ] Task: Implement graceful degradation for Odds API in NBAMLPredictor
+- [x] Task: Implement graceful degradation for Odds API in NBAMLPredictor [16072e9]
     - [ ] Modify `backend/app/services/nba_ml_predictor.py`'s `predict_today_games` to explicitly check for `odds_data` availability.
     - [ ] If `odds_data` is unavailable or empty from primary API, ensure fallback to `scrape_action_network` for game discovery and populate with default/estimated odds for prediction.
     - [ ] Ensure the `features` dictionary is fully populated with sensible defaults when actual API odds are missing, to avoid model input errors.
