@@ -22,15 +22,9 @@ This phase focuses on ensuring that model predictions are always generated and c
 
 This phase focuses on refining the formatting and ensuring comprehensive data display in the existing 'NBA' and 'NCAAB' tabs.
 
-- [ ] Task: Review and update 'NBA' tab formatting
-    - [ ] Modify `backend/app/services/google_sheets.py`'s `export_nba` method to align column headers and data order with the desired clean format specified in Acceptance Criteria 2.3.
-    - [ ] Ensure ML, Spread, and Player Prop predictions are clearly visible and correctly mapped from the `nba_predictions` data.
-    - [ ] Verify that relevant historical context (if available) is included.
-- [ ] Task: Review and update 'NCAAB' tab formatting
-    - [ ] Modify `backend/app/services/google_sheets.py`'s `export_ncaab` method to align column headers and data order with the desired clean format.
-    - [ ] Ensure ML and Spread predictions are clearly visible and correctly mapped from the `ncaab_data`.
-    - [ ] Verify that relevant historical context (if available) is included.
-- [ ] Task: Conductor - User Manual Verification 'Improve Existing Tab Formatting and Data Completeness' (Protocol in workflow.md)
+- [x] Task: Review and update 'NBA' tab formatting [343e7a3]
+- [x] Task: Review and update 'NCAAB' tab formatting [343e7a3]
+- [x] Task: Conductor - User Manual Verification 'Improve Existing Tab Formatting and Data Completeness' (Protocol in workflow.md) [343e7a3]
 
 ### Phase 3: Player Prop Prediction Integration
 
