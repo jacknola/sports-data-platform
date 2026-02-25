@@ -346,8 +346,19 @@ async def get_live_ncaab_games(team_stats: Optional[Dict[str, Any]] = None) -> T
                     )
                     continue
 
-                ticket_pct, money_pct = estimate_public_splits(spread_val)
-                
+                game_id = f"NCAAB_{matched_odds.get('id', espn_game.get('espn_id', ''))}"
+                # Try to get real public percentages from SportsGameOdds
+                api = SportsAPIService()
+                public_data = await api.sports_game_odds.get_public_percentages(game_id)
+
+                if public_data:
+                    ticket_pct = public_data.get("home_ticket_pct", 0.50)
+                    money_pct = public_data.get("home_money_pct", 0.50)
+                    logger.info(f"Using REAL public splits for {game_id}: {ticket_pct:.0%}/{money_pct:.0%}")
+                else:
+                    ticket_pct, money_pct = estimate_public_splits(spread_val)
+                    logger.debug(f"Using estimated public splits for {game_id}")
+
                 # Extract efficiency stats for display
                 h_stats = None
                 a_stats = None
@@ -368,7 +379,6 @@ async def get_live_ncaab_games(team_stats: Optional[Dict[str, Any]] = None) -> T
                     team_stats
                 )
 
-                game_id = f"NCAAB_{matched_odds.get('id', espn_game.get('espn_id', ''))}"
                 cached = get_or_set_open_line(
                     game_id, "spread", spread_val,
                     current_odds=spreads["pinnacle_home_odds"],
@@ -409,7 +419,17 @@ async def get_live_ncaab_games(team_stats: Optional[Dict[str, Any]] = None) -> T
             if spread_val == 0.0:
                 continue
 
-            ticket_pct, money_pct = estimate_public_splits(spread_val)
+            # Try to get real public percentages from SportsGameOdds
+            api = SportsAPIService()
+            public_data = await api.sports_game_odds.get_public_percentages(game_id)
+            
+            if public_data:
+                ticket_pct = public_data.get("home_ticket_pct", 0.50)
+                money_pct = public_data.get("home_money_pct", 0.50)
+                logger.info(f"Using REAL public splits for {game_id}: {ticket_pct:.0%}/{money_pct:.0%}")
+            else:
+                ticket_pct, money_pct = estimate_public_splits(spread_val)
+                logger.debug(f"Using estimated public splits for {game_id}")
             
             # Extract efficiency stats for display
             h_stats = None

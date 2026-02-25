@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   TrendingUp,
-  TrendingDown,
   AlertTriangle,
   Activity,
   DollarSign,
@@ -49,6 +48,7 @@ interface EdgeBet {
   sharp_confirmed: boolean
   sharp_signals: string[][]
   composite_score: number
+  market_implied_prob?: number
 }
 
 interface DashboardSummary {
@@ -269,7 +269,7 @@ export default function CollegeBasketball() {
   // Summary
   const summaryQuery = useQuery<DashboardSummary>({
     queryKey: ['cbb-summary'],
-    queryFn: () => api.get('/v1/cbb/summary').then((r) => r.data),
+    queryFn: () => api.get<DashboardSummary>('/api/v1/cbb/summary'),
     refetchInterval: 60_000,
   })
 
@@ -277,9 +277,9 @@ export default function CollegeBasketball() {
   const bestBetsQuery = useQuery<{ bets: EdgeBet[]; total_best_bets: number }>({
     queryKey: ['cbb-best-bets', minEdge, minSharpScore],
     queryFn: () =>
-      api
-        .get('/v1/cbb/best-bets', { params: { min_edge: minEdge, min_sharp_score: minSharpScore, limit: 20 } })
-        .then((r) => r.data),
+      api.get<{ bets: EdgeBet[]; total_best_bets: number }>('/api/v1/cbb/best-bets', {
+        params: { min_edge: minEdge, min_sharp_score: minSharpScore, limit: 20 },
+      }),
     refetchInterval: 90_000,
     enabled: activeTab === 'best-bets',
   })
@@ -288,7 +288,9 @@ export default function CollegeBasketball() {
   const sharpQuery = useQuery<{ signals: SharpSignal[]; total_signals: number }>({
     queryKey: ['cbb-sharp', minSharpScore],
     queryFn: () =>
-      api.get('/v1/cbb/sharp', { params: { min_score: minSharpScore } }).then((r) => r.data),
+      api.get<{ signals: SharpSignal[]; total_signals: number }>('/api/v1/cbb/sharp', {
+        params: { min_score: minSharpScore },
+      }),
     refetchInterval: 60_000,
     enabled: activeTab === 'sharp-signals',
   })
@@ -297,7 +299,9 @@ export default function CollegeBasketball() {
   const edgeQuery = useQuery<{ bets: EdgeBet[]; total_positive_ev_bets: number }>({
     queryKey: ['cbb-edge', minEdge],
     queryFn: () =>
-      api.get('/v1/cbb/edge', { params: { min_edge: minEdge } }).then((r) => r.data),
+      api.get<{ bets: EdgeBet[]; total_positive_ev_bets: number }>('/api/v1/cbb/edge', {
+        params: { min_edge: minEdge },
+      }),
     refetchInterval: 90_000,
     enabled: activeTab === 'edge',
   })

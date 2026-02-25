@@ -4,16 +4,17 @@ import { api } from '../utils/api'
 import ActionCard from '../components/ActionCard'
 import AgentStatus from '../components/AgentStatus'
 import QuickStats from '../components/QuickStats'
+import type { AgentStatusResponse, BetItem } from '../types/api'
 
 export default function Dashboard() {
-  const { data: agentStatus, isLoading: agentsLoading } = useQuery({
+  const { data: agentStatus } = useQuery({
     queryKey: ['agent-status'],
-    queryFn: () => api.get('/api/v1/agents/status'),
+    queryFn: () => api.get<AgentStatusResponse>('/api/v1/agents/status'),
   })
-  
+
   const { data: bets, isLoading: betsLoading } = useQuery({
     queryKey: ['best-bets'],
-    queryFn: () => api.get('/api/v1/bets'),
+    queryFn: () => api.get<BetItem[]>('/api/v1/bets'),
   })
   
   return (

@@ -28,6 +28,9 @@ yarn.lock
 .env.local
 .env.*.local
 
+# Claude local overrides (personal, not shared)
+.claude.local.md
+
 # IDE
 .vscode/
 .idea/

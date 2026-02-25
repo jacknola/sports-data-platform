@@ -1,11 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
-import { Bot, Activity, AlertCircle, CheckCircle2, Target } from 'lucide-react'
+import { Bot, Activity, AlertCircle, Target } from 'lucide-react'
 import { api } from '../utils/api'
+import type { AgentStatusResponse } from '../types/api'
 
 export default function Agents() {
   const { data: agentStatus, isLoading } = useQuery({
     queryKey: ['agent-status'],
-    queryFn: () => api.get('/api/v1/agents/status'),
+    queryFn: () => api.get<AgentStatusResponse>('/api/v1/agents/status'),
   })
   
   return (

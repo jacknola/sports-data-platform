@@ -96,6 +96,18 @@ python telegram_cron.py          # scheduled cron runner
 python telegram_interactive.py   # interactive bot mode
 ```
 
+### Other backend scripts
+```bash
+cd backend
+python train_nba_model.py          # train/retrain XGBoost NBA model → backend/models/nba_ml/
+python run_backfill_pipeline.py    # full historical data backfill
+python run_ncaab_backfill.py       # NCAAB historical data backfill
+python run_model_comparison.py     # compare ML model performance
+python export_to_sheets.py         # export data to Google Sheets
+python run_prop_export.py          # export player props data
+python send_slack_report.py        # send betting report to Slack
+```
+
 API docs available at `http://localhost:8000/docs`.
 
 ---
@@ -118,6 +130,9 @@ API docs available at `http://localhost:8000/docs`.
 | `OPENAI_API_KEY` | OpenAI for agent reasoning | Optional |
 | `HUGGINGFACE_API_KEY` | HF inference API | Optional |
 | `GOOGLE_SERVICE_ACCOUNT_PATH` + `GOOGLE_SPREADSHEET_ID` | Google Sheets export | Optional |
+| `SPORTS_GAME_ODDS_API_KEY` | SportsGameOdds API key | Optional |
+| `QDRANT_HOST` + `QDRANT_PORT` + `QDRANT_API_KEY` | Qdrant vector DB connection | For vector search |
+| `SLACK_WEBHOOK_URL` | Slack webhook for reports | Optional |
 
 All API keys are optional – missing keys cause services to fall back to mock/demo data rather than crashing.
 
@@ -177,10 +192,36 @@ All API keys are optional – missing keys cause services to fall back to mock/d
 | Service | Purpose |
 |---|---|
 | `sports_api.py` | Sports data API client |
+| `sports_game_odds.py` | SportsGameOdds API client |
 | `google_sheets.py` | Google Sheets read/write |
 | `supabase_service.py` | Supabase data storage |
 | `gemini_service.py` | Google Gemini AI integration |
 | `twitter_analyzer.py` | Twitter sentiment analysis |
+| `slack_service.py` | Slack notifications |
+| `web_scraper.py` | Web scraping utilities |
+
+### Vector Search & RAG
+| Service | Purpose |
+|---|---|
+| `vector_store.py` | Qdrant vector store operations |
+| `similarity_search.py` | Find similar historical games/players |
+| `rag_pipeline.py` | Retrieval-augmented generation pipeline |
+| `ncaab_vector_backfill.py` | NCAAB vector embedding backfill |
+| `player_vector_backfill.py` | Player vector embedding backfill |
+| `feature_engineering.py` | ML feature extraction and transformation |
+
+### Backfill & Model Training
+| Service | Purpose |
+|---|---|
+| `nba_backfill.py` | NBA historical data backfill |
+| `ncaab_backfill.py` | NCAAB historical data backfill |
+| `player_backfill.py` | Player historical data backfill |
+| `nba_stats_service.py` | NBA stats data fetching |
+| `ncaab_stats_service.py` | NCAAB stats data fetching |
+| `random_forest_model.py` | Random Forest model (alternative to XGBoost) |
+| `evaluation_metrics.py` | Model evaluation and scoring |
+| `game_profiler.py` | Game feature profiling |
+| `player_profiler.py` | Player feature profiling |
 
 ### Agents (`backend/app/agents/`)
 | Agent | Purpose |
@@ -193,6 +234,7 @@ All API keys are optional – missing keys cause services to fall back to mock/d
 | `expert_agent.py` | Expert reasoning |
 | `scraping_agent.py` | Web scraping |
 | `twitter_agent.py` | Twitter data |
+| `ncaab_dvp_agent.py` | NCAAB Defense vs Position agent |
 
 ---
 
@@ -255,6 +297,17 @@ pytest -v
 cd frontend
 npm run build   # catches TypeScript errors
 ```
+
+---
+
+## Gotchas
+
+- All API keys are optional — services fall back to mock/demo data when keys are missing (won't crash)
+- Qdrant vector DB is required for vector search features but is **not** in the default `docker-compose.yml` — run it separately or disable RAG features
+- `backend/models/nba_ml/` contains trained model artifacts — do not delete; re-run `train_nba_model.py` to regenerate
+- Frontend proxies `/api` → backend — if API calls fail locally, check `vite.config.ts` proxy config
+- `backend/venv/` is gitignored but required; recreate with `python -m venv venv && pip install -r requirements.txt`
+- The `sports_api.py` service will use demo/mock data if no API keys are set — useful for local dev without keys
 
 ---
 

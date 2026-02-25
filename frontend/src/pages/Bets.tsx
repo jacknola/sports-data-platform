@@ -1,11 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
 import { TrendingUp, Target, AlertCircle, CheckCircle2, DollarSign } from 'lucide-react'
 import { api } from '../utils/api'
+import type { BetItem } from '../types/api'
 
 export default function Bets() {
   const { data: bets, isLoading } = useQuery({
     queryKey: ['best-bets'],
-    queryFn: () => api.get('/api/v1/bets'),
+    queryFn: () => api.get<BetItem[]>('/api/v1/bets'),
   })
   
   return (
