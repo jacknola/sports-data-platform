@@ -16,7 +16,7 @@ This phase focuses on ensuring that model predictions are always generated and c
     - [ ] Define the `headers` for the 'ML Predictions' tab based on `spec.md`'s Acceptance Criteria 4.1.
     - [ ] Implement `export_ml_predictions` method in `backend/app/services/google_sheets.py` to write the raw model outputs (Matchup, Winner Prob %, Fair Odds, Proj Total, Proj Spread, Features) to this new tab.
     - [ ] Ensure `export_daily_picks` calls `export_ml_predictions` with the relevant data.
-- [ ] Task: Conductor - User Manual Verification 'Enhance Model Prediction Robustness & Output Formatting' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Enhance Model Prediction Robustness & Output Formatting' (Protocol in workflow.md) [de7e56e]
 
 ### Phase 2: Improve Existing Tab Formatting and Data Completeness
 
