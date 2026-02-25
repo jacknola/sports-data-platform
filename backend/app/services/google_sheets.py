@@ -381,6 +381,7 @@ class GoogleSheetsService:
                 "Away AdjOE", "Away AdjDE",
                 "BPI Home", "BPI Away",
                 "Pick", "Kelly %", "Bet Size",
+                "Confidence", "Historical Context",
             ]
 
             today = datetime.now().strftime("%Y-%m-%d")
@@ -409,6 +410,11 @@ class GoogleSheetsService:
                 # Find bet for this game
                 bet = bets_lookup.get(gid + "_HOME") or bets_lookup.get(
                     gid + "_AWAY", {}
+                )
+
+                confidence = a.get("confidence_level", "SPECULATIVE")
+                historical = "; ".join(
+                    s.get("game", "")[:60] for s in a.get("historical_context", [])[:2]
                 )
 
                 rows.append([
@@ -440,6 +446,8 @@ class GoogleSheetsService:
                     bet.get("side", "") if bet else "",
                     round(bet.get("portfolio_fraction_pct", 0), 2) if bet else "",
                     round(bet.get("bet_size_$", 0), 2) if bet else "",
+                    confidence,
+                    historical or "No historical data",
                 ])
 
             written = self._batch_write(ws, headers, rows)
@@ -549,6 +557,12 @@ class GoogleSheetsService:
             )
 
         if ncaab_data and ncaab_data.get("game_analyses"):
+            qdrant_used = any(
+                ga.get("qdrant_retrieved", False)
+                for ga in (ncaab_data.get("game_analyses") or [])
+            )
+            if qdrant_used:
+                logger.info("Qdrant context present — including historical context in Sheets export")
             results["ncaab"] = self.export_ncaab(spreadsheet_id, ncaab_data)
 
         results["summary"] = self.export_summary(

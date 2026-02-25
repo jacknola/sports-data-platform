@@ -300,6 +300,12 @@ npm run build   # catches TypeScript errors
 
 ---
 
+## Research Tools
+
+- **NotebookLM** — important research tool for deep-diving docs, papers, or datasets; use for synthesis/Q&A over uploaded sources
+
+---
+
 ## Gotchas
 
 - All API keys are optional — services fall back to mock/demo data when keys are missing (won't crash)
@@ -308,6 +314,8 @@ npm run build   # catches TypeScript errors
 - Frontend proxies `/api` → backend — if API calls fail locally, check `vite.config.ts` proxy config
 - `backend/venv/` is gitignored but required; recreate with `python -m venv venv && pip install -r requirements.txt`
 - The `sports_api.py` service will use demo/mock data if no API keys are set — useful for local dev without keys
+- `_parse_bookmaker_spreads()` only parses `spreads` + `totals` markets — does NOT parse `h2h`; `pinnacle_home_odds` in its result = spread pricing (-110 typical), not actual moneyline odds
+- Services in `app/services/` often expose functionality only as class methods — add a module-level wrapper if you need a direct import (e.g. `SimilaritySearchService.find_similar_games`)
 
 ---
 

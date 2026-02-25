@@ -40,6 +40,7 @@ from app.services.multivariate_kelly import (
 from app.services.bet_tracker import BetTracker
 from app.services.open_line_cache import get_or_set_open_line
 from app.services.ncaab_stats_service import NCAABStatsService
+from app.services.similarity_search import find_similar_games
 
 # ============================================================================
 # TONIGHT'S NCAAB SLATE
@@ -48,6 +49,31 @@ from app.services.ncaab_stats_service import NCAABStatsService
 TONIGHT_GAMES = []
 
 BANKROLL = 25.0
+
+
+# ============================================================================
+# Helpers
+# ============================================================================
+
+
+def american_to_prob(american_odds: int) -> float:
+    """Convert American odds to implied probability (no vig removal)."""
+    if american_odds > 0:
+        return 100.0 / (american_odds + 100.0)
+    return abs(american_odds) / (abs(american_odds) + 100.0)
+
+
+def compute_confidence(edge: float, signal_confidence: float, blended_prob: float) -> str:
+    """Composite confidence: edge + signal strength + model certainty."""
+    model_certainty = abs(blended_prob - 0.5) * 2  # 0 = coin flip, 1 = certain
+    composite = (edge * 0.5) + (signal_confidence * 0.3) + (model_certainty * 0.2)
+    if composite >= 0.12:
+        return "HIGH"
+    if composite >= 0.07:
+        return "MEDIUM"
+    if composite >= 0.03:
+        return "LOW"
+    return "SPECULATIVE"
 
 
 # ============================================================================
@@ -340,11 +366,17 @@ async def get_live_ncaab_games(team_stats: Optional[Dict[str, Any]] = None) -> T
                 spread_val = spreads["spread"]
 
                 if spread_val == 0.0:
-                    # No spread market found — estimate from moneylines or skip
-                    logger.debug(
-                        f"No spread market for {away} @ {home}, skipping odds enrichment"
-                    )
-                    continue
+                    logger.debug(f"No spread market for {away} @ {home} — using moneyline-implied prob")
+                    # Derive spread-equivalent from moneylines (pinnacle odds on spread market)
+                    ml_home = spreads.get("pinnacle_home_odds")
+                    ml_away = spreads.get("pinnacle_away_odds")
+                    if ml_home and ml_away:
+                        p_home = american_to_prob(ml_home)
+                        p_away = american_to_prob(ml_away)
+                        total_p = p_home + p_away
+                        spread_val = round((0.5 - p_home / total_p) * 15.0, 1)  # ML-implied spread estimate
+                    else:
+                        spread_val = 0.0  # Still unknown but don't skip — fall through with 50/50
 
                 game_id = f"NCAAB_{matched_odds.get('id', espn_game.get('espn_id', ''))}"
                 # Try to get real public percentages from SportsGameOdds
@@ -417,12 +449,21 @@ async def get_live_ncaab_games(team_stats: Optional[Dict[str, Any]] = None) -> T
             spread_val = spreads["spread"]
 
             if spread_val == 0.0:
-                continue
+                logger.debug(f"No spread market for {away} @ {home} — using moneyline-implied prob")
+                ml_home = spreads.get("pinnacle_home_odds")
+                ml_away = spreads.get("pinnacle_away_odds")
+                if ml_home and ml_away:
+                    p_home = american_to_prob(ml_home)
+                    p_away = american_to_prob(ml_away)
+                    total_p = p_home + p_away
+                    spread_val = round((0.5 - p_home / total_p) * 15.0, 1)  # ML-implied spread estimate
+                else:
+                    spread_val = 0.0  # Still unknown but don't skip — fall through with 50/50
 
             # Try to get real public percentages from SportsGameOdds
             api = SportsAPIService()
             public_data = await api.sports_game_odds.get_public_percentages(game_id)
-            
+
             if public_data:
                 ticket_pct = public_data.get("home_ticket_pct", 0.50)
                 money_pct = public_data.get("home_money_pct", 0.50)
@@ -430,7 +471,7 @@ async def get_live_ncaab_games(team_stats: Optional[Dict[str, Any]] = None) -> T
             else:
                 ticket_pct, money_pct = estimate_public_splits(spread_val)
                 logger.debug(f"Using estimated public splits for {game_id}")
-            
+
             # Extract efficiency stats for display
             h_stats = None
             a_stats = None
@@ -627,6 +668,22 @@ def run_analysis() -> Dict[str, Any]:
         if away_edge > 0.025:
             opportunities.append(away_opp)
 
+        # Qdrant: find similar historical games for context
+        best_edge = max(home_edge, away_edge)
+        best_prob = blended_home_prob if home_edge >= away_edge else blended_away_prob
+        confidence_level = compute_confidence(best_edge, signal_confidence, best_prob)
+        try:
+            similar = find_similar_games(game_data=game, limit=3)
+            historical_context = [
+                {"game": s.get("description", ""), "outcome": s.get("home_score", ""), "date": s.get("date", "")}
+                for s in similar
+            ]
+            qdrant_retrieved = True
+        except Exception as e:
+            logger.debug(f"Qdrant similarity search failed for {game['game_id']}: {e}")
+            historical_context = []
+            qdrant_retrieved = False
+
         game_analyses.append(
             {
                 "game": game,
@@ -641,6 +698,9 @@ def run_analysis() -> Dict[str, Any]:
                 "signal_confidence": signal_confidence,
                 "home_opp": home_opp,
                 "away_opp": away_opp,
+                "confidence_level": confidence_level,
+                "historical_context": historical_context,
+                "qdrant_retrieved": qdrant_retrieved,
             }
         )
 

@@ -445,6 +445,12 @@ def run_sheets_export_pipeline(
             if isinstance(r, dict) and r.get("status") == "success"
         )
         logger.info(f"Google Sheets export: {tabs_ok}/{len(result)} tabs written")
+
+        qdrant_games = sum(
+            1 for ga in (ncaab_data or {}).get("game_analyses", [])
+            if ga.get("qdrant_retrieved")
+        )
+        logger.info(f"Sheets export complete — {qdrant_games} games enriched with Qdrant context")
         return result
 
     except Exception as e:

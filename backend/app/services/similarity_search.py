@@ -6,6 +6,12 @@ from app.services.game_profiler import GameProfiler
 from app.services.vector_store import VectorStoreService
 from loguru import logger
 
+def find_similar_games(game_data: Dict[str, Any], limit: int = 5) -> List[Dict[str, Any]]:
+    """Module-level convenience wrapper around SimilaritySearchService.find_similar_games."""
+    service = SimilaritySearchService()
+    return service.find_similar_games(game_data, limit=limit)
+
+
 class SimilaritySearchService:
     """
     Service for identifying historical games similar to current scenarios.
