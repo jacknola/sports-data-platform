@@ -12,7 +12,7 @@ This phase focuses on ensuring that model predictions are always generated and c
     - [ ] Modify `backend/app/services/nba_ml_predictor.py`'s `predict_today_games` to explicitly check for `odds_data` availability.
     - [ ] If `odds_data` is unavailable or empty from primary API, ensure fallback to `scrape_action_network` for game discovery and populate with default/estimated odds for prediction.
     - [ ] Ensure the `features` dictionary is fully populated with sensible defaults when actual API odds are missing, to avoid model input errors.
-- [ ] Task: Create new 'ML Predictions' tab in Google Sheets
+- [x] Task: Create new 'ML Predictions' tab in Google Sheets [fccbc49]
     - [ ] Define the `headers` for the 'ML Predictions' tab based on `spec.md`'s Acceptance Criteria 4.1.
     - [ ] Implement `export_ml_predictions` method in `backend/app/services/google_sheets.py` to write the raw model outputs (Matchup, Winner Prob %, Fair Odds, Proj Total, Proj Spread, Features) to this new tab.
     - [ ] Ensure `export_daily_picks` calls `export_ml_predictions` with the relevant data.
