@@ -4,5 +4,5 @@ This file tracks all major tracks for the project. Each track has its own detail
 
 ---
 
-- [ ] **Track: Improve Sheet Export & Ensure Model Predictions**
+- [x] **Track: Improve Sheet Export & Ensure Model Predictions**
 *Link: [./tracks/sheets_export_predictions_20260225/](./tracks/sheets_export_predictions_20260225/)*
