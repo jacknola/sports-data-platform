@@ -32,7 +32,6 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-import httpx
 import numpy as np
 from loguru import logger
 
@@ -129,13 +128,14 @@ class SharpMoneyTracker:
     Detects sharp money signals in NCAAB betting markets.
     """
 
-    BASE_URL = "https://api.the-odds-api.com/v4"
-
     def __init__(self) -> None:
         self.api_key: Optional[str] = (
             getattr(settings, "THE_ODDS_API_KEY", None)
             or getattr(settings, "ODDSAPI_API_KEY", None)
         )
+        # Delegate odds fetching to SportsAPIService (handles caching + SGO fallback)
+        from app.services.sports_api import SportsAPIService
+        self._sports_api = SportsAPIService()
         # In-memory line snapshot cache: game_id -> snapshot at fetch time
         self._line_snapshots: Dict[str, Dict] = {}
 
@@ -595,23 +595,11 @@ class SharpMoneyTracker:
     # ------------------------------------------------------------------
 
     async def _fetch_current_odds(self) -> List[Dict]:
-        if not self.api_key:
-            return []
-        params = {
-            "apiKey": self.api_key,
-            "regions": "us",
-            "markets": "h2h,spreads",
-            "oddsFormat": "american",
-        }
-        try:
-            async with httpx.AsyncClient(timeout=20.0) as client:
-                url = f"{self.BASE_URL}/sports/{NCAAB_SPORT_KEY}/odds"
-                resp = await client.get(url, params=params)
-                resp.raise_for_status()
-                return resp.json()
-        except Exception as exc:
-            logger.error(f"Sharp tracker fetch error: {exc}")
-            return []
+        """Fetch NCAAB odds via SportsAPIService (handles caching + SGO fallback)."""
+        return await self._sports_api.get_odds(
+            sport=NCAAB_SPORT_KEY,
+            markets="h2h,spreads",
+        )
 
     # ------------------------------------------------------------------
     # Mock data

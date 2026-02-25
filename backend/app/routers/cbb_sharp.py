@@ -43,7 +43,7 @@ async def get_cbb_games(
         return {
             "sport": "NCAAB",
             "total_games": len(games),
-            "data_source": "the_odds_api" if edge_calc.api_key else "mock_data",
+            "data_source": "live_api" if edge_calc.has_live_data_source else "mock_data",
             "games": games,
         }
     except Exception as exc:

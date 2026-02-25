@@ -77,6 +77,7 @@ class FetchResult:
             "cached": "[CACHED]",
             "cached_db": "[DB CACHE]",
             "stale_cache": "[STALE CACHE]",
+            "sportsgameodds_live": "[LIVE - SportsGameOdds]",
             "fallback": "[FALLBACK]",
         }
         self.source_label = labels.get(self.source, f"[{self.source.upper()}]")
@@ -188,6 +189,11 @@ class PersistentCache:
 # Module-level singletons so cache persists across calls within a process
 _cache = TTLCache(default_ttl=300)  # 5 minute default
 _db_cache = PersistentCache(default_ttl=3600)  # 1 hour default
+
+# Odds API exhaustion tracking (shared across instances like _cache)
+_odds_api_exhausted: bool = False
+_odds_api_exhausted_at: float = 0.0  # timestamp when flagged
+_EXHAUSTION_RESET_SECONDS: float = 3600.0  # auto-reset after 1 hour
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -456,6 +462,34 @@ class SportsAPIService:
     # Phase 2: Odds API /odds (enrichment — with filtering + cache)
     # ──────────────────────────────────────────────────────────────
 
+    async def _try_sportsgameodds_fallback(self, sport: str) -> List[Dict[str, Any]]:
+        """Try fetching odds from SportsGameOdds as a fallback source.
+
+        Returns normalized game data or empty list on failure.
+        """
+        try:
+            from app.services.sports_game_odds import SportsGameOddsService
+        except ImportError:
+            return []
+
+        sgo = SportsGameOddsService()
+        if not sgo.is_configured:
+            return []
+
+        try:
+            data = await sgo.get_odds_by_sport_key(sport)
+            if data:
+                cache_key = f"oddsapi_odds_{sport}"
+                _cache.set(cache_key, data, source="sportsgameodds_live")
+                _db_cache.set(cache_key, data, source="sportsgameodds_live")
+                logger.info(
+                    f"SportsGameOdds fallback: {len(data)} games for {sport}"
+                )
+            return data
+        except Exception as e:
+            logger.error(f"SportsGameOdds fallback failed for {sport}: {e}")
+            return []
+
     async def get_odds(
         self,
         sport: str,
@@ -463,6 +497,13 @@ class SportsAPIService:
         bookmakers: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Fetch current odds for a sport with caching + quota tracking.
+
+        Waterfall:
+            1. In-memory cache / DB cache
+            2. The Odds API (if key configured and not exhausted)
+            3. SportsGameOdds API (fallback)
+            4. Stale cache
+            5. Empty list
 
         Args:
             sport: Sport identifier (e.g. 'basketball_ncaab')
@@ -473,14 +514,13 @@ class SportsAPIService:
         Returns:
             List of odds event objects (empty list on failure)
         """
-        if not self.odds_api_key:
-            logger.warning("Odds API key not configured — cannot fetch odds")
-            # Try serving from cache
-            cached = _cache.get_stale(f"oddsapi_odds_{sport}")
-            if cached:
-                logger.info(f"Serving stale cached odds for {sport}")
-                return cached.data
-            return []
+        global _odds_api_exhausted, _odds_api_exhausted_at
+
+        # Auto-reset exhaustion flag after 1 hour
+        if _odds_api_exhausted and (time.time() - _odds_api_exhausted_at) > _EXHAUSTION_RESET_SECONDS:
+            logger.info("Odds API exhaustion flag auto-reset after 1 hour — will retry")
+            _odds_api_exhausted = False
+            _odds_api_exhausted_at = 0.0
 
         cache_key = f"oddsapi_odds_{sport}"
 
@@ -495,6 +535,21 @@ class SportsAPIService:
             _cache.set(cache_key, db_cached.data, source="cached_db")
             return db_cached.data
 
+        # 3. If Odds API key missing or exhausted, skip straight to SGO fallback
+        if not self.odds_api_key or _odds_api_exhausted:
+            reason = "exhausted" if _odds_api_exhausted else "not configured"
+            logger.warning(f"Odds API {reason} — trying SportsGameOdds fallback for {sport}")
+            sgo_data = await self._try_sportsgameodds_fallback(sport)
+            if sgo_data:
+                return sgo_data
+            # Fall through to stale cache
+            stale = _cache.get_stale(cache_key)
+            if stale:
+                logger.info(f"Serving stale cached odds for {sport}")
+                return stale.data
+            return []
+
+        # 4. Try The Odds API
         try:
             params: Dict[str, Any] = {
                 "regions": "us",
@@ -517,7 +572,7 @@ class SportsAPIService:
 
             data = response.json()
 
-            # ── Phase 2: commence_time filtering ──
+            # ── commence_time filtering ──
             # Only keep games starting within the next 24 hours
             now_ts = datetime.now(timezone.utc)
             filtered = []
@@ -548,18 +603,29 @@ class SportsAPIService:
         except httpx.HTTPStatusError as e:
             status = e.response.status_code
             body = e.response.text[:200]
-            if status == 401:
-                logger.error(
-                    f"Odds API 401 for {sport} — API key invalid or quota exhausted: {body}"
-                )
-            elif status == 429:
-                logger.error(f"Odds API 429 rate-limited for {sport}: {body}")
+            if status in (401, 429):
+                label = "quota exhausted" if status == 401 else "rate-limited"
+                logger.error(f"Odds API {status} ({label}) for {sport}: {body}")
+                _odds_api_exhausted = True
+                _odds_api_exhausted_at = time.time()
+                # Try SGO fallback immediately
+                sgo_data = await self._try_sportsgameodds_fallback(sport)
+                if sgo_data:
+                    return sgo_data
             else:
                 logger.error(f"Odds API HTTP {status} for {sport}: {body}")
+                # Try SGO fallback for other HTTP errors too
+                sgo_data = await self._try_sportsgameodds_fallback(sport)
+                if sgo_data:
+                    return sgo_data
         except Exception as e:
             logger.error(f"Odds API /odds failed for {sport}: {e}")
+            # Try SGO fallback for network/timeout errors
+            sgo_data = await self._try_sportsgameodds_fallback(sport)
+            if sgo_data:
+                return sgo_data
 
-        # Serve from cache on failure
+        # 5. Serve from cache on failure
         cached = _cache.get(cache_key, ttl=600)
         if cached:
             logger.info(
@@ -567,7 +633,7 @@ class SportsAPIService:
             )
             return cached.data
 
-        # Try stale cache as last resort
+        # 6. Try stale cache as last resort
         stale = _cache.get_stale(cache_key)
         if stale:
             logger.warning(

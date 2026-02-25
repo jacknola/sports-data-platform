@@ -117,11 +117,23 @@ class CBBEdgeCalculator:
     Fetches live NCAAB odds and calculates edge for each game/market.
     """
 
-    BASE_URL = "https://api.the-odds-api.com/v4"
-
     def __init__(self) -> None:
         self.api_key: Optional[str] = getattr(settings, "THE_ODDS_API_KEY", None) or \
                                       getattr(settings, "ODDSAPI_API_KEY", None)
+        # Delegate odds fetching to SportsAPIService (handles caching + SGO fallback)
+        from app.services.sports_api import SportsAPIService
+        self._sports_api = SportsAPIService()
+
+    @property
+    def has_live_data_source(self) -> bool:
+        """True if either The Odds API or SportsGameOdds is configured."""
+        if self.api_key:
+            return True
+        try:
+            from app.services.sports_game_odds import SportsGameOddsService
+            return SportsGameOddsService().is_configured
+        except ImportError:
+            return False
 
     # ------------------------------------------------------------------
     # Public interface
@@ -173,39 +185,21 @@ class CBBEdgeCalculator:
     # ------------------------------------------------------------------
 
     async def _fetch_odds(self, markets: List[str]) -> List[Dict[str, Any]]:
-        if not self.api_key:
-            logger.warning("THE_ODDS_API_KEY not set – falling back to mock data")
-            return []
-
+        """Fetch NCAAB odds via SportsAPIService (handles caching + SGO fallback)."""
         markets_param = ",".join(markets)
-        params = {
-            "apiKey": self.api_key,
-            "regions": "us",
-            "markets": markets_param,
-            "oddsFormat": "american",
-            "bookmakers": ",".join([
-                # Sharp books first
-                "pinnacle", "betcris", "betonlineag", "bookmaker",
-                # Major US books
-                "draftkings", "fanduel", "betmgm", "caesars",
-                "pointsbet", "williamhill_us",
-            ]),
-        }
-
-        try:
-            async with httpx.AsyncClient(timeout=20.0) as client:
-                url = f"{self.BASE_URL}/sports/{NCAAB_SPORT_KEY}/odds"
-                response = await client.get(url, params=params)
-                response.raise_for_status()
-                data = response.json()
-                logger.info(f"Fetched {len(data)} NCAAB games from The Odds API")
-                return data
-        except httpx.HTTPStatusError as exc:
-            logger.error(f"Odds API HTTP error: {exc.response.status_code} – {exc.response.text[:200]}")
-            return []
-        except Exception as exc:
-            logger.error(f"Failed to fetch CBB odds: {exc}")
-            return []
+        bookmakers = ",".join([
+            "pinnacle", "betcris", "betonlineag", "bookmaker",
+            "draftkings", "fanduel", "betmgm", "caesars",
+            "pointsbet", "williamhill_us",
+        ])
+        data = await self._sports_api.get_odds(
+            sport=NCAAB_SPORT_KEY,
+            markets=markets_param,
+            bookmakers=bookmakers,
+        )
+        if data:
+            logger.info(f"Fetched {len(data)} NCAAB games via SportsAPIService")
+        return data
 
     async def _fetch_historical_lines(self, game_id: str) -> Dict[str, Any]:
         """Fetch opening line data for line movement tracking."""
