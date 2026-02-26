@@ -1,6 +1,7 @@
 """
 Sports Data Intelligence Platform - Main API Server
 """
+
 import sys
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -9,7 +10,7 @@ from loguru import logger
 
 from app.config import settings
 from app.database import init_db
-from app.routers import bets, analyze, predictions, notion, agents, google_sheets, props, live_props, dvp, cbb_sharp, parlays
+from app.routers import bets, analyze, odds, sentiment, predictions, notion, agents, google_sheets, props, live_props, dvp, cbb_sharp, parlays
 from app.services.cache import RedisCache
 
 
@@ -18,7 +19,7 @@ logger.remove()
 logger.add(
     sys.stdout,
     format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan> - <level>{message}</level>",
-    level="INFO"
+    level="INFO",
 )
 
 
@@ -26,17 +27,17 @@ logger.add(
 async def lifespan(app: FastAPI):
     """Application lifespan events"""
     logger.info("🚀 Starting Sports Data Intelligence Platform...")
-    
+
     # Initialize database
     await init_db()
-    
+
     # Initialize cache
     await RedisCache.get_instance()
-    
+
     logger.info("✅ Startup complete!")
-    
+
     yield
-    
+
     # Shutdown
     logger.info("🛑 Shutting down...")
 
@@ -46,7 +47,7 @@ app = FastAPI(
     title="Sports Data Intelligence Platform",
     description="Comprehensive sports betting intelligence API with ML, Bayesian models, and Notion integration",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # CORS middleware
@@ -66,10 +67,7 @@ async def root():
         "name": "Sports Data Intelligence Platform",
         "version": "1.0.0",
         "status": "running",
-        "endpoints": {
-            "docs": "/docs",
-            "health": "/health"
-        }
+        "endpoints": {"docs": "/docs", "health": "/health"},
     }
 
 
@@ -90,13 +88,15 @@ app.include_router(live_props.router, prefix="/api/v1", tags=["live-props"])
 app.include_router(dvp.router, prefix="/api/v1", tags=["dvp"])
 app.include_router(cbb_sharp.router, prefix="/api/v1", tags=["cbb-sharp-money"])
 app.include_router(parlays.router, prefix="/api/v1", tags=["parlays"])
+app.include_router(historical.router, prefix="/api/v1", tags=["historical"])
 
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(
         "main:app",
         host=settings.API_HOST,
         port=settings.API_PORT,
-        reload=settings.DEBUG
+        reload=settings.DEBUG,
     )

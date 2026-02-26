@@ -144,9 +144,9 @@ class BetTracker:
                 market=record["market"],
                 current_odds=float(odds),
                 implied_prob=float(implied),
-                devig_prob=original_data.get("true_prob") or implied,
-                posterior_prob=original_data.get("true_prob"), # Use as placeholder
-                edge=record["edge"],
+                devig_prob=float(original_data.get("true_prob") or implied),
+                posterior_prob=float(original_data.get("true_prob")) if original_data.get("true_prob") else None,
+                edge=float(record["edge"]),
                 features=original_data.get("features", {})
             )
             db.add(new_bet)

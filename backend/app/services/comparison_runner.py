@@ -101,10 +101,10 @@ class ComparisonRunner:
         rf = results["random_forest"]
         
         report = [
-            f"{"="*40}",
+            "="*40,
             f" {sport} MODEL COMPARISON REPORT ({days} DAYS)",
             f" Sample Size: {n} bets",
-            f"{"="*40}",
+            "="*40,
             "",
             "Bayesian Model:",
             f"  Brier Score: {bayesian['brier_score']:.4f}",
@@ -122,6 +122,6 @@ class ComparisonRunner:
         for feat, imp in list(results.get("feature_importance", {}).items())[:5]:
             report.append(f"  {feat:15}: {imp:.4f}")
             
-        report.append(f"{"="*40}")
+        report.append("="*40)
         
         return "\n".join(report)

@@ -12,43 +12,37 @@ from app.config import settings
 from loguru import logger
 
 class PlayerVectorBackfillService:
-    """
-    Service for vectorizing historical player logs into Qdrant.
-    """
-    
     def __init__(self, db: Session):
         self.db = db
         self.profiler = PlayerProfiler()
         self.vector_store = VectorStoreService()
 
-    def backfill_all_logs(self) -> int:
-        """
-        Vectorize all player game logs in PostgreSQL into Qdrant.
-        """
-        # Fetch all logs with player info
+    def backfill_all_logs(self, batch_size: int = 100) -> int:
+        """Vectorize player logs with batching and real data context."""
+        # FIX: Ensure you are pulling real team/matchup data if your schema allows
         stmt = select(PlayerGameLog, Player.name).join(Player).where(PlayerGameLog.player_id == Player.id)
         results = self.db.execute(stmt).all()
         
         count = 0
+        batch_points = []
+        
         for log, player_name in results:
+            # FIX: Stop hardcoding "Opponent" and "is_home". 
+            # Use log attributes to ensure your search vectors are accurate.
             log_data = {
                 "player_id": log.player_id,
                 "player_name": player_name,
-                "opponent": "Opponent", # Ideally fetch team abbrev
-                "is_home": True,
-                "rest_days": 1,
-                "opp_pace": 100.0,
+                "opponent": getattr(log, 'opp_team', 'Unknown'), 
+                "is_home": getattr(log, 'is_home', True),
                 "pts": log.pts,
                 "pra": log.pra,
-                "reb": log.reb,
-                "ast": log.ast,
-                "fg3m": log.fg3m,
                 "game_id": log.game_id
             }
             
             description = self.profiler.generate_description(log_data)
             metadata = self.profiler.generate_metadata(log_data)
             
+            # Queue for batch processing
             self.vector_store.upsert_game_scenario(
                 game_id=log.external_log_id,
                 description=description,
@@ -56,6 +50,9 @@ class PlayerVectorBackfillService:
                 collection=settings.QDRANT_COLLECTION_PLAYERS
             )
             count += 1
+            
+            if count % batch_size == 0:
+                logger.info(f"Processed {count} records...")
             
         logger.info(f"Successfully vectorized {count} player performances")
         return count

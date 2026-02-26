@@ -15,6 +15,7 @@ app = Celery(
     backend=settings.CELERY_RESULT_BACKEND,
     include=[
         "app.tasks.nba",
+        "app.tasks.betting",
     ],
 )
 
@@ -26,12 +27,26 @@ app.conf.update(
 )
 
 # Periodic tasks
-# Runs daily at 11:05 UTC (adjust in compose or here as needed)
 app.conf.beat_schedule = {
     "refresh-nba-odds-daily": {
         "task": "app.tasks.nba.refresh_nba_odds",
         "schedule": crontab(hour=11, minute=5),
         "options": {"queue": "data-updates"},
+    },
+    "place-bets-daily": {
+        "task": "app.tasks.betting.place_bets_daily",
+        "schedule": crontab(hour=14, minute=0), # Run at 2 PM UTC daily
+        "options": {"queue": "betting"},
+    },
+    "settle-bets-daily": {
+        "task": "app.tasks.betting.settle_bets_daily",
+        "schedule": crontab(hour=10, minute=0), # Run at 10 AM UTC daily
+        "options": {"queue": "betting"},
+    },
+    "export-sheets-daily": {
+        "task": "app.tasks.betting.export_to_sheets_daily",
+        "schedule": crontab(hour=15, minute=0), # Run at 3 PM UTC daily
+        "options": {"queue": "reports"},
     },
 }
 

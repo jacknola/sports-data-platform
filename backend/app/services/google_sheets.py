@@ -5,10 +5,11 @@ Exports NCAAB, NBA, and Player Prop analysis to Google Sheets with
 separate tabs per sport. Uses gspread + service account auth.
 
 Tabs:
-  - Props        — All player props ranked by confidence/edge
-  - NBA          — NBA game picks with spreads, totals, ML
-  - NCAAB        — NCAAB sharp money picks
-  - Summary      — Daily overview (auto-generated)
+  - Props           — All player props ranked by confidence/edge
+  - NBA Odds Picks  — NBA EV bets (only written when live odds are available)
+  - ML Predictions  — Raw XGBoost/model outputs (always written when games exist)
+  - NCAAB           — NCAAB sharp money picks
+  - Summary         — Daily overview (auto-generated)
 """
 
 import os
@@ -25,10 +26,18 @@ from loguru import logger
 # ═══════════════════════════════════════════════════════════════════════
 
 _STAT_DISPLAY = {
-    "points": "PTS", "rebounds": "REB", "assists": "AST",
-    "threes": "3PM", "blocks": "BLK", "steals": "STL",
-    "pts+reb+ast": "PRA", "pts+reb": "P+R", "pts+ast": "P+A",
-    "reb+ast": "R+A", "turnovers": "TO", "stl+blk": "S+B",
+    "points": "PTS",
+    "rebounds": "REB",
+    "assists": "AST",
+    "threes": "3PM",
+    "blocks": "BLK",
+    "steals": "STL",
+    "pts+reb+ast": "PRA",
+    "pts+reb": "P+R",
+    "pts+ast": "P+A",
+    "reb+ast": "R+A",
+    "turnovers": "TO",
+    "stl+blk": "S+B",
 }
 
 
@@ -63,8 +72,7 @@ class GoogleSheetsService:
             self._init_client(creds_path)
         else:
             logger.warning(
-                "Google Sheets not configured. "
-                "Set GOOGLE_SERVICE_ACCOUNT_PATH in .env"
+                "Google Sheets not configured. Set GOOGLE_SERVICE_ACCOUNT_PATH in .env"
             )
 
     def _init_client(self, credentials_path: str) -> None:
@@ -76,9 +84,7 @@ class GoogleSheetsService:
             self.client = gspread.authorize(creds)
             logger.info("Google Sheets client initialized")
         except FileNotFoundError:
-            logger.error(
-                f"Service account file not found: {credentials_path}"
-            )
+            logger.error(f"Service account file not found: {credentials_path}")
         except Exception as e:
             logger.error(f"Failed to init Google Sheets client: {e}")
 
@@ -113,7 +119,7 @@ class GoogleSheetsService:
     ) -> int:
         """Write headers + data rows in a single batch update."""
         all_data = [headers] + rows
-        
+
         # Proper A1 notation for more than 26 columns
         def _col_name(n):
             name = ""
@@ -131,6 +137,35 @@ class GoogleSheetsService:
         worksheet.format("1:1", {"textFormat": {"bold": True}})
         worksheet.freeze(rows=1)
         return len(rows)
+
+    def _write_empty_tab(
+        self,
+        spreadsheet_id: str,
+        tab_name: str,
+        headers: List[str],
+        notice: str = "No data available",
+    ) -> Dict[str, Any]:
+        """Create/clear a tab and write only a header row plus a notice cell.
+
+        Used when a tab should always be present but has no data to show
+        (e.g. NBA Odds Picks when the odds API quota is exhausted).
+        """
+        if not self.client:
+            logger.error("Google Sheets not configured")
+            return {"error": "Google Sheets not configured"}
+        try:
+            sheet = self.client.open_by_key(spreadsheet_id)
+            ws = self._get_or_create_worksheet(sheet, tab_name)
+            ws.update(
+                range_name="A1:B2",
+                values=[[tab_name, notice], ["", ""]],
+            )
+            ws.format("1:1", {"textFormat": {"bold": True}})
+            logger.info(f"Wrote empty placeholder to tab '{tab_name}': {notice}")
+            return {"status": "success", "tab": tab_name, "rows_written": 0}
+        except Exception as e:
+            logger.error(f"Empty tab write failed for '{tab_name}': {e}")
+            return {"error": str(e)}
 
     # ───────────────────────────────────────────────────────────────
     # Props export
@@ -160,17 +195,25 @@ class GoogleSheetsService:
             ws = self._get_or_create_worksheet(sheet, tab_name)
 
             headers = [
-                "Date", "Player", "Matchup",
-                "Stat", "Line", "Pick", "Odds", "Projected",
-                "Edge %", "Confidence", "Kelly %", 
-                "Signals", "Situational Context", "Best Book"
+                "Date",
+                "Player",
+                "Matchup",
+                "Stat",
+                "Line",
+                "Pick",
+                "Odds",
+                "Projected",
+                "Edge %",
+                "Confidence",
+                "Kelly %",
+                "Signals",
+                "Situational Context",
+                "Best Book",
             ]
 
             # Use ALL analyzed props, sorted by edge descending
             all_props = prop_data.get("props", [])
-            all_props.sort(
-                key=lambda x: x.get("bayesian_edge", 0), reverse=True
-            )
+            all_props.sort(key=lambda x: x.get("bayesian_edge", 0), reverse=True)
 
             today = datetime.now().strftime("%Y-%m-%d")
             rows: List[List[Any]] = []
@@ -195,26 +238,30 @@ class GoogleSheetsService:
                 away = p.get("away_team", "")
                 matchup = f"{away} @ {home}" if home and away else ""
                 signals = ", ".join(p.get("sharp_signals", []))
-                
-                # Extract situational RAG context
-                situational_context = p.get("situational_context", "No historical analogs found.")
 
-                rows.append([
-                    today,
-                    p.get("player_name", ""),
-                    matchup,
-                    stat_label,
-                    p.get("line", 0),
-                    best_side,
-                    _fmt_odds(int(odds)),
-                    round(p.get("projected_mean", 0), 1),
-                    round(edge * 100, 2),
-                    _confidence_label(edge, ev_class),
-                    round(p.get("kelly_fraction", 0) * 100, 2),
-                    signals,
-                    situational_context,
-                    best_book
-                ])
+                # Extract situational RAG context
+                situational_context = p.get(
+                    "situational_context", "No historical analogs found."
+                )
+
+                rows.append(
+                    [
+                        today,
+                        p.get("player_name", ""),
+                        matchup,
+                        stat_label,
+                        p.get("line", 0),
+                        best_side,
+                        _fmt_odds(int(odds)),
+                        round(p.get("projected_mean", 0), 1),
+                        round(edge * 100, 2),
+                        _confidence_label(edge, ev_class),
+                        round(p.get("kelly_fraction", 0) * 100, 2),
+                        signals,
+                        situational_context,
+                        best_book,
+                    ]
+                )
 
             written = self._batch_write(ws, headers, rows)
             logger.info(f"Exported {written} props to Google Sheets tab '{tab_name}'")
@@ -228,7 +275,7 @@ class GoogleSheetsService:
     # ML Predictions dedicated export
     # ───────────────────────────────────────────────────────────────
 
-    def export_ml_predictions(
+    def export_nba_ml_predictions(
         self,
         spreadsheet_id: str,
         nba_predictions: List[Dict[str, Any]],
@@ -243,20 +290,40 @@ class GoogleSheetsService:
             ws = self._get_or_create_worksheet(sheet, tab_name)
 
             headers = [
-                "Date", "Away", "Home", 
-                "Winner", "Winner Prob %", "Fair Odds",
-                "Proj Total", "Proj Spread",
-                "Home Off Rating", "Home Def Rating",
-                "Away Off Rating", "Away Def Rating",
-                "Home Win %", "Away Win %", "Pace"
+                "Date",
+                "Away",
+                "Home",
+                "Winner",
+                "Winner Prob %",
+                "Fair Odds",
+                "Proj Total",
+                "Proj Spread",
+                "Home Off Rating",
+                "Home Def Rating",
+                "Away Off Rating",
+                "Away Def Rating",
+                "Home Win %",
+                "Away Win %",
+                "Pace",
             ]
 
             rows: List[List[Any]] = []
             today = datetime.now().strftime("%Y-%m-%d")
 
+            def _prob_to_american(prob: float) -> int:
+                if prob >= 0.999:
+                    return -10000
+                if prob <= 0.001:
+                    return +10000
+                if prob >= 0.5:
+                    return int(-100 * (prob / (1 - prob)))
+                else:
+                    return int(100 * ((1 - prob) / prob))
+
             for p in nba_predictions:
-                if "error" in p: continue
-                
+                if "error" in p:
+                    continue
+
                 h = p.get("home_team", "Unknown")
                 a = p.get("away_team", "Unknown")
                 ml = p.get("moneyline_prediction", {})
@@ -267,26 +334,29 @@ class GoogleSheetsService:
                 away_prob = ml.get("away_win_prob", 0.5)
                 winner = h if home_prob >= away_prob else a
                 win_p = max(home_prob, away_prob)
-                
-                def prob_to_american(p):
-                    if p >= 0.999: return -10000
-                    if p <= 0.001: return +10000
-                    if p >= 0.5: return int(-100 * (p / (1 - p)))
-                    else: return int(100 * ((1 - p) / p))
-                
-                fair = prob_to_american(win_p)
+
+                fair = _prob_to_american(win_p)
                 proj_spread = round((home_prob - 0.5) * -26, 1)
 
-                rows.append([
-                    today, a, h,
-                    winner, round(win_p * 100, 1), fair,
-                    round(uo.get("total_points", 0), 1) if uo else "",
-                    proj_spread,
-                    f.get("home_off_rating", ""), f.get("home_def_rating", ""),
-                    f.get("away_off_rating", ""), f.get("away_def_rating", ""),
-                    f.get("home_win_pct", ""), f.get("away_win_pct", ""),
-                    f.get("home_pace", "")
-                ])
+                rows.append(
+                    [
+                        today,
+                        a,
+                        h,
+                        winner,
+                        round(win_p * 100, 1),
+                        fair,
+                        round(uo.get("total_points", 0), 1) if uo else "",
+                        proj_spread,
+                        f.get("home_off_rating", ""),
+                        f.get("home_def_rating", ""),
+                        f.get("away_off_rating", ""),
+                        f.get("away_def_rating", ""),
+                        f.get("home_win_pct", ""),
+                        f.get("away_win_pct", ""),
+                        f.get("home_pace", ""),
+                    ]
+                )
 
             written = self._batch_write(ws, headers, rows)
             logger.info(f"Exported {written} ML predictions to tab '{tab_name}'")
@@ -316,16 +386,37 @@ class GoogleSheetsService:
             ws = self._get_or_create_worksheet(sheet, tab_name)
 
             headers = [
-                "Date", "Matchup", "Away ML", "Home ML", 
-                "Spread", "Total", 
-                "Proj Spread", "Proj Total", 
-                "Fair ML", "Winner", "Win %", 
-                "Edge %", "Kelly %", "Bet Size", "Book"
+                "Date",
+                "Matchup",
+                "Away ML",
+                "Home ML",
+                "Spread",
+                "Total",
+                "Proj Spread",
+                "Proj Total",
+                "Fair ML",
+                "Winner",
+                "Win %",
+                "Edge %",
+                "Kelly %",
+                "Bet Size",
+                "Book",
             ]
 
             today = datetime.now().strftime("%Y-%m-%d")
             bet_lookup = {b.get("game_id", ""): b for b in bets}
             rows: List[List[Any]] = []
+
+            def _to_american(prob: float) -> int:
+                if prob >= 0.999:
+                    return -10000
+                if prob <= 0.001:
+                    return +10000
+                return (
+                    int(-100 * (prob / (1 - prob)))
+                    if prob >= 0.5
+                    else int(100 * ((1 - prob) / prob))
+                )
 
             for p in predictions:
                 if "error" in p:
@@ -338,23 +429,17 @@ class GoogleSheetsService:
                 away = p.get("away_team", "")
                 home_prob = ml.get("home_win_prob", 0.5)
                 away_prob = ml.get("away_win_prob", 0.5)
-                
+
                 matchup = f"{away} @ {home}"
                 winner = home if home_prob >= away_prob else away
                 win_p = max(home_prob, away_prob)
 
-                # Helper for fair odds
-                def _to_am(p):
-                    if p >= 0.999: return -10000
-                    if p <= 0.001: return +10000
-                    return int(-100 * (p / (1 - p))) if p >= 0.5 else int(100 * ((1 - p) / p))
-
-                fair_ml = _to_am(win_p)
+                fair_ml = _to_american(win_p)
 
                 # Spread data
                 spread_data = p.get("spread", {})
                 spread_val = spread_data.get("home_point", "") if spread_data else ""
-                
+
                 # Total data
                 total_data = p.get("total", {})
                 total_val = total_data.get("point", "") if total_data else ""
@@ -365,7 +450,9 @@ class GoogleSheetsService:
 
                 # Best bet / Edge
                 best_bet = ev.get("best_bet", "")
-                best_edge = ev.get("home_ev", 0) if best_bet == "home" else ev.get("away_ev", 0)
+                best_edge = (
+                    ev.get("home_ev", 0) if best_bet == "home" else ev.get("away_ev", 0)
+                )
                 kelly = p.get("kelly_criterion", 0)
 
                 # Match to bets list
@@ -373,18 +460,29 @@ class GoogleSheetsService:
                 bet = bet_lookup.get(gid, {})
                 bet_size = bet.get("bet_size", 0) if bet else 0
 
-                rows.append([
-                    today, matchup,
-                    _fmt_odds(ev.get("away_odds", 0)) if ev.get("away_odds") else "",
-                    _fmt_odds(ev.get("home_odds", 0)) if ev.get("home_odds") else "",
-                    spread_val, total_val,
-                    proj_spread, proj_total,
-                    fair_ml, winner, round(win_p * 100, 1),
-                    round(best_edge * 100, 2) if best_edge else "",
-                    round(kelly * 100, 2) if kelly else "",
-                    round(bet_size, 2) if bet_size else "",
-                    p.get("book", "")
-                ])
+                rows.append(
+                    [
+                        today,
+                        matchup,
+                        _fmt_odds(ev.get("away_odds", 0))
+                        if ev.get("away_odds")
+                        else "",
+                        _fmt_odds(ev.get("home_odds", 0))
+                        if ev.get("home_odds")
+                        else "",
+                        spread_val,
+                        total_val,
+                        proj_spread,
+                        proj_total,
+                        fair_ml,
+                        winner,
+                        round(win_p * 100, 1),
+                        round(best_edge * 100, 2) if best_edge else "",
+                        round(kelly * 100, 2) if kelly else "",
+                        round(bet_size, 2) if bet_size else "",
+                        p.get("book", ""),
+                    ]
+                )
 
             written = self._batch_write(ws, headers, rows)
             logger.info(f"Exported {written} NBA games to tab '{tab_name}'")
@@ -413,13 +511,23 @@ class GoogleSheetsService:
             ws = self._get_or_create_worksheet(sheet, tab_name)
 
             headers = [
-                "Date", "Matchup", "Conference",
-                "Spread", "Total",
-                "Pinnacle Home", "Pinnacle Away",
-                "True Home %", "True Away %",
-                "Home Edge %", "Away Edge %",
-                "Pick", "Kelly %", "Bet Size",
-                "Confidence", "Signals", "Historical Context",
+                "Date",
+                "Matchup",
+                "Conference",
+                "Spread",
+                "Total",
+                "Pinnacle Home",
+                "Pinnacle Away",
+                "True Home %",
+                "True Away %",
+                "Home Edge %",
+                "Away Edge %",
+                "Pick",
+                "Kelly %",
+                "Bet Size",
+                "Confidence",
+                "Signals",
+                "Historical Context",
             ]
 
             today = datetime.now().strftime("%Y-%m-%d")
@@ -452,24 +560,27 @@ class GoogleSheetsService:
                     s.get("game", "")[:60] for s in a.get("historical_context", [])[:2]
                 )
 
-                rows.append([
-                    today, matchup,
-                    game.get("conference", ""),
-                    game.get("spread", 0),
-                    game.get("total", ""),
-                    _fmt_odds(game.get("pinnacle_home_odds", 0)),
-                    _fmt_odds(game.get("pinnacle_away_odds", 0)),
-                    round(a.get("true_home_prob", 0) * 100, 1),
-                    round(a.get("true_away_prob", 0) * 100, 1),
-                    round(he * 100, 2),
-                    round(ae * 100, 2),
-                    bet.get("side", "") if bet else "",
-                    round(bet.get("portfolio_fraction_pct", 0), 2) if bet else "",
-                    round(bet.get("bet_size_$", 0), 2) if bet else "",
-                    confidence,
-                    ", ".join(signals) if signals else "",
-                    historical or "No historical data",
-                ])
+                rows.append(
+                    [
+                        today,
+                        matchup,
+                        game.get("conference", ""),
+                        game.get("spread", 0),
+                        game.get("total", ""),
+                        _fmt_odds(game.get("pinnacle_home_odds", 0)),
+                        _fmt_odds(game.get("pinnacle_away_odds", 0)),
+                        round(a.get("true_home_prob", 0) * 100, 1),
+                        round(a.get("true_away_prob", 0) * 100, 1),
+                        round(he * 100, 2),
+                        round(ae * 100, 2),
+                        bet.get("side", "") if bet else "",
+                        round(bet.get("portfolio_fraction_pct", 0), 2) if bet else "",
+                        round(bet.get("bet_size_$", 0), 2) if bet else "",
+                        confidence,
+                        ", ".join(signals) if signals else "",
+                        historical or "No historical data",
+                    ]
+                )
 
             written = self._batch_write(ws, headers, rows)
             logger.info(f"Exported {written} NCAAB games to tab '{tab_name}'")
@@ -600,10 +711,9 @@ class GoogleSheetsService:
             prop_total = (prop_data or {}).get("total_props", 0)
             prop_ev = (prop_data or {}).get("positive_ev_count", 0)
 
-            total_exposure = (
-                sum(b.get("bet_size_$", 0) for b in (ncaab_data or {}).get("bets", []))
-                + sum(b.get("bet_size", 0) for b in (nba_bets or []))
-            )
+            total_exposure = sum(
+                b.get("bet_size_$", 0) for b in (ncaab_data or {}).get("bets", [])
+            ) + sum(b.get("bet_size", 0) for b in (nba_bets or []))
 
             summary_data = [
                 ["Daily Picks Summary", now],
@@ -664,15 +774,32 @@ class GoogleSheetsService:
         if prop_data and prop_data.get("props"):
             results["props"] = self.export_props(spreadsheet_id, prop_data)
 
-        if nba_predictions:
+        # Split predictions into two buckets:
+        #   odds_preds  — games where real market odds were fetched (book is set OR odds != default -110)
+        #   all_preds   — every game, regardless of odds availability
+        all_preds = [p for p in (nba_predictions or []) if "error" not in p]
+
+        def _has_real_odds(pred: Dict) -> bool:
+            """Check if prediction has real market odds (not default -110/-110)."""
+            if pred.get("book"):
+                return True
+            ev = pred.get("expected_value", {})
+            home_odds = ev.get("home_odds", -110)
+            away_odds = ev.get("away_odds", -110)
+            return home_odds != -110 or away_odds != -110
+
+        odds_preds = [p for p in all_preds if _has_real_odds(p)]
+
+        # NBA Odds Picks — EV bets only; placeholder when no live odds available
+        if odds_preds:
             results["nba"] = self.export_nba(
-                spreadsheet_id, nba_predictions, nba_bets or []
+                spreadsheet_id, odds_preds, nba_bets or [], tab_name="NBA Odds Picks"
             )
-            results["nba_ml"] = self.export_ml_predictions(
-                spreadsheet_id,
-                nba_predictions,
-                sport="NBA",
-                tab_name="ML Predictions",
+        
+        # Always export raw ML predictions to a separate tab if any predictions exist
+        if nba_predictions:
+            results["ml_predictions"] = self.export_nba_ml_predictions(
+                spreadsheet_id, nba_predictions or []
             )
 
         if ncaab_data and ncaab_data.get("game_analyses"):
@@ -681,7 +808,9 @@ class GoogleSheetsService:
                 for ga in (ncaab_data.get("game_analyses") or [])
             )
             if qdrant_used:
-                logger.info("Qdrant context present — including historical context in Sheets export")
+                logger.info(
+                    "Qdrant context present — including historical context in Sheets export"
+                )
             results["ncaab"] = self.export_ncaab(spreadsheet_id, ncaab_data)
 
         results["summary"] = self.export_summary(
@@ -694,7 +823,9 @@ class GoogleSheetsService:
 
         # Log overall result
         tabs_ok = sum(
-            1 for r in results.values() if isinstance(r, dict) and r.get("status") == "success"
+            1
+            for r in results.values()
+            if isinstance(r, dict) and r.get("status") == "success"
         )
         logger.info(
             f"Google Sheets export complete: {tabs_ok}/{len(results)} tabs written"

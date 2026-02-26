@@ -380,8 +380,9 @@ async def get_live_ncaab_games(team_stats: Optional[Dict[str, Any]] = None) -> T
 
                 game_id = f"NCAAB_{matched_odds.get('id', espn_game.get('espn_id', ''))}"
                 # Try to get real public percentages from SportsGameOdds
-                api = SportsAPIService()
-                public_data = await api.sports_game_odds.get_public_percentages(game_id)
+                from app.services.sports_game_odds import SportsGameOddsService
+                sgo = SportsGameOddsService()
+                public_data = await sgo.get_public_percentages(game_id)
 
                 if public_data:
                     ticket_pct = public_data.get("home_ticket_pct", 0.50)
@@ -461,8 +462,9 @@ async def get_live_ncaab_games(team_stats: Optional[Dict[str, Any]] = None) -> T
                     spread_val = 0.0  # Still unknown but don't skip — fall through with 50/50
 
             # Try to get real public percentages from SportsGameOdds
-            api = SportsAPIService()
-            public_data = await api.sports_game_odds.get_public_percentages(game_id)
+            from app.services.sports_game_odds import SportsGameOddsService
+            sgo = SportsGameOddsService()
+            public_data = await sgo.get_public_percentages(game_id)
 
             if public_data:
                 ticket_pct = public_data.get("home_ticket_pct", 0.50)

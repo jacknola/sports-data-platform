@@ -28,152 +28,84 @@ class NCAABStatsService:
 
     async def fetch_all_team_stats(self) -> Dict[str, Dict[str, float]]:
         """
-        Fetch team efficiency stats from ESPN BPI.
+        Fetch team efficiency stats from BartTorvik using cloudscraper 
+        to bypass anti-bot protection.
         """
+        import re
+        import asyncio
+        
         if self.team_stats_cache and self._last_fetch:
             if (datetime.now() - self._last_fetch).days < 1:
                 return self.team_stats_cache
 
-        logger.info(f"Fetching NCAAB stats from {self.BASE_URL}")
+        url = "https://barttorvik.com/trank.php"
+        logger.info(f"Fetching NCAAB stats from {url}")
         
         try:
-            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                }
-                response = await client.get(self.BASE_URL, headers=headers)
-                response.raise_for_status()
+            # We use cloudscraper in a thread to handle the JS challenge 
+            # without blocking the async event loop
+            def fetch_page():
+                import cloudscraper
+                # Mimic a standard desktop Chrome browser
+                scraper = cloudscraper.create_scraper(browser={
+                    'browser': 'chrome',
+                    'platform': 'windows',
+                    'desktop': True
+                })
+                return scraper.get(url, timeout=30)
                 
-            # Try to find JSON in script tag first (modern ESPN pages)
-            import re
-            import json
-            
-            # Use a more specific but flexible pattern
-            # Search for the assignment to window["__espnfitt__"]
-            pattern = re.compile(r'window\["__espnfitt__"\]\s*=\s*({.*?});')
-            match = pattern.search(response.text)
+            response = await asyncio.to_thread(fetch_page)
+            response.raise_for_status()
             
             stats = {}
+            soup = BeautifulSoup(response.text, 'lxml')
             
-            if not match:
-                # Try single quotes
-                pattern = re.compile(r"window\['__espnfitt__'\]\s*=\s*({.*?});")
-                match = pattern.search(response.text)
+            table = soup.find('table')
+            if not table:
+                logger.warning("Could not find the stats table on BartTorvik. Cloudscraper may have been blocked.")
+                return {}
+                
+            rows = table.find_all('tr')[1:] # Skip the header row
             
-            if not match:
-                # Try just the variable name
-                pattern = re.compile(r'__espnfitt__\s*=\s*({.*?});')
-                match = pattern.search(response.text)
-
-            if match:
+            for row in rows:
                 try:
-                    json_str = match.group(1)
-                    # Simple validation - should start with { and end with }
-                    if not (json_str.startswith('{') and json_str.endswith('}')):
-                        # Try to find the last closing brace before the semicolon
-                        last_brace = json_str.rfind('}')
-                        if last_brace != -1:
-                            json_str = json_str[:last_brace+1]
-                    
-                    data = json.loads(json_str)
-                    
-                    # Target path: page -> content -> teams
-                    content = data.get("page", {}).get("content", {})
-                    teams_data = content.get("teams", [])
-                    
-                    if not teams_data:
-                        # LOG ALL KEYS AT VARIOUS LEVELS
-                        logger.info(f"JSON Keys: {list(data.keys())}")
-                        if "page" in data: logger.info(f"Page Keys: {list(data['page'].keys())}")
-                        if "content" in data.get("page", {}): logger.info(f"Content Keys: {list(data['page']['content'].keys())}")
+                    cells = row.find_all('td')
+                    if len(cells) < 5: 
+                        continue
                         
-                        # Try to find 'teams' anywhere that looks right
-                        def find_teams_list(d):
-                            if isinstance(d, dict):
-                                if "teams" in d and isinstance(d["teams"], list) and len(d["teams"]) > 0:
-                                    # Check if elements have 'team' and 'stats'
-                                    first = d["teams"][0]
-                                    if isinstance(first, dict) and "team" in first and "stats" in first:
-                                        return d["teams"]
-                                for v in d.values():
-                                    res = find_teams_list(v)
-                                    if res: return res
-                            elif isinstance(d, list):
-                                for item in d:
-                                    res = find_teams_list(item)
-                                    if res: return res
-                            return None
-                        teams_data = find_teams_list(data) or []
-
-                    logger.info(f"Found {len(teams_data)} teams in ESPN JSON")
-                    if teams_data:
-                        first_team = teams_data[0].get("team", {}).get("displayName")
-                        logger.info(f"First team in JSON: {first_team}")
-
-                    for t_entry in teams_data:
-                        team_obj = t_entry.get("team", {})
-                        team_name = team_obj.get("displayName") or team_obj.get("nickname")
-                        if not team_name:
-                            continue
+                    # Team name is in the 2nd column (index 1), inside an <a> tag
+                    name_cell = cells[1].find('a')
+                    if not name_cell:
+                        continue
                         
-                        t_stats = t_entry.get("stats", [])
-                        # stats is a list of {"name": "...", "value": "..."}
-                        stat_dict = {}
-                        for s in t_stats:
-                            name = s.get("name")
-                            val = s.get("value")
-                            if name and val is not None:
-                                stat_dict[name] = val
-                        
-                        try:
-                            # Stats in BPI page are: bpi, bpirank, bpioffense, bpidefense
-                            stats[team_name] = {
-                                "AdjOE": float(stat_dict.get("bpioffense", 0)),
-                                "AdjDE": float(stat_dict.get("bpidefense", 0)),
-                                "BPI": float(stat_dict.get("bpi", 0)),
-                            }
-                        except (ValueError, TypeError):
-                            continue
-                            
-                    if stats:
-                        logger.info(f"Successfully extracted stats for {len(stats)} teams from JSON")
-                except Exception as e:
-                    logger.error(f"Failed to parse ESPN JSON: {e}")
-
-            # Fallback to table scraping if JSON path failed or returned nothing
-            if not stats:
-                soup = BeautifulSoup(response.text, 'lxml')
-                tables = soup.find_all('table')
-                if len(tables) >= 2:
-                    name_rows = tables[0].find_all('tr')[1:] 
-                    stat_rows = tables[1].find_all('tr')[1:] 
+                    # Clean up the name (removes tournament seeds like "Houston 1")
+                    raw_name = name_cell.get_text().strip()
+                    team_name = re.sub(r'\s*\d+$', '', raw_name).strip()
                     
-                    for name_row, stat_row in zip(name_rows, stat_rows):
-                        try:
-                            name_cell = name_row.find('span', class_='TeamLink__Name') or name_row.find('a')
-                            if not name_cell: continue
-                            team_name = name_cell.get_text().strip()
-                            
-                            cells = stat_row.find_all('td')
-                            off_eff = float(cells[2].get_text())
-                            def_eff = float(cells[4].get_text())
-                            bpi = float(cells[0].get_text())
-                            
-                            stats[team_name] = {
-                                "AdjOE": off_eff,
-                                "AdjDE": def_eff,
-                                "BPI": bpi,
-                            }
-                        except (ValueError, IndexError, TypeError, AttributeError):
-                            continue
+                    # BartTorvik columns: Barthag (2), AdjOE (3), AdjDE (4)
+                    # Barthag represents overall win probability, serving the same role as BPI
+                    bpi = float(cells[2].get_text().strip()) 
+                    off_eff = float(cells[3].get_text().strip())
+                    def_eff = float(cells[4].get_text().strip())
+                    
+                    stats[team_name] = {
+                        "AdjOE": off_eff,
+                        "AdjDE": def_eff,
+                        "BPI": bpi * 100, # Scale Barthag (0 to 1) so it looks more like BPI
+                    }
+                except (ValueError, IndexError, AttributeError):
+                    continue
             
             if stats:
                 self.team_stats_cache = stats
                 self._last_fetch = datetime.now()
-                logger.info(f"Successfully fetched stats for {len(stats)} NCAAB teams from ESPN BPI")
-                
+                logger.info(f"Successfully fetched stats for {len(stats)} NCAAB teams from BartTorvik")
+            
             return stats
             
+        except ImportError:
+            logger.error("The 'cloudscraper' package is missing. Run: pip install cloudscraper")
+            return {}
         except Exception as e:
             logger.error(f"Error fetching NCAAB stats: {e}")
             return {}

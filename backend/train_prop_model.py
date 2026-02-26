@@ -1,12 +1,15 @@
 """
 Train Player Props XGBoost Model
 
-Uses historical player game logs from the database (pts, reb, ast, etc.) to
-train a binary XGBoost classifier that predicts whether a player will go OVER
-a given prop line.
+Uses historical player game logs from the database to train a binary XGBoost
+classifier that predicts whether a player will go OVER a given prop line.
 
-Features mirror the 10-feature vector used by inference_service.py so that
-the global XGBoost model and the localized Qdrant-RF model are comparable.
+Features 1-3 and 9-10 are computed via PostgreSQL window functions (same SQL
+as sync_qdrant.py), ensuring point-in-time correctness (no data leakage).
+Features 4-8 are read from PlayerGameLog.scenario, populated by
+backfill_scenario.py. When scenario is NULL those features default to
+league-average values identical to what sync_qdrant.py / inference_service.py
+use at inference time — so the training distribution matches.
 
 Usage:
     cd backend
@@ -15,13 +18,15 @@ Usage:
     python train_prop_model.py --stat reb             # rebounds model
     python train_prop_model.py --dry-run              # show data shape only
 
+Run backfill_scenario.py first to populate opp_pace/opp_def_rtg in scenario
+so that features 4-8 reflect real matchup context instead of league averages.
+
 Outputs:
     backend/models/prop_ml/<stat>_model.pkl
     backend/models/prop_scaler.joblib   (updated StandardScaler)
 """
 
 import argparse
-import asyncio
 import os
 import pickle
 import sys
@@ -31,17 +36,12 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import Session
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.makedirs("logs", exist_ok=True)
 logger.add("logs/train_prop.log", rotation="7 days", level="INFO")
 
 from app.config import settings  # noqa: E402
-from app.models.player_game_log import PlayerGameLog  # noqa: E402
-from app.models.player import Player  # noqa: E402
-from app.models.team import Team  # noqa: E402
-from app.models.game import Game  # noqa: E402
 
 try:
     import xgboost as xgb
@@ -58,6 +58,7 @@ except ImportError:
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
+# Maps stat name -> column name on player_game_logs
 STAT_COLS = {
     "pts":  "pts",
     "reb":  "reb",
@@ -68,7 +69,7 @@ STAT_COLS = {
     "pra":  "pra",
 }
 
-# Maps to inference_service.py FEATURE_NAMES
+# Must match FEATURE_NAMES in sync_qdrant.py and inference_service.py exactly
 FEATURE_NAMES = [
     "usage_rate_season",
     "l5_form_variance",
@@ -86,63 +87,130 @@ MIN_SAMPLES = 50
 MODEL_BASE_DIR = "./models/prop_ml"
 SCALER_PATH = "./models/prop_scaler.joblib"
 
+# Defaults must stay in sync with sync_qdrant.py COALESCE fallbacks so that
+# the training distribution matches what the model sees at inference time.
+_SCENARIO_DEFAULTS = {
+    "opp_pace":           100.0,
+    "opp_def_rtg":        112.0,
+    "def_vs_position":      0.0,
+    "implied_team_total": 112.5,
+    "spread":               0.0,
+}
+
+
+# ── SQL ────────────────────────────────────────────────────────────────────────
+# Mirrors sync_qdrant.py's point-in-time window-function SQL.
+# Parameters:
+#   :stat_col — the target stat column (pts / reb / ast / etc.)
+#   :cutoff   — earliest game_date to include
+#
+# Features 1-3 and 9-10 are computed from real data using window functions.
+# Features 4-8 are read from scenario JSON (backfill_scenario.py populates
+# them; COALESCE fallbacks match sync_qdrant.py defaults exactly).
+_SQL_TEMPLATE = """
+WITH pit AS (
+    SELECT
+        pgl.id                                                                  AS log_id,
+        pgl.player_id,
+        pgl.game_id,
+        pgl.game_date,
+        pgl.{stat_col}                                                          AS actual_value,
+
+        -- Feature 1: Usage Rate (Season) — pts/min * 36, prior games only
+        COALESCE(
+            AVG(pgl.pts)  OVER w_season
+            / NULLIF(AVG(pgl.min) OVER w_season, 0)
+            * 36.0,
+            18.0
+        )                                                                       AS usage_rate_season,
+
+        -- Feature 2: L5 Form Variance — variance of TARGET stat over last 5 games
+        COALESCE(VAR_SAMP(pgl.{stat_col}) OVER w_l5, 25.0)                     AS l5_form_variance,
+
+        -- Feature 3: Expected Minutes
+        COALESCE(AVG(pgl.min) OVER w_season, 24.0)                             AS expected_mins,
+
+        -- Feature 9: Rest Advantage (days since previous game)
+        COALESCE(
+            EXTRACT(EPOCH FROM (
+                pgl.game_date
+                - LAG(pgl.game_date) OVER (
+                    PARTITION BY pgl.player_id ORDER BY pgl.game_date
+                )
+            )) / 86400.0,
+            2.0
+        )                                                                       AS rest_advantage,
+
+        -- Feature 10: Home/Away (1 = home)
+        CASE WHEN t.name = g.home_team THEN 1 ELSE 0 END                       AS is_home,
+
+        -- Features 4-8: from scenario JSON (populated by backfill_scenario.py)
+        -- Defaults match sync_qdrant.py COALESCE values so training ≈ inference
+        COALESCE((pgl.scenario->>'opp_pace')::float,          100.0)            AS opp_pace,
+        COALESCE((pgl.scenario->>'opp_def_rtg')::float,       112.0)            AS opp_def_rtg,
+        COALESCE((pgl.scenario->>'def_vs_position')::float,     0.0)            AS def_vs_position,
+        COALESCE((pgl.scenario->>'implied_team_total')::float, 112.5)           AS implied_team_total,
+        COALESCE((pgl.scenario->>'spread')::float,               0.0)           AS spread
+
+    FROM  player_game_logs  pgl
+    JOIN  games             g   ON g.id  = pgl.game_id
+    JOIN  teams             t   ON t.id  = pgl.team_id
+
+    WHERE pgl.{stat_col} IS NOT NULL
+      AND pgl.min IS NOT NULL
+      AND pgl.min > 0
+      AND pgl.game_date >= :cutoff
+
+    WINDOW
+        w_season AS (
+            PARTITION BY pgl.player_id
+            ORDER BY pgl.game_date
+            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+        ),
+        w_l5 AS (
+            PARTITION BY pgl.player_id
+            ORDER BY pgl.game_date
+            ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
+        )
+)
+SELECT *
+FROM   pit
+WHERE  usage_rate_season > 0
+ORDER  BY game_date ASC
+"""
+
+_RESULT_COLUMNS = [
+    "log_id", "player_id", "game_id", "game_date", "actual_value",
+    *FEATURE_NAMES,
+]
+
 
 # ── Data loading ──────────────────────────────────────────────────────────────
 
-def fetch_prop_logs(db: Session, stat: str, days: int) -> pd.DataFrame:
+def fetch_prop_logs(engine, stat: str, days: int) -> pd.DataFrame:
     """
-    Pull historical player game logs with contextual features.
+    Pull historical player game logs with point-in-time computed features.
 
-    We use the `scenario` JSON field (populated by sync_qdrant / backfill)
-    which stores features like opp_pace, opp_def_rtg, expected_mins, etc.
-    Falls back to sensible defaults for missing fields.
+    Features 1-3 and 9-10 are derived from window functions over real game
+    data (no leakage). Features 4-8 come from PlayerGameLog.scenario,
+    defaulting to league averages when scenario is unpopulated.
     """
     from datetime import datetime, timedelta, timezone
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
 
-    logs = (
-        db.query(PlayerGameLog)
-        .join(Game, PlayerGameLog.game_id == Game.id)
-        .filter(
-            PlayerGameLog.game_date >= cutoff,
-            getattr(PlayerGameLog, stat).isnot(None),
-            PlayerGameLog.min.isnot(None),
-        )
-        .all()
-    )
+    stat_col = STAT_COLS[stat]
+    sql = text(_SQL_TEMPLATE.format(stat_col=stat_col))
 
-    logger.info(f"Fetched {len(logs)} player-game logs for stat={stat}")
-    rows = []
+    with engine.connect() as conn:
+        rows = conn.execute(sql, {"cutoff": cutoff}).fetchall()
 
-    for log in logs:
-        actual = getattr(log, stat, None)
-        if actual is None:
-            continue
+    logger.info(f"Fetched {len(rows)} player-game rows for stat={stat}")
 
-        sc = log.scenario or {}
-        rows.append({
-            # Target stat
-            "actual": float(actual),
-            # Feature: minutes (proxy for usage / expected output)
-            "expected_mins":       float(log.min or sc.get("expected_mins", 28.0)),
-            # From scenario JSON (populated by backfill/sync)
-            "usage_rate_season":   float(sc.get("usage_rate_season", 20.0)),
-            "l5_form_variance":    float(sc.get("l5_form_variance", 5.0)),
-            "opp_pace":            float(sc.get("opp_pace", 68.0)),
-            "opp_def_rtg":         float(sc.get("opp_def_rtg", 106.0)),
-            "def_vs_position":     float(sc.get("def_vs_position", 0.0)),
-            "implied_team_total":  float(sc.get("implied_team_total", 110.0)),
-            "spread":              float(sc.get("spread", 0.0)),
-            "rest_advantage":      float(sc.get("rest_advantage", 0.0)),
-            "is_home":             float(sc.get("is_home", 0.0)),
-        })
+    if not rows:
+        return pd.DataFrame()
 
-    return pd.DataFrame(rows)
-
-
-def build_label(df: pd.DataFrame, prop_line: float) -> np.ndarray:
-    """Binary label: 1 = player went OVER prop_line, 0 = under."""
-    return (df["actual"] > prop_line).astype(int).values
+    df = pd.DataFrame(rows, columns=_RESULT_COLUMNS)
+    return df
 
 
 def estimate_prop_lines(df: pd.DataFrame) -> pd.Series:
@@ -151,7 +219,7 @@ def estimate_prop_lines(df: pd.DataFrame) -> pd.Series:
     season mean as a synthetic line (tests model's ability to predict
     above/below expectation).
     """
-    return df["actual"].expanding().mean().shift(1).fillna(df["actual"].mean())
+    return df["actual_value"].expanding().mean().shift(1).fillna(df["actual_value"].mean())
 
 
 # ── Training ──────────────────────────────────────────────────────────────────
@@ -177,7 +245,7 @@ def train_model(X: pd.DataFrame, y: np.ndarray) -> object:
     return model
 
 
-def evaluate(model, X: pd.DataFrame, y: np.ndarray) -> None:
+def evaluate(model, X: pd.DataFrame, y: np.ndarray, stat: str) -> None:
     proba = model.predict_proba(X)[:, 1]
     preds = (proba >= 0.5).astype(int)
     print(f"\n  Accuracy : {accuracy_score(y, preds):.3f}")
@@ -189,6 +257,16 @@ def evaluate(model, X: pd.DataFrame, y: np.ndarray) -> None:
     print("\n  Feature importance:")
     for feat, imp in fi.items():
         print(f"    {feat:<25} {imp:.4f}")
+
+    # Warn if scenario-dependent features are suspiciously flat (all defaults)
+    scenario_feats = ["opp_pace", "opp_def_rtg", "def_vs_position", "implied_team_total", "spread"]
+    for feat in scenario_feats:
+        col_std = X[feat].std()
+        if col_std < 0.01:
+            print(
+                f"\n  WARNING: {feat} has near-zero variance (std={col_std:.4f})."
+                " Run backfill_scenario.py to populate real matchup context."
+            )
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -204,24 +282,28 @@ def main(stat: str, days: int, dry_run: bool) -> None:
     print(f"Training props model: stat={stat}, days={days}")
 
     engine = create_engine(str(settings.DATABASE_URL))
-    with Session(engine) as db:
-        df = fetch_prop_logs(db, stat, days)
+    df = fetch_prop_logs(engine, stat, days)
 
     if df.empty:
         print(f"\nNo player game logs found for stat={stat} in last {days} days.")
-        print("Run backend/run_backfill_pipeline.py to populate player data first.")
+        print("Populate player data first (nba_backfill.py), then run backfill_scenario.py.")
         return
 
     # Use rolling season mean as synthetic prop line
     prop_lines = estimate_prop_lines(df)
-    y = (df["actual"] > prop_lines).astype(int).values
+    y = (df["actual_value"] > prop_lines).astype(int).values
 
-    X = df[FEATURE_NAMES]
+    X = df[FEATURE_NAMES].astype(float).fillna(0.0)
 
     print(f"\n  Training samples : {len(X)}")
     print(f"  Over rate        : {y.mean():.1%}")
-    print(f"  Mean actual {stat:4s} : {df['actual'].mean():.1f}")
+    print(f"  Mean actual {stat:4s} : {df['actual_value'].mean():.1f}")
     print(f"  Mean prop line   : {prop_lines.mean():.1f}")
+
+    # Show feature variance so you can see which features have real signal
+    print("\n  Feature std devs (0 = all defaults, no real signal):")
+    for feat in FEATURE_NAMES:
+        print(f"    {feat:<25} {X[feat].std():.3f}")
 
     if dry_run:
         print("\n--dry-run: skipping training.")
@@ -241,7 +323,7 @@ def main(stat: str, days: int, dry_run: bool) -> None:
 
     # Evaluate
     print("\nIn-sample evaluation:")
-    evaluate(model, X_scaled, y)
+    evaluate(model, X_scaled, y, stat)
 
     # Save model
     os.makedirs(MODEL_BASE_DIR, exist_ok=True)

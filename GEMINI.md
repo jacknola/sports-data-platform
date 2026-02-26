@@ -1,73 +1,23 @@
-# GEMINI.md
+# GEMINI.md - Context Summary
 
-## Project Overview
+## Mission
+Quantitative sports betting platform for identifying +EV opportunities via sharp signals (RLM, Steam), Bayesian updates, and ML models.
 
-The **Sports Data Intelligence Platform** is a sophisticated quantitative sports betting platform designed to identify +EV (Positive Expected Value) wagering opportunities using a multi-agent system. It combines sharp signal detection (Reverse Line Movement, Steam, CLV), Bayesian modeling, and machine learning to provide actionable betting insights.
+## Tech Stack
+- **Backend:** Python 3.11+, FastAPI, SQLAlchemy (PostgreSQL), Redis, Celery.
+- **Frontend:** React, TypeScript, Tailwind, Vite, React Query.
+- **ML/Agents:** Hugging Face, PyMC, XGBoost. Multi-agent system (Orchestrator, Odds, Analysis, Twitter, Expert, Scraping, DvP).
+- **Integrations:** Notion, Google Sheets, Telegram, Twitter. MCP (betting-analysis, sheets-reporting, notebooklm, sequentialthinking).
 
-### Core Technologies
-- **Backend:** Python 3.11+, FastAPI, SQLAlchemy (PostgreSQL), Redis (Caching), Celery (Async Tasks).
-- **Frontend:** React, TypeScript, Tailwind CSS, Vite, React Query, Recharts.
-- **ML & Data:** Hugging Face Transformers, PyMC (Bayesian Modeling), XGBoost, TensorFlow, Crawl4AI.
-- **Integrations:** Notion, Google Sheets, Telegram, Twitter.
+## Core Rules & Conventions
+- **Betting Logic:** Devig sharp markets (multiplicative). EV = (True Prob * Decimal) - 1. Kelly sizing (Half/Quarter, 5% single/25% total cap).
+- **Code:** Absolute imports (`app.`), `loguru` (no print), Pydantic `BaseSettings`. RESTful FastAPI, TanStack Query for frontend state.
+- **Commands:** `./setup.sh`, `python run_server.py`, `npm run dev`, `pytest`, `ruff check .`
 
-## Architecture: Multi-Agent System
-
-The platform utilizes an **Orchestrator Agent** to coordinate specialized agents:
-- **OddsAgent:** Aggregates and devigs odds from sharp (Pinnacle/Circa) and retail books.
-- **AnalysisAgent:** Performs deep value analysis and Bayesian probability updates.
-- **TwitterAgent:** Monitors Twitter sentiment for teams and players.
-- **ExpertAgent:** Provides high-level recommendations using sequential thinking.
-- **ScrapingAgent:** Extracts real-time news and stats using AI-enhanced scraping.
-- **DvPAgent / NCAABDvPAgent:** Specialized agents for NBA and NCAAB efficiency analysis.
-
-## Core Betting Logic
-
-Adherence to these mathematical principles is mandatory across the codebase:
-- **Devigging:** Uses the multiplicative method to derive true probabilities from sharp markets.
-- **Expected Value (EV):** Calculated as `(True Probability × Decimal Odds) - 1`.
-- **Kelly Criterion:**
-    - **Default Scaling:** Half-Kelly (0.5) or Quarter-Kelly (0.25).
-    - **Single Bet Cap:** 5% of bankroll.
-    - **Total Exposure Cap:** 25% of bankroll.
-    - **Rounding:** Rounds to the nearest 0.25% (human-like sizing) to avoid sportsbook fingerprinting.
-- **Sharp Signals:** Tracks Reverse Line Movement (RLM) and Steam Moves as primary indicators of sharp intent.
-
-## Building and Running
-
-### Prerequisites
-- Python 3.11+
-- Node.js 18+
-- PostgreSQL & Redis
-- Docker (optional)
-
-### Key Commands
-
-| Task | Command | Directory |
-| :--- | :--- | :--- |
-| **Initial Setup** | `./setup.sh` | Root |
-| **Backend Dev** | `python run_server.py` | `backend/` |
-| **Frontend Dev** | `npm run dev` | `frontend/` |
-| **Run Migrations**| `alembic upgrade head` | `backend/` |
-| **Celery Worker** | `celery -A app.celery_app worker --loglevel=info` | `backend/` |
-| **Run Tests** | `pytest` | `backend/` |
-| **Linting** | `ruff check .` (Py) / `npm run lint` (TS) | `backend/` or `frontend/` |
-
-## Development Conventions
-
-- **Imports:** Always use absolute imports starting with `app.` (e.g., `from app.core.betting import ...`).
-- **Logging:** Use `loguru` exclusively. No `print()` statements.
-- **Configuration:** Managed via Pydantic `BaseSettings` in `backend/app/config`.
-- **API Style:** RESTful endpoints using FastAPI's dependency injection and Pydantic models.
-- **Frontend State:** Use `React Query` (TanStack Query) for all server state and caching.
-- **Database:** SQLAlchemy 2.0+ with async support.
-
-## MCP Integration
-
-The project integrates several Model Context Protocol (MCP) servers for enhanced capabilities:
-- **betting-analysis:** Specialized tools for betting calculations.
-- **sheets-reporting:** Automated Google Sheets syncing.
-- **notebooklm:** Research and knowledge retrieval.
-- **sequentialthinking:** Enhanced reasoning for complex analysis.
-- **redis:** Direct cache inspection and management.
-
-Refer to `mcp-config.json` for server configurations.
+## Current Session State & Guidelines
+- **Directive:** Prune context often; save only high-level summaries here.
+- **Recent Updates:** 
+  - Added dedicated 'ML Predictions' Google Sheets export tab for raw XGBoost model projections (Win Prob, Proj Total/Spread, Off/Def Ratings).
+  - Ensured prediction pipeline gracefully falls back to database historical data/scraped data when live odds APIs are exhausted.
+  - Fixed duplicate index errors in `conftest.py` SQLite testing by removing redundant `index=True` on unique/primary columns in SQLAlchemy models (`Bet`, `Game`, `HistoricalGameLine`).
+  - Fixed Bayesian analyzer tests failing due to mismatched method signatures and filtered zero-adjustments.

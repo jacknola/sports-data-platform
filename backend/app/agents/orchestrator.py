@@ -41,6 +41,8 @@ class OrchestratorAgent:
         results = {
             'sport': sport,
             'agents_used': [],
+            'odds': None,
+            'sentiment': [],
             'analysis': [],
             'ai_enhanced': False
         }
@@ -63,11 +65,23 @@ class OrchestratorAgent:
                     logger.warning(f"Failed to scrape news for {team}: {e}")
 
             results['scraped_data'] = scraped_data
-
-            # Step 2: Run Bayesian/RF analysis on value bets (provided by caller or Qdrant query)
-            logger.info("Step 2: Running Bayesian analysis...")
-            value_bets = task.get('value_bets', [])
-
+            
+            # Step 3: Analyze Twitter sentiment for each team
+            logger.info("Step 3: Analyzing Twitter sentiment...")
+            for team in teams:
+                sentiment_task = {
+                    'target': team,
+                    'target_type': 'team',
+                    'days': 7
+                }
+                sentiment_result = await self.twitter_agent.execute(sentiment_task)
+                results['sentiment'].append(sentiment_result)
+                results['agents_used'].append('TwitterAgent')
+            
+            # Step 4: Run Bayesian analysis on value bets
+            logger.info("Step 4: Running Bayesian analysis...")
+            value_bets = odds_result.get('value_bets', [])
+            
             for bet in value_bets[:15]:  # Analyze top 15 value bets
                 analysis_task = {
                     'selection': bet,
@@ -81,9 +95,9 @@ class OrchestratorAgent:
                 analysis_result = await self.analysis_agent.execute(analysis_task)
                 results['analysis'].append(analysis_result)
                 results['agents_used'].append('AnalysisAgent')
-
-            # Step 3: Get expert recommendation using sequential thinking
-            logger.info("Step 3: Getting expert recommendation...")
+            
+            # Step 5: Get expert recommendation using sequential thinking
+            logger.info("Step 5: Getting expert recommendation...")
             if value_bets:
                 expert_task = {
                     'bet_analysis': {
@@ -93,14 +107,14 @@ class OrchestratorAgent:
                         'edge': value_bets[0].get('edge'),
                         'posterior_prob': value_bets[0].get('posterior_p'),
                         'odds': value_bets[0].get('odds'),
-                        'sentiment': {}
+                        'sentiment': {team: results['sentiment'][i] for i, team in enumerate(teams)}
                     }
                 }
                 expert_result = await self.expert_agent.execute(expert_task)
                 results['expert_recommendation'] = expert_result
                 results['agents_used'].append('ExpertAgent')
 
-            # Step 4: Run DvP analysis for NBA slates
+            # Step 6: Run DvP analysis for NBA slates
             if sport in ('basketball_nba', 'nba'):
                 logger.info("Step 4: Running DvP analysis...")
                 try:
@@ -117,7 +131,7 @@ class OrchestratorAgent:
                     logger.warning(f"DvP analysis failed (non-fatal): {e}")
                     results['dvp'] = None
 
-            # Step 5: Run NCAAB efficiency analysis
+            # Step 7: Run NCAAB efficiency analysis
             if sport in ('basketball_ncaab', 'ncaab'):
                 logger.info("Step 5: Running NCAAB efficiency analysis...")
                 try:

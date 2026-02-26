@@ -175,7 +175,7 @@ class NBAMLPredictor:
         # Convert recent form list to a win rate scalar to avoid XGBoost object error
         h_form = features.get("home_recent_form", [1, 1, 1, 0, 1])
         a_form = features.get("away_recent_form", [1, 1, 0, 1, 0])
-        
+
         h_win_rate = sum(h_form) / len(h_form) if h_form else 0.5
         a_win_rate = sum(a_form) / len(a_form) if a_form else 0.5
 
@@ -193,7 +193,14 @@ class NBAMLPredictor:
         }
 
         # Select ONLY the columns the model was trained on
-        model_cols = ["home_off_rating", "home_def_rating", "away_off_rating", "away_def_rating", "home_win_pct", "away_win_pct"]
+        model_cols = [
+            "home_off_rating",
+            "home_def_rating",
+            "away_off_rating",
+            "away_def_rating",
+            "home_win_pct",
+            "away_win_pct",
+        ]
         df = pd.DataFrame([feature_dict])
         return df[model_cols]
 
@@ -225,19 +232,21 @@ class NBAMLPredictor:
             h_def = features["home_def_rating"].iloc[0]
             a_off = features["away_off_rating"].iloc[0]
             a_def = features["away_def_rating"].iloc[0]
-            
+
             # League average baseline
             league_avg = 115.0
-            
+
             # Projected points per 100 possessions
             h_proj = (h_off * a_def) / league_avg
             a_proj = (a_off * h_def) / league_avg
-            
-            logger.debug(f"Ratings: H_Off={h_off}, H_Def={h_def}, A_Off={a_off}, A_Def={a_def} | Proj: H={h_proj:.1f}, A={a_proj:.1f}")
-            
+
+            logger.debug(
+                f"Ratings: H_Off={h_off}, H_Def={h_def}, A_Off={a_off}, A_Def={a_def} | Proj: H={h_proj:.1f}, A={a_proj:.1f}"
+            )
+
             try:
                 # Pythagorean win prob
-                home_win_prob = (h_proj ** 14.0) / (h_proj ** 14.0 + a_proj ** 14.0)
+                home_win_prob = (h_proj**14.0) / (h_proj**14.0 + a_proj**14.0)
                 # Home court advantage (~3% boost)
                 home_win_prob += 0.03
                 home_win_prob = max(0.05, min(0.95, home_win_prob))
@@ -261,7 +270,7 @@ class NBAMLPredictor:
 
                 return {
                     "total_points": total_proj,
-                    "over_prob": 0.5, # Placeholder since regressor has no prob
+                    "over_prob": 0.5,  # Placeholder since regressor has no prob
                     "under_prob": 0.5,
                     "recommendation": "neutral",
                 }
@@ -391,29 +400,54 @@ class NBAMLPredictor:
         odds_data = await self.sports_api.get_odds("basketball_nba")
 
         if not odds_data:
-            logger.warning("NBA: Odds API returned no games. Attempting emergency discovery via Scrape...")
+            logger.warning(
+                "NBA: Odds API returned no games. Attempting emergency discovery via Scrape..."
+            )
             try:
                 from run_tomorrow_slate import scrape_action_network
+
                 scraped_games = await scrape_action_network("nba")
                 if scraped_games:
                     # Transform scraped games to look like Odds API objects
                     odds_data = []
                     for sg in scraped_games:
-                        odds_data.append({
-                            "id": f"SCRAPE_{sg['home']}_{sg['time']}",
-                            "home_team": sg['home'],
-                            "away_team": sg['away'],
-                            "commence_time": sg['time'],
-                            "bookmakers": [{
-                                "key": "action_consensus",
-                                "title": "Action Consensus",
-                                "markets": [
-                                    {"key": "spreads", "outcomes": [{"name": sg['home'], "point": sg['spread'] or 0}]},
-                                    {"key": "totals", "outcomes": [{"name": "Over", "point": sg['total'] or 0}]}
-                                ]
-                            }]
-                        })
-                    logger.info(f"Emergency discovery: {len(odds_data)} games via Action Network scrape")
+                        odds_data.append(
+                            {
+                                "id": f"SCRAPE_{sg['home']}_{sg['time']}",
+                                "home_team": sg["home"],
+                                "away_team": sg["away"],
+                                "commence_time": sg["time"],
+                                "bookmakers": [
+                                    {
+                                        "key": "action_consensus",
+                                        "title": "Action Consensus",
+                                        "markets": [
+                                            {
+                                                "key": "spreads",
+                                                "outcomes": [
+                                                    {
+                                                        "name": sg["home"],
+                                                        "point": sg["spread"] or 0,
+                                                    }
+                                                ],
+                                            },
+                                            {
+                                                "key": "totals",
+                                                "outcomes": [
+                                                    {
+                                                        "name": "Over",
+                                                        "point": sg["total"] or 0,
+                                                    }
+                                                ],
+                                            },
+                                        ],
+                                    }
+                                ],
+                            }
+                        )
+                    logger.info(
+                        f"Emergency discovery: {len(odds_data)} games via Action Network scrape"
+                    )
             except Exception as e:
                 logger.error(f"Emergency discovery failed: {e}")
 
@@ -461,10 +495,14 @@ class NBAMLPredictor:
                             for out in sp.get("outcomes", []):
                                 if out["name"] == home_team:
                                     spread_data["home_point"] = out.get("point", 0)
-                                    spread_data["home_odds"] = round(out.get("price", -110))
+                                    spread_data["home_odds"] = round(
+                                        out.get("price", -110)
+                                    )
                                 elif out["name"] == away_team:
                                     spread_data["away_point"] = out.get("point", 0)
-                                    spread_data["away_odds"] = round(out.get("price", -110))
+                                    spread_data["away_odds"] = round(
+                                        out.get("price", -110)
+                                    )
                             spread_data["book"] = b_data["key"]
 
                         # --- totals ---
@@ -475,15 +513,23 @@ class NBAMLPredictor:
                         if tot and not total_data:
                             for out in tot.get("outcomes", []):
                                 if out["name"] == "Over":
-                                    total_data["over_odds"] = round(out.get("price", -110))
+                                    total_data["over_odds"] = round(
+                                        out.get("price", -110)
+                                    )
                                     total_data["point"] = out.get("point", 0)
                                 elif out["name"] == "Under":
-                                    total_data["under_odds"] = round(out.get("price", -110))
+                                    total_data["under_odds"] = round(
+                                        out.get("price", -110)
+                                    )
                             total_data["book"] = b_data["key"]
 
                         if not best_book_used:
                             best_book_used = b_data["key"]
                         break
+
+                # If we have real odds but no target book found, use a fallback indicator
+                if home_odds != -110 and not best_book_used:
+                    best_book_used = "oddsapi"
 
                 features = {"odds": {"home": home_odds, "away": away_odds}}
 

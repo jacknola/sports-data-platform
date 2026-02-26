@@ -1,17 +1,11 @@
 # Sports Data Intelligence Platform – CLAUDE.md
 
-This file documents the codebase for Claude Code and AI assistants working in this repo.
+Full-stack sports betting intelligence platform.
 
----
-
-## Project Overview
-
-Full-stack sports betting intelligence platform with:
 - **Backend**: Python 3.11, FastAPI, SQLAlchemy, PostgreSQL, Redis
 - **Frontend**: React 18, TypeScript, Vite, Tailwind CSS, Recharts
-- **ML/Analysis**: XGBoost, PyMC (Bayesian), Hugging Face Transformers
-- **Telegram Pipeline**: Automated bet reports via cron (morning/afternoon/evening)
-- **College Basketball Tool**: Sharp money detection + edge calculator for NCAAB
+- **ML**: XGBoost, Bayesian Beta-Binomial, Random Forest, Qdrant vector search
+- **Reporting**: Telegram (cron + interactive bot), Slack, Google Sheets
 
 ---
 
@@ -20,121 +14,167 @@ Full-stack sports betting intelligence platform with:
 ```
 sports-data-platform/
 ├── backend/
-│   ├── main.py                  # FastAPI app entry point
-│   ├── run_server.py            # Uvicorn runner
-│   ├── run_ncaab_analysis.py    # NCAAB sharp money analysis script
-│   ├── run_nba_analysis.py      # NBA analysis script
-│   ├── telegram_cron.py         # Scheduled Telegram report runner
-│   ├── telegram_interactive.py  # Interactive Telegram bot
+│   ├── main.py                    # FastAPI entry point
+│   ├── run_server.py              # Uvicorn runner
+│   ├── init_db_script.py          # Create DB tables
+│   ├── run_ncaab_analysis.py      # NCAAB sharp money analysis (run nightly)
+│   ├── run_nba_analysis.py        # NBA ML predictions on tonight's slate
+│   ├── run_prop_export.py         # Player prop analysis → Google Sheets
+│   ├── run_model_comparison.py    # Bayesian vs RF model comparison
+│   ├── run_backfill_pipeline.py   # Full historical data backfill (start here)
+│   ├── backfill_scenario.py       # Populate opp_pace/opp_def_rtg in game logs
+│   ├── train_nba_model.py         # Train NBA moneyline XGBoost model
+│   ├── train_ncaab_model.py       # Train NCAAB moneyline XGBoost model
+│   ├── train_prop_model.py        # Train player props XGBoost model
+│   ├── export_to_sheets.py        # Export picks to Google Sheets
+│   ├── send_slack_report.py       # Send betting report to Slack
+│   ├── telegram_cron.py           # Scheduled Telegram reports (morning/afternoon/evening)
+│   ├── telegram_interactive.py    # Interactive Telegram bot
 │   ├── requirements.txt
 │   └── app/
-│       ├── config/__init__.py   # Pydantic Settings (env vars)
-│       ├── database.py          # SQLAlchemy async setup
-│       ├── models/              # SQLAlchemy ORM models
-│       ├── routers/             # FastAPI route handlers (see API section)
-│       ├── services/            # Business logic (see Services section)
-│       └── agents/              # Multi-agent system (see Agents section)
+│       ├── config/__init__.py     # Pydantic Settings (all env vars)
+│       ├── database.py            # SQLAlchemy async setup
+│       ├── models/                # ORM models (see Models section)
+│       ├── routers/               # FastAPI route handlers (see API section)
+│       ├── services/              # Business logic (see Services section)
+│       ├── agents/                # Multi-agent orchestration
+│       └── scripts/
+│           ├── sync_qdrant.py     # Ingest player props into Qdrant (run after backfill)
+│           └── backtest.py        # Walk-forward prop model backtest
 ├── frontend/
 │   └── src/
-│       ├── App.tsx              # Routes
-│       ├── components/Layout.tsx # Sidebar nav
+│       ├── App.tsx                # Routes
+│       ├── components/Layout.tsx  # Sidebar nav
 │       ├── pages/
-│       │   ├── CollegeBasketball.tsx  # NCAAB sharp money page
-│       │   ├── Dashboard.tsx
-│       │   ├── Bets.tsx
-│       │   ├── Analysis.tsx
-│       │   ├── Agents.tsx
-│       │   └── Settings.tsx
-│       └── utils/api.ts         # Axios client → /api base
+│       │   ├── Dashboard.tsx      # /
+│       │   ├── Bets.tsx           # /bets
+│       │   ├── CollegeBasketball.tsx  # /college-basketball
+│       │   ├── Analysis.tsx       # /analysis
+│       │   ├── Agents.tsx         # /agents
+│       │   └── Settings.tsx       # /settings
+│       └── utils/api.ts           # Axios client → /api
 ├── mcp-servers/
-│   ├── core/                    # Our MCP servers
-│   │   ├── betting-analysis/    # Betting analysis MCP server
-│   │   └── sheets-reporting/    # Google Sheets MCP server
-│   ├── examples/                # External: MCP examples repo (gitignored)
-│   └── postgres/                # External: Postgres MCP server (gitignored)
-└── docker-compose.yml           # PostgreSQL + Redis
+│   └── core/
+│       ├── betting-analysis/      # Betting analysis MCP server
+│       └── sheets-reporting/      # Google Sheets MCP server
+└── docker-compose.yml             # PostgreSQL + Redis
 ```
 
 ---
 
 ## Running Locally
 
-### Prerequisites
-- Python 3.11+, Node.js 18+, Docker (for PostgreSQL + Redis)
-
-### Start infrastructure
 ```bash
+# Infrastructure
 docker-compose up -d postgres redis
-```
 
-### Backend
-```bash
+# Backend
 cd backend
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # fill in API keys
+cp .env.example .env   # fill in keys
 uvicorn main:app --reload --port 8000
+
+# Frontend
+cd frontend && npm install && npm run dev   # http://localhost:5173
 ```
 
-### Frontend
-```bash
-cd frontend
-npm install
-npm run dev   # starts on http://localhost:5173
-```
-
-### Run NCAAB analysis
-```bash
-cd backend
-python run_ncaab_analysis.py
-```
-
-### Run Telegram reports
-```bash
-cd backend
-python telegram_cron.py          # scheduled cron runner
-python telegram_interactive.py   # interactive bot mode
-```
-
-### Other backend scripts
-```bash
-cd backend
-python train_nba_model.py          # train/retrain XGBoost NBA model → backend/models/nba_ml/
-python run_backfill_pipeline.py    # full historical data backfill
-python run_ncaab_backfill.py       # NCAAB historical data backfill
-python run_model_comparison.py     # compare ML model performance
-python export_to_sheets.py         # export data to Google Sheets
-python run_prop_export.py          # export player props data
-python send_slack_report.py        # send betting report to Slack
-```
-
-API docs available at `http://localhost:8000/docs`.
+API docs: `http://localhost:8000/docs`
 
 ---
 
-## Environment Variables (`.env`)
+## First-Time Setup (fresh DB)
 
-| Variable | Description | Required |
+```bash
+cd backend
+
+# 1. Create tables
+python init_db_script.py
+
+# 2. Backfill historical NBA data (games + players + game logs + scenario features)
+python run_backfill_pipeline.py                        # current season
+python run_backfill_pipeline.py --seasons 2024-25 2023-24  # multi-season
+python run_backfill_pipeline.py --skip-qdrant          # if Qdrant not running yet
+
+# 3. Sync player props to Qdrant (requires Qdrant running)
+python -m app.scripts.sync_qdrant
+
+# 4. Train models
+python train_nba_model.py        # → models/nba_ml/moneyline_model.pkl
+python train_ncaab_model.py      # → models/ncaab_ml/moneyline_model.pkl
+python train_prop_model.py       # → models/prop_ml/pts_model.pkl
+python train_prop_model.py --stat reb
+python train_prop_model.py --stat ast
+```
+
+---
+
+## Ongoing / Nightly
+
+```bash
+cd backend
+
+python run_ncaab_analysis.py     # NCAAB sharp money, edge, Kelly sizing
+python run_nba_analysis.py       # NBA ML predictions on tonight's slate
+python run_prop_export.py        # Player prop picks → Google Sheets
+
+python telegram_cron.py          # Scheduled: morning/afternoon/evening
+python telegram_interactive.py   # Interactive bot mode
+python send_slack_report.py      # One-shot Slack report
+python export_to_sheets.py       # Full picks export to Sheets
+
+# Model maintenance
+python backfill_scenario.py      # Re-populate opp_pace/opp_def_rtg after new games
+python run_model_comparison.py   # Compare Bayesian vs RF performance
+```
+
+---
+
+## Environment Variables
+
+| Variable | Purpose | Required |
 |---|---|---|
-| `DATABASE_URL` | PostgreSQL connection string | Yes |
-| `REDIS_URL` | Redis connection string | Yes |
-| `THE_ODDS_API_KEY` | The Odds API key for live lines | For live data |
-| `ODDSAPI_API_KEY` | Fallback odds API key | Optional |
-| `SPORTSRADAR_API_KEY` | SportsRadar key | Optional |
-| `TELEGRAM_BOT_TOKEN` | Telegram bot token for reports | For Telegram |
-| `TELEGRAM_CHAT_ID` | Telegram chat/channel ID | For Telegram |
-| `GEMINI_API_KEY` | Google Gemini for analysis | Optional |
-| `SUPABASE_URL` + `SUPABASE_ANON_KEY` | Supabase for data storage | Optional |
-| `TWITTER_BEARER_TOKEN` | Twitter API v2 bearer token | Optional |
-| `NOTION_API_KEY` + `NOTION_DATABASE_ID` | Notion integration | Optional |
+| `DATABASE_URL` | PostgreSQL connection | Yes |
+| `REDIS_URL` | Redis connection | Yes |
+| `THE_ODDS_API_KEY` | Live odds (The Odds API) | For live lines |
+| `ODDSAPI_API_KEY` | Fallback odds | Optional |
+| `BALLDONTLIE_API_KEY` | NBA player stats | Optional |
+| `QDRANT_HOST` | Qdrant vector DB host | For props ML |
+| `QDRANT_PORT` | Qdrant port (default 6333) | For props ML |
+| `QDRANT_API_KEY` | Qdrant Cloud API key | For cloud Qdrant |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot | For Telegram |
+| `TELEGRAM_CHAT_ID` | Telegram channel ID | For Telegram |
+| `TELEGRAM_TIMEZONE` | Cron timezone (default: America/New_York) | Optional |
+| `SLACK_WEBHOOK_URL` | Slack incoming webhook | For Slack |
+| `GOOGLE_SERVICE_ACCOUNT_PATH` | Google service account JSON path | For Sheets |
+| `GOOGLE_SPREADSHEET_ID` | Google Sheets ID | For Sheets |
 | `OPENAI_API_KEY` | OpenAI for agent reasoning | Optional |
-| `HUGGINGFACE_API_KEY` | HF inference API | Optional |
-| `GOOGLE_SERVICE_ACCOUNT_PATH` + `GOOGLE_SPREADSHEET_ID` | Google Sheets export | Optional |
-| `SPORTS_GAME_ODDS_API_KEY` | SportsGameOdds API key | Optional |
-| `QDRANT_HOST` + `QDRANT_PORT` + `QDRANT_API_KEY` | Qdrant vector DB connection | For vector search |
-| `SLACK_WEBHOOK_URL` | Slack webhook for reports | Optional |
+| `GEMINI_API_KEY` | Google Gemini AI | Optional |
+| `HUGGINGFACE_API_KEY` | HuggingFace inference | Optional |
+| `SUPABASE_URL` + `SUPABASE_ANON_KEY` | Supabase storage | Optional |
+| `NOTION_API_KEY` + `NOTION_DATABASE_ID` | Notion (stub, not implemented) | — |
+| `BETTING_BANKROLL` | Starting bankroll for Kelly sizing | Optional |
+| `CURRENT_SEASON` | NBA season string e.g. `2025-26` | Optional |
 
-All API keys are optional – missing keys cause services to fall back to mock/demo data rather than crashing.
+All keys are optional — services fall back to demo/mock data when missing.
+
+---
+
+## DB Models (`app/models/`)
+
+| Model | Table | Key Fields |
+|---|---|---|
+| `Game` | `games` | `sport`, `home_team`, `away_team`, `game_date`, `home_score`, `away_score` |
+| `Player` | `players` | `external_player_id`, `name`, `team_id`, `sport` |
+| `Team` | `teams` | `external_team_id`, `name`, `sport` |
+| `PlayerGameLog` | `player_game_logs` | `player_id`, `game_id`, `team_id`, `opponent_id`, `pts/reb/ast/min/pra`, `scenario` (JSON) |
+| `Bet` | `bets` | `game_id`, odds fields, edge, Kelly fraction, settlement |
+| `Parlay` | `parlays` | `legs` (JSON), confidence, ROI |
+| `ApiCache` | `api_cache` | Key/value TTL cache for API responses |
+
+**`PlayerGameLog.scenario` JSON** is populated by `backfill_scenario.py`:
+`opp_pace`, `opp_def_rtg`, `is_home` — used as features by `train_prop_model.py`
+and `app/scripts/sync_qdrant.py`.
 
 ---
 
@@ -142,185 +182,176 @@ All API keys are optional – missing keys cause services to fall back to mock/d
 
 | Router | Prefix | Description |
 |---|---|---|
-| `bets.py` | `/bets` | Best bets (NBA ML + Bayesian) |
-| `cbb_sharp.py` | `/cbb` | NCAAB sharp money + edge endpoints |
-| `odds.py` | `/odds` | Live odds fetching |
-| `props.py` | `/props` | Player prop analysis |
-| `live_props.py` | `/live-props` | Live in-game prop engine |
-| `dvp.py` | `/dvp` | Defense vs Position analysis |
-| `parlays.py` | `/parlays` | Parlay builder and tracking |
-| `analyze.py` | `/analyze` | General analysis endpoints |
-| `predictions.py` | `/predictions` | ML predictions |
+| `bets.py` | `/bets` | Best bets with edge filter |
+| `cbb_sharp.py` | `/cbb` | NCAAB sharp money endpoints (see below) |
+| `dvp.py` | `/dvp` | NBA Defense vs Position analysis |
+| `props.py` | `/props` | Player prop analysis and best picks |
+| `live_props.py` | `/props/live` | Live in-game prop engine |
+| `predictions.py` | `/analyze-prop` | RF + Bayesian prop inference via Qdrant |
+| `analyze.py` | `/analyze` | General analysis orchestration |
 | `agents.py` | `/agents` | Multi-agent orchestration |
-| `google_sheets.py` | `/sheets` | Google Sheets export |
-| `sentiment.py` | `/sentiment` | Twitter sentiment analysis |
-| `notion.py` | `/notion` | Notion integration |
+| `parlays.py` | `/parlays` | Parlay builder |
+| `google_sheets.py` | `/sheets` | Export to Google Sheets |
+| `notion.py` | `/notion` | Notion stub (not implemented) |
 
 ---
 
-## Key Services
+## NCAAB Sharp Money Tool
+
+### Endpoints (`/api/v1/cbb/`)
+
+| Endpoint | Description |
+|---|---|
+| `GET /cbb/summary` | Game count, EV bets, sharp signals |
+| `GET /cbb/games` | All games with multi-book odds |
+| `GET /cbb/edge` | Positive-EV bets (devigged true prob vs best price) |
+| `GET /cbb/sharp` | Sharp money signals (RLM, book divergence, steam) |
+| `GET /cbb/line-movement` | Line movement report |
+| `GET /cbb/book-divergence` | Sharp vs square book probability gaps |
+| `GET /cbb/best-bets` | Top bets by composite score (edge × sharp) |
+
+### Methodology
+
+- Devigging: multiplicative (`p_true = p_implied / Σ all_implied`)
+- Edge = `true_prob − market_implied_prob_at_best_price`
+- EV = `true_prob × (decimal_odds − 1) − (1 − true_prob)`
+- Kelly = 25% fractional Kelly, capped at 10% bankroll
+- Sharp books: Pinnacle, BetCris, Circa, BetOnline, Bookmaker, LowVig
+- Square books: DraftKings, FanDuel, BetMGM, Caesars, PointsBet
+- Signal score 0–4; ≥3 = strong sharp action
+
+### Frontend (`/college-basketball`)
+
+Three tabs: **Best Bets** | **Sharp Signals** | **Edge Calculator**
+
+---
+
+## Player Props ML Pipeline
+
+```
+run_backfill_pipeline.py  →  backfill_scenario.py  →  sync_qdrant.py
+                                                            ↓
+                                            Qdrant (nba_historical_props)
+                                                            ↓
+                                        inference_service.py
+                                    kNN → local RF → Beta-Binomial → edge + Kelly
+```
+
+**Feature vector (10-dim — must stay in sync across all scripts):**
+
+| # | Feature | Source |
+|---|---|---|
+| 1 | `usage_rate_season` | SQL window: pts/min × 36, prior games only |
+| 2 | `l5_form_variance` | SQL window: VAR_SAMP of target stat, last 5 games |
+| 3 | `expected_mins` | SQL window: AVG(min), prior games |
+| 4 | `opp_pace` | `PlayerGameLog.scenario` → `backfill_scenario.py` |
+| 5 | `opp_def_rtg` | `PlayerGameLog.scenario` → `backfill_scenario.py` |
+| 6 | `def_vs_position` | `PlayerGameLog.scenario` (not yet populated) |
+| 7 | `implied_team_total` | `PlayerGameLog.scenario` (not yet populated) |
+| 8 | `spread` | `PlayerGameLog.scenario` (not yet populated) |
+| 9 | `rest_advantage` | SQL: days since previous game (LAG) |
+| 10 | `is_home` | SQL: JOIN games.home_team = teams.name |
+
+Features 6–8 default to 0/league-averages until historical odds are stored.
+
+---
+
+## Key Services (`app/services/`)
 
 ### Betting Core
 | Service | Purpose |
 |---|---|
-| `cbb_edge_calculator.py` | NCAAB devigging, edge calc, Kelly sizing |
-| `sharp_money_tracker.py` | Sharp signal detection (RLM, book divergence) |
-| `sharp_money_detector.py` | Lightweight sharp money detection |
-| `ev_calculator.py` | Expected value calculations |
-| `bayesian.py` | Bayesian posterior probability |
-| `multivariate_kelly.py` | Multivariate Kelly criterion |
+| `cbb_edge_calculator.py` | NCAAB devigging, edge, Kelly |
+| `sharp_money_tracker.py` | NCAAB sharp signal detection (RLM, divergence) |
+| `sharp_money_detector.py` | Props sharp detection (CLV, line freeze) |
+| `ev_calculator.py` | EV from odds + probability |
+| `bayesian.py` | Bayesian posterior with multi-agent reasoning |
+| `multivariate_kelly.py` | Portfolio Kelly with correlation estimation |
 
 ### ML & Analysis
 | Service | Purpose |
 |---|---|
-| `nba_ml_predictor.py` | XGBoost NBA game predictions |
-| `nba_dvp_analyzer.py` | NBA Defense vs Position analysis |
-| `ncaab_dvp_analyzer.py` | NCAAB Defense vs Position analysis |
-| `ml_service.py` | General ML inference service |
-| `prop_analyzer.py` | Player prop analysis |
-| `live_prop_engine.py` | Live in-game prop engine |
+| `nba_ml_predictor.py` | NBA game predictions (loads `models/nba_ml/`) |
+| `ncaab_ml_predictor.py` | NCAAB game predictions (loads `models/ncaab_ml/`) |
+| `inference_service.py` | Props: Qdrant kNN → local RF → Bayesian |
+| `nba_dvp_analyzer.py` | NBA Defense vs Position + pace/DRtg from nba_api |
+| `ncaab_dvp_analyzer.py` | NCAAB Defense vs Position |
+| `prop_analyzer.py` | Player prop full pipeline |
+| `live_prop_engine.py` | Real-time in-game prop adjustment |
 
-### Telegram Pipeline
+### Data Fetching
 | Service | Purpose |
 |---|---|
-| `telegram_service.py` | Send reports via Telegram bot API |
-| `report_formatter.py` | Format betting reports for Telegram |
-| `bet_tracker.py` | Track placed bets and outcomes |
-| `bet_settlement.py` | Automated bet grading/settlement |
+| `sports_api.py` | Game discovery + odds (ESPN, The Odds API, TTL cache) |
+| `nba_stats_service.py` | NBA player stats (balldontlie, nba_api) |
+| `ncaab_stats_service.py` | NCAAB team stats (ESPN BPI scrape) |
 
-### Data & Integration
+### Backfill
 | Service | Purpose |
 |---|---|
-| `sports_api.py` | Sports data API client |
-| `sports_game_odds.py` | SportsGameOdds API client |
-| `google_sheets.py` | Google Sheets read/write |
-| `supabase_service.py` | Supabase data storage |
-| `gemini_service.py` | Google Gemini AI integration |
-| `twitter_analyzer.py` | Twitter sentiment analysis |
-| `slack_service.py` | Slack notifications |
-| `web_scraper.py` | Web scraping utilities |
+| `nba_backfill.py` | NBA game results from nba_api |
+| `player_backfill.py` | NBA player game logs from nba_api |
+| `ncaab_backfill.py` | NCAAB games (web scraping template — limited) |
+| `player_vector_backfill.py` | Embed player logs into Qdrant |
 
-### Vector Search & RAG
+### Reporting
 | Service | Purpose |
 |---|---|
-| `vector_store.py` | Qdrant vector store operations |
-| `similarity_search.py` | Find similar historical games/players |
-| `rag_pipeline.py` | Retrieval-augmented generation pipeline |
-| `ncaab_vector_backfill.py` | NCAAB vector embedding backfill |
-| `player_vector_backfill.py` | Player vector embedding backfill |
-| `feature_engineering.py` | ML feature extraction and transformation |
+| `telegram_service.py` | Telegram messages with chunking + retry |
+| `report_formatter.py` | Format reports for Telegram/Slack |
+| `slack_service.py` | Slack Block Kit messages via webhook |
+| `google_sheets.py` | Export daily picks to Sheets tabs |
+| `bet_tracker.py` | Track bets and outcomes |
+| `bet_settlement.py` | Automated bet grading |
 
-### Backfill & Model Training
+### Vector Search
 | Service | Purpose |
 |---|---|
-| `nba_backfill.py` | NBA historical data backfill |
-| `ncaab_backfill.py` | NCAAB historical data backfill |
-| `player_backfill.py` | Player historical data backfill |
-| `nba_stats_service.py` | NBA stats data fetching |
-| `ncaab_stats_service.py` | NCAAB stats data fetching |
-| `random_forest_model.py` | Random Forest model (alternative to XGBoost) |
-| `evaluation_metrics.py` | Model evaluation and scoring |
-| `game_profiler.py` | Game feature profiling |
-| `player_profiler.py` | Player feature profiling |
+| `vector_store.py` | Qdrant upsert/search |
+| `similarity_search.py` | Historical game/player similarity |
+| `rag_pipeline.py` | Retrieval-augmented generation |
 
-### Agents (`backend/app/agents/`)
+---
+
+## Agents (`app/agents/`)
+
 | Agent | Purpose |
 |---|---|
-| `orchestrator.py` | Coordinates multi-agent workflows |
-| `base_agent.py` | Base class for all agents |
-| `analysis_agent.py` | Analysis orchestration |
-| `odds_agent.py` | Odds data fetching |
-| `dvp_agent.py` | DvP analysis |
-| `expert_agent.py` | Expert reasoning |
-| `scraping_agent.py` | Web scraping |
-| `twitter_agent.py` | Twitter data |
-| `ncaab_dvp_agent.py` | NCAAB Defense vs Position agent |
+| `orchestrator.py` | Coordinates analysis, expert, scraping, DVP agents |
+| `analysis_agent.py` | Statistical/ML analysis |
+| `expert_agent.py` | Domain heuristic reasoning |
+| `dvp_agent.py` | NBA DvP analysis |
+| `ncaab_dvp_agent.py` | NCAAB DvP analysis |
+| `scraping_agent.py` | News/injury scraping |
 
 ---
 
-## College Basketball Sharp Money Tool
+## Adding a New Sport
 
-### Backend endpoints (`/api/v1/cbb/`)
-
-| Endpoint | Description |
-|---|---|
-| `GET /cbb/summary` | Dashboard summary: game count, EV bets, signals |
-| `GET /cbb/games` | All NCAAB games with current multi-book odds |
-| `GET /cbb/edge` | Positive-EV bets (devigged true prob vs best market price) |
-| `GET /cbb/sharp` | Sharp money signals (RLM, book divergence, line movement) |
-| `GET /cbb/line-movement` | Line movement report for all active games |
-| `GET /cbb/book-divergence` | Sharp book vs square book probability gaps |
-| `GET /cbb/best-bets` | Top bets ranked by composite score (edge × sharp score) |
-
-### Key methodology
-
-**`cbb_edge_calculator.py`**
-- Devigging: multiplicative (`p_true = p_implied / sum(all_implied)`)
-- Consensus probability: average across sharp books (Pinnacle, BetCris, etc.)
-- Edge = `true_prob - market_implied_prob_at_best_price`
-- EV = `true_prob × (decimal_odds - 1) - (1 - true_prob)`
-- Kelly = fractional Kelly (25% of full Kelly), capped at 10% bankroll
-
-**`sharp_money_tracker.py`**
-- Signals: book divergence, line movement, reverse line movement (RLM), spread discrepancy
-- Sharp books: `pinnacle, betcris, circa, betonlineag, bookmaker, lowvig`
-- Square books: `draftkings, fanduel, betmgm, caesars, pointsbet`
-- Scores signals 0–4; 3+ = strong sharp action
-
-### Frontend
-
-The `CollegeBasketball` page (`/college-basketball`) has three tabs:
-1. **Best Bets** – Combined edge + sharp ranking table
-2. **Sharp Signals** – Card grid of sharp signal details with expandable info
-3. **Edge Calculator** – Raw edge calculation table per market/side
-
----
-
-## Adding New Sports
-
-1. Add a service in `backend/app/services/` following `cbb_edge_calculator.py`
-2. Add a router in `backend/app/routers/` following `cbb_sharp.py`
-3. Register the router in `backend/main.py`
-4. Add a frontend page in `frontend/src/pages/`
-5. Add the route in `frontend/src/App.tsx` and nav item in `frontend/src/components/Layout.tsx`
-
----
-
-## Testing
-
-```bash
-# Backend
-cd backend
-pytest -v
-
-# Frontend type-check
-cd frontend
-npm run build   # catches TypeScript errors
-```
-
----
-
-## Research Tools
-
-- **NotebookLM** — important research tool for deep-diving docs, papers, or datasets; use for synthesis/Q&A over uploaded sources
+1. Add service in `app/services/` (follow `cbb_edge_calculator.py`)
+2. Add router in `app/routers/` (follow `cbb_sharp.py`)
+3. Register router in `main.py`
+4. Add page in `frontend/src/pages/`
+5. Add route in `App.tsx` and nav item in `Layout.tsx`
 
 ---
 
 ## Gotchas
 
-- All API keys are optional — services fall back to mock/demo data when keys are missing (won't crash)
-- Qdrant vector DB is required for vector search features but is **not** in the default `docker-compose.yml` — run it separately or disable RAG features
-- `backend/models/nba_ml/` contains trained model artifacts — do not delete; re-run `train_nba_model.py` to regenerate
-- Frontend proxies `/api` → backend — if API calls fail locally, check `vite.config.ts` proxy config
-- `backend/venv/` is gitignored but required; recreate with `python -m venv venv && pip install -r requirements.txt`
-- The `sports_api.py` service will use demo/mock data if no API keys are set — useful for local dev without keys
-- `_parse_bookmaker_spreads()` only parses `spreads` + `totals` markets — does NOT parse `h2h`; `pinnacle_home_odds` in its result = spread pricing (-110 typical), not actual moneyline odds
-- Services in `app/services/` often expose functionality only as class methods — add a module-level wrapper if you need a direct import (e.g. `SimilaritySearchService.find_similar_games`)
+- **Qdrant is not in docker-compose** — run separately (local or cloud). Without it, `/analyze-prop` fails; everything else works.
+- **`models/` directory is gitignored** — train models locally; artifacts go in `backend/models/{nba_ml,ncaab_ml,prop_ml}/`. Re-run training scripts to regenerate.
+- **`backfill_scenario.py` uses current-season stats** for all historical logs — accurate within a season, stale across seasons. Re-run at start of each season.
+- **Team names in `games` table** are 2-3 letter abbreviations (e.g. `"BOS"`), same as `Team.name`. They match nba_api `TEAM_ABBREVIATION`.
+- **`_parse_bookmaker_spreads()`** only parses `spreads` + `totals` markets, not `h2h`. `pinnacle_home_odds` in results = spread pricing (−110), not moneyline.
+- **Notion router** returns `{"status": "success", "message": "not yet implemented"}` — stub only.
+- **NCAAB backfill** (`ncaab_backfill.py`) is a scraping template. NCAAB game data must come from another source; `train_ncaab_model.py` requires games in the DB.
+- **`nba_ml_predictor.py`** falls back to Pythagorean expectation when `models/nba_ml/` doesn't exist. Train with `train_nba_model.py` first.
+- Frontend proxies `/api` → `http://localhost:8000` — check `vite.config.ts` if API calls fail locally.
 
 ---
 
 ## Git Conventions
 
-- Feature branches: `claude/<feature-name>-<id>`
-- Commit messages: imperative mood, describe the "why" not just "what"
-- Push with: `git push -u origin <branch-name>`
+- Branches: `claude/<feature>-<id>`
+- Commits: imperative mood, explain the why
+- Push: `git push -u origin <branch-name>`

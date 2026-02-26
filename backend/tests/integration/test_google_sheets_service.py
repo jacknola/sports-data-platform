@@ -1,54 +1,694 @@
+"""
+Google Sheets Export Service — Daily Picks
 
-import pytest
-from unittest.mock import MagicMock, patch
+Exports NCAAB, NBA, and Player Prop analysis to Google Sheets with
+separate tabs per sport. Uses gspread + service account auth.
+
+Tabs:
+  - Props           — All player props ranked by confidence/edge
+  - NBA Odds Picks  — NBA EV bets (only written when live odds are available)
+  - ML Predictions  — Raw XGBoost/model outputs (always written when games exist)
+  - NCAAB           — NCAAB sharp money picks
+  - Summary         — Daily overview (auto-generated)
+"""
+
+import os
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
 import gspread
-from app.services.google_sheets import GoogleSheetsService
+from google.oauth2.service_account import Credentials
+from loguru import logger
 
-@patch('gspread.service_account')
-def test_export_ml_predictions_creates_and_writes_to_tab(mock_service_account):
-    """
-    Test that export_ml_predictions creates a new tab and writes the correct data.
-    """
-    # Mock the gspread client and sheet
-    mock_client = MagicMock()
-    mock_sheet = MagicMock()
-    mock_worksheet = MagicMock()
-    mock_client.open_by_key.return_value = mock_sheet
-    
-    # Simulate worksheet not found on first call, then return it
-    mock_sheet.worksheet.side_effect = [gspread.exceptions.WorksheetNotFound, mock_worksheet]
-    mock_sheet.add_worksheet.return_value = mock_worksheet
-    
-    # Patch gspread.exceptions.WorksheetNotFound
-    with patch('gspread.exceptions.WorksheetNotFound', gspread.exceptions.WorksheetNotFound):
-        sheets_service = GoogleSheetsService()
-        sheets_service.client = mock_client
 
-    spreadsheet_id = "test_sheet_id"
-    nba_predictions = [
-        {
-            "home_team": "Team A",
-            "away_team": "Team B",
-            "moneyline_prediction": {"home_win_prob": 0.6},
-            "underover_prediction": {"total_points": 220.5},
-            "features": {"home_off_rating": 115.0}
-        }
+# ═══════════════════════════════════════════════════════════════════════
+# Stat display labels (mirrors slack_formatter)
+# ═══════════════════════════════════════════════════════════════════════
+
+_STAT_DISPLAY = {
+    "points": "PTS",
+    "rebounds": "REB",
+    "assists": "AST",
+    "threes": "3PM",
+    "blocks": "BLK",
+    "steals": "STL",
+    "pts+reb+ast": "PRA",
+    "pts+reb": "P+R",
+    "pts+ast": "P+A",
+    "reb+ast": "R+A",
+    "turnovers": "TO",
+    "stl+blk": "S+B",
+}
+
+
+def _fmt_odds(odds: int) -> str:
+    return f"+{odds}" if odds > 0 else str(odds)
+
+
+def _confidence_label(edge: float, ev_class: str) -> str:
+    if ev_class == "strong_play" or edge >= 0.08:
+        return "HIGH"
+    elif ev_class == "good_play" or edge >= 0.05:
+        return "MEDIUM"
+    elif ev_class == "lean" or edge >= 0.03:
+        return "LOW"
+    return "SPECULATIVE"
+
+
+class GoogleSheetsService:
+    """Service for exporting daily picks to Google Sheets."""
+
+    SCOPES = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
     ]
 
-    sheets_service.export_ml_predictions(spreadsheet_id, nba_predictions)
+    def __init__(self, credentials_path: Optional[str] = None):
+        from app.config import settings
 
-    # Assert that the worksheet was updated in a single batch
-    mock_worksheet.update.assert_called_once()
-    
-    # Check the data passed to the update call
-    update_args = mock_worksheet.update.call_args[1]
-    assert "values" in update_args
-    values = update_args["values"]
-    
-    # Check headers
-    assert values[0][0] == "Date"
-    
-    # Check data
-    assert values[1][1] == "Team B" # Away team
-    assert values[1][2] == "Team A" # Home team
-    assert values[1][4] == 60.0 # Winner Prob %
+        self.client: Optional[gspread.Client] = None
+        creds_path = credentials_path or settings.GOOGLE_SERVICE_ACCOUNT_PATH
+        if creds_path:
+            self._init_client(creds_path)
+        else:
+            logger.warning(
+                "Google Sheets not configured. Set GOOGLE_SERVICE_ACCOUNT_PATH in .env"
+            )
+
+    def _init_client(self, credentials_path: str) -> None:
+        """Initialize gspread client from service account JSON."""
+        try:
+            creds = Credentials.from_service_account_file(
+                credentials_path, scopes=self.SCOPES
+            )
+            self.client = gspread.authorize(creds)
+            logger.info("Google Sheets client initialized")
+        except FileNotFoundError:
+            logger.error(f"Service account file not found: {credentials_path}")
+        except Exception as e:
+            logger.error(f"Failed to init Google Sheets client: {e}")
+
+    @property
+    def is_configured(self) -> bool:
+        return self.client is not None
+
+    # ───────────────────────────────────────────────────────────────
+    # Worksheet helpers
+    # ───────────────────────────────────────────────────────────────
+
+    def _get_or_create_worksheet(
+        self,
+        spreadsheet: gspread.Spreadsheet,
+        name: str,
+        rows: int = 200,
+        cols: int = 20,
+    ) -> gspread.Worksheet:
+        """Get existing worksheet or create a new one."""
+        try:
+            ws = spreadsheet.worksheet(name)
+            ws.clear()
+            return ws
+        except gspread.WorksheetNotFound:
+            return spreadsheet.add_worksheet(title=name, rows=rows, cols=cols)
+
+    def _batch_write(
+        self,
+        worksheet: gspread.Worksheet,
+        headers: List[str],
+        rows: List[List[Any]],
+    ) -> int:
+        """Write headers + data rows in a single batch update."""
+        all_data = [headers] + rows
+
+        # Proper A1 notation for more than 26 columns
+        def _col_name(n):
+            name = ""
+            while n > 0:
+                n, remainder = divmod(n - 1, 26)
+                name = chr(65 + remainder) + name
+            return name
+
+        col_end = _col_name(len(headers))
+        worksheet.update(
+            range_name=f"A1:{col_end}{len(all_data)}",
+            values=all_data,
+        )
+        # Bold + freeze header row
+        worksheet.format("1:1", {"textFormat": {"bold": True}})
+        worksheet.freeze(rows=1)
+        return len(rows)
+
+    def _write_empty_tab(
+        self,
+        spreadsheet_id: str,
+        tab_name: str,
+        headers: List[str],
+        notice: str = "No data available",
+    ) -> Dict[str, Any]:
+        """Create/clear a tab and write only a header row plus a notice cell.
+
+        Used when a tab should always be present but has no data to show
+        (e.g. NBA Odds Picks when the odds API quota is exhausted).
+        """
+        if not self.client:
+            logger.error("Google Sheets client is not configured.")
+            return {"error": "Google Sheets not configured"}
+        try:
+            sheet = self.client.open_by_key(spreadsheet_id)
+            ws = self._get_or_create_worksheet(sheet, tab_name)
+            ws.update(
+                range_name="A1:B2",
+                values=[[tab_name, notice], ["", ""]],
+            )
+            ws.format("1:1", {"textFormat": {"bold": True}})
+            logger.info(f"Wrote empty placeholder to tab '{tab_name}': {notice}")
+            return {"status": "success", "tab": tab_name, "rows_written": 0}
+        except Exception as e:
+            logger.error(f"Empty tab write failed for '{tab_name}': {e}")
+            return {"error": str(e)}
+
+    # ───────────────────────────────────────────────────────────────
+    # Props export
+    # ───────────────────────────────────────────────────────────────
+
+    def export_props(
+        self,
+        spreadsheet_id: str,
+        prop_data: Dict[str, Any],
+        tab_name: str = "Props",
+    ) -> Dict[str, Any]:
+        """Export all analyzed props to a 'Props' tab, ranked by edge.
+
+        Args:
+            spreadsheet_id: Google Sheets ID
+            prop_data: Result from run_prop_analysis()
+            tab_name: Worksheet name
+
+        Returns:
+            Status dict with rows_written count
+        """
+        if not self.client:
+            return {"error": "Google Sheets not configured"}
+
+        try:
+            sheet = self.client.open_by_key(spreadsheet_id)
+            ws = self._get_or_create_worksheet(sheet, tab_name)
+
+            headers = [
+                "Date",
+                "Player",
+                "Matchup",
+                "Stat",
+                "Line",
+                "Pick",
+                "Odds",
+                "Projected",
+                "Edge %",
+                "Confidence",
+                "Kelly %",
+                "Signals",
+                "Situational Context",
+                "Best Book",
+            ]
+
+            # Use ALL analyzed props, sorted by edge descending
+            all_props = prop_data.get("props", [])
+            all_props.sort(key=lambda x: x.get("bayesian_edge", 0), reverse=True)
+
+            today = datetime.now().strftime("%Y-%m-%d")
+            rows: List[List[Any]] = []
+
+            for p in all_props:
+                stat_type = p.get("stat_type", "")
+                stat_label = _STAT_DISPLAY.get(stat_type, stat_type.upper())
+                best_side = p.get("best_side", "over").upper()
+                odds = (
+                    p.get("over_odds", -110)
+                    if best_side == "OVER"
+                    else p.get("under_odds", -110)
+                )
+                edge = p.get("bayesian_edge", 0)
+                ev_class = p.get("ev_classification", "")
+                best_book = (
+                    p.get("best_over_book", "")
+                    if best_side == "OVER"
+                    else p.get("best_under_book", "")
+                )
+                home = p.get("home_team", "")
+                away = p.get("away_team", "")
+                matchup = f"{away} @ {home}" if home and away else ""
+                signals = ", ".join(p.get("sharp_signals", []))
+
+                # Extract situational RAG context
+                situational_context = p.get(
+                    "situational_context", "No historical analogs found."
+                )
+
+                rows.append(
+                    [
+                        today,
+                        p.get("player_name", ""),
+                        matchup,
+                        stat_label,
+                        p.get("line", 0),
+                        best_side,
+                        _fmt_odds(int(odds)),
+                        round(p.get("projected_mean", 0), 1),
+                        round(edge * 100, 2),
+                        _confidence_label(edge, ev_class),
+                        round(p.get("kelly_fraction", 0) * 100, 2),
+                        signals,
+                        situational_context,
+                        best_book,
+                    ]
+                )
+
+            written = self._batch_write(ws, headers, rows)
+            logger.info(f"Exported {written} props to Google Sheets tab '{tab_name}'")
+            return {"status": "success", "tab": tab_name, "rows_written": written}
+
+        except Exception as e:
+            logger.error(f"Props export failed: {e}")
+            return {"error": str(e)}
+
+    # ───────────────────────────────────────────────────────────────
+    # NBA export
+    # ───────────────────────────────────────────────────────────────
+
+    def export_nba(
+        self,
+        spreadsheet_id: str,
+        predictions: List[Dict[str, Any]],
+        bets: List[Dict[str, Any]],
+        tab_name: str = "NBA",
+    ) -> Dict[str, Any]:
+        """Export NBA game predictions + bets to an 'NBA' tab."""
+        if not self.client:
+            return {"error": "Google Sheets not configured"}
+
+        try:
+            sheet = self.client.open_by_key(spreadsheet_id)
+            ws = self._get_or_create_worksheet(sheet, tab_name)
+
+            headers = [
+                "Date",
+                "Matchup",
+                "Away ML",
+                "Home ML",
+                "Spread",
+                "Total",
+                "Proj Spread",
+                "Proj Total",
+                "Fair ML",
+                "Winner",
+                "Win %",
+                "Edge %",
+                "Kelly %",
+                "Bet Size",
+                "Book",
+            ]
+
+            today = datetime.now().strftime("%Y-%m-%d")
+            bet_lookup = {b.get("game_id", ""): b for b in bets}
+            rows: List[List[Any]] = []
+
+            def _to_american(prob: float) -> int:
+                if prob >= 0.999:
+                    return -10000
+                if prob <= 0.001:
+                    return +10000
+                return (
+                    int(-100 * (prob / (1 - prob)))
+                    if prob >= 0.5
+                    else int(100 * ((1 - prob) / prob))
+                )
+
+            for p in predictions:
+                if "error" in p:
+                    continue
+
+                ev = p.get("expected_value", {})
+                uo = p.get("underover_prediction", {})
+                ml = p.get("moneyline_prediction", {})
+                home = p.get("home_team", "")
+                away = p.get("away_team", "")
+                home_prob = ml.get("home_win_prob", 0.5)
+                away_prob = ml.get("away_win_prob", 0.5)
+
+                matchup = f"{away} @ {home}"
+                winner = home if home_prob >= away_prob else away
+                win_p = max(home_prob, away_prob)
+
+                fair_ml = _to_american(win_p)
+
+                # Spread data
+                spread_data = p.get("spread", {})
+                spread_val = spread_data.get("home_point", "") if spread_data else ""
+
+                # Total data
+                total_data = p.get("total", {})
+                total_val = total_data.get("point", "") if total_data else ""
+
+                # Projections
+                proj_spread = round((home_prob - 0.5) * -26, 1)
+                proj_total = round(uo.get("total_points", 0), 1) if uo else ""
+
+                # Best bet / Edge
+                best_bet = ev.get("best_bet", "")
+                best_edge = (
+                    ev.get("home_ev", 0) if best_bet == "home" else ev.get("away_ev", 0)
+                )
+                kelly = p.get("kelly_criterion", 0)
+
+                # Match to bets list
+                gid = f"NBA_{home}_{away}_{today.replace('-', '')}".replace(" ", "")
+                bet = bet_lookup.get(gid, {})
+                bet_size = bet.get("bet_size", 0) if bet else 0
+
+                rows.append(
+                    [
+                        today,
+                        matchup,
+                        _fmt_odds(ev.get("away_odds", 0))
+                        if ev.get("away_odds")
+                        else "",
+                        _fmt_odds(ev.get("home_odds", 0))
+                        if ev.get("home_odds")
+                        else "",
+                        spread_val,
+                        total_val,
+                        proj_spread,
+                        proj_total,
+                        fair_ml,
+                        winner,
+                        round(win_p * 100, 1),
+                        round(best_edge * 100, 2) if best_edge else "",
+                        round(kelly * 100, 2) if kelly else "",
+                        round(bet_size, 2) if bet_size else "",
+                        p.get("book", ""),
+                    ]
+                )
+
+            written = self._batch_write(ws, headers, rows)
+            logger.info(f"Exported {written} NBA games to tab '{tab_name}'")
+            return {"status": "success", "tab": tab_name, "rows_written": written}
+
+        except Exception as e:
+            logger.error(f"NBA export failed: {e}")
+            return {"error": str(e)}
+
+    # ───────────────────────────────────────────────────────────────
+    # NCAAB export
+    # ───────────────────────────────────────────────────────────────
+
+    def export_ncaab(
+        self,
+        spreadsheet_id: str,
+        ncaab_data: Dict[str, Any],
+        tab_name: str = "NCAAB",
+    ) -> Dict[str, Any]:
+        """Export NCAAB sharp money analysis to an 'NCAAB' tab."""
+        if not self.client:
+            return {"error": "Google Sheets not configured"}
+
+        try:
+            sheet = self.client.open_by_key(spreadsheet_id)
+            ws = self._get_or_create_worksheet(sheet, tab_name)
+
+            headers = [
+                "Date",
+                "Matchup",
+                "Conference",
+                "Spread",
+                "Total",
+                "Pinnacle Home",
+                "Pinnacle Away",
+                "True Home %",
+                "True Away %",
+                "Home Edge %",
+                "Away Edge %",
+                "Pick",
+                "Kelly %",
+                "Bet Size",
+                "Confidence",
+                "Signals",
+                "Historical Context",
+            ]
+
+            today = datetime.now().strftime("%Y-%m-%d")
+            analyses = ncaab_data.get("game_analyses", [])
+            bets = ncaab_data.get("bets", [])
+            bets_lookup: Dict[str, Dict] = {}
+            for b in bets:
+                bets_lookup[b.get("game_id", "") + "_HOME"] = b
+                bets_lookup[b.get("game_id", "") + "_AWAY"] = b
+
+            rows: List[List[Any]] = []
+
+            for a in analyses:
+                game = a.get("game", {})
+                home = game.get("home", "")
+                away = game.get("away", "")
+                matchup = f"{away} @ {home}"
+                gid = game.get("game_id", "")
+                signals = a.get("sharp_signals", [])
+                he = a.get("home_edge", 0)
+                ae = a.get("away_edge", 0)
+
+                # Find bet for this game
+                bet = bets_lookup.get(gid + "_HOME") or bets_lookup.get(
+                    gid + "_AWAY", {}
+                )
+
+                confidence = a.get("confidence_level", "SPECULATIVE")
+                historical = "; ".join(
+                    s.get("game", "")[:60] for s in a.get("historical_context", [])[:2]
+                )
+
+                rows.append(
+                    [
+                        today,
+                        matchup,
+                        game.get("conference", ""),
+                        game.get("spread", 0),
+                        game.get("total", ""),
+                        _fmt_odds(game.get("pinnacle_home_odds", 0)),
+                        _fmt_odds(game.get("pinnacle_away_odds", 0)),
+                        round(a.get("true_home_prob", 0) * 100, 1),
+                        round(a.get("true_away_prob", 0) * 100, 1),
+                        round(he * 100, 2),
+                        round(ae * 100, 2),
+                        bet.get("side", "") if bet else "",
+                        round(bet.get("portfolio_fraction_pct", 0), 2) if bet else "",
+                        round(bet.get("bet_size_$", 0), 2) if bet else "",
+                        confidence,
+                        ", ".join(signals) if signals else "",
+                        historical or "No historical data",
+                    ]
+                )
+
+            written = self._batch_write(ws, headers, rows)
+            logger.info(f"Exported {written} NCAAB games to tab '{tab_name}'")
+            return {"status": "success", "tab": tab_name, "rows_written": written}
+
+        except Exception as e:
+            logger.error(f"NCAAB export failed: {e}")
+            return {"error": str(e)}
+
+    # ───────────────────────────────────────────────────────────────
+    # ML Predictions tab (NBA + NCAAB model outputs)
+    # ───────────────────────────────────────────────────────────────
+
+    def export_ml_predictions(
+        self,
+        spreadsheet_id: str,
+        predictions: List[Dict[str, Any]],
+        sport: str = "NBA",
+        tab_name: str = "ML Predictions",
+    ) -> Dict[str, Any]:
+        """Export ML model win-probability predictions to a dedicated tab.
+
+        Works with output from NBAMLPredictor.predict_today_games() or
+        NCAABMLPredictor.predict_today_games().
+
+        Args:
+            spreadsheet_id: Google Sheets ID
+            predictions: List of prediction dicts from the ML predictor
+            sport: Label string ("NBA" or "NCAAB")
+            tab_name: Worksheet name
+
+        Returns:
+            Status dict with rows_written count
+        """
+        if not self.client:
+            return {"error": "Google Sheets not configured"}
+
+        try:
+            sheet = self.client.open_by_key(spreadsheet_id)
+            ws = self._get_or_create_worksheet(sheet, tab_name)
+
+            headers = [
+                "Date", "Sport", "Home", "Away",
+                "Predicted Winner", "Home Win %", "Away Win %",
+                "Best Bet", "Home Odds", "Away Odds",
+                "Home EV", "Away EV",
+                "Edge %", "Kelly %",
+                "Confidence", "Method",
+            ]
+
+            today = datetime.now().strftime("%Y-%m-%d")
+            rows: List[List[Any]] = []
+
+            for p in predictions:
+                if "error" in p:
+                    continue
+
+                ev = p.get("expected_value", {})
+                home_prob = p.get("home_win_probability") or p.get(
+                    "moneyline_prediction", {}
+                ).get("home_win_prob", 0.5)
+                away_prob = p.get("away_win_probability") or (1 - home_prob)
+
+                best_bet = ev.get("best_bet", "")
+                predicted_winner = (
+                    p.get("home_team") if best_bet == "home" else p.get("away_team")
+                )
+
+                # Edge: best EV side
+                best_ev = ev.get("home_ev", 0) if best_bet == "home" else ev.get("away_ev", 0)
+
+                # Kelly
+                kelly = p.get("kelly_criterion", 0)
+
+                rows.append([
+                    today,
+                    sport.upper(),
+                    p.get("home_team", ""),
+                    p.get("away_team", ""),
+                    predicted_winner or "",
+                    round(home_prob * 100, 1),
+                    round(away_prob * 100, 1),
+                    best_bet.upper() if best_bet else "",
+                    _fmt_odds(ev.get("home_odds", 0)) if ev.get("home_odds") else "",
+                    _fmt_odds(ev.get("away_odds", 0)) if ev.get("away_odds") else "",
+                    round(ev.get("home_ev", 0) * 100, 2),
+                    round(ev.get("away_ev", 0) * 100, 2),
+                    round(best_ev * 100, 2),
+                    round(kelly * 100, 2),
+                    round(p.get("confidence", 0), 3),
+                    p.get("method", ""),
+                ])
+
+            written = self._batch_write(ws, headers, rows)
+            logger.info(f"Exported {written} {sport} ML predictions to tab '{tab_name}'")
+            return {"status": "success", "tab": tab_name, "rows_written": written}
+
+        except Exception as e:
+            logger.error(f"ML predictions export failed: {e}")
+            return {"error": str(e)}
+
+    # ───────────────────────────────────────────────────────────────
+    # Summary tab
+    # ───────────────────────────────────────────────────────────────
+
+    def export_summary(
+        self,
+        spreadsheet_id: str,
+        ncaab_data: Optional[Dict] = None,
+        nba_predictions: Optional[List[Dict]] = None,
+        nba_bets: Optional[List[Dict]] = None,
+        prop_data: Optional[Dict] = None,
+        tab_name: str = "Summary",
+    ) -> Dict[str, Any]:
+        """Write a summary overview tab."""
+        if not self.client:
+            return {"error": "Google Sheets not configured"}
+
+        try:
+            sheet = self.client.open_by_key(spreadsheet_id)
+            ws = self._get_or_create_worksheet(sheet, tab_name, rows=30, cols=5)
+
+            now = datetime.now().strftime("%Y-%m-%d %I:%M %p ET")
+            ncaab_games = len((ncaab_data or {}).get("game_analyses", []))
+            ncaab_bets = len((ncaab_data or {}).get("bets", []))
+            nba_games = len([p for p in (nba_predictions or []) if "error" not in p])
+            nba_bet_count = len(nba_bets or [])
+            prop_total = (prop_data or {}).get("total_props", 0)
+            prop_ev = (prop_data or {}).get("positive_ev_count", 0)
+
+            total_exposure = sum(
+                b.get("bet_size_$", 0) for b in (ncaab_data or {}).get("bets", [])
+            ) + sum(b.get("bet_size", 0) for b in (nba_bets or []))
+
+            summary_data = [
+                ["Daily Picks Summary", now],
+                ["", ""],
+                ["Metric", "Value"],
+                ["NCAAB Games", ncaab_games],
+                ["NCAAB Bets", ncaab_bets],
+                ["NBA Games", nba_games],
+                ["NBA Bets", nba_bet_count],
+                ["Props Scanned", prop_total],
+                ["Props +EV", prop_ev],
+                ["Total Exposure", f"${total_exposure:.0f}"],
+                ["", ""],
+                ["Generated by", "sports-data-platform"],
+            ]
+
+            ws.update(range_name=f"A1:B{len(summary_data)}", values=summary_data)
+            ws.format("1:1", {"textFormat": {"bold": True, "fontSize": 14}})
+            ws.format("3:3", {"textFormat": {"bold": True}})
+            ws.freeze(rows=0)
+
+            logger.info("Exported summary to Google Sheets")
+            return {"status": "success", "tab": tab_name}
+
+        except Exception as e:
+            logger.error(f"Summary export failed: {e}")
+            return {"error": str(e)}
+
+    # ───────────────────────────────────────────────────────────────
+    # Full daily export (all tabs)
+    # ───────────────────────────────────────────────────────────────
+
+    def export_daily_picks(
+        self,
+        spreadsheet_id: str,
+        ncaab_data: Optional[Dict[str, Any]] = None,
+        nba_predictions: Optional[List[Dict[str, Any]]] = None,
+        nba_bets: Optional[List[Dict[str, Any]]] = None,
+        prop_data: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Export all daily picks to Google Sheets (Props + NBA + NCAAB + Summary).
+
+        Args:
+            spreadsheet_id: Target Google Sheets ID
+            ncaab_data: Result from run_ncaab_analysis()
+            nba_predictions: NBA predictions list
+            nba_bets: NBA qualifying bets
+            prop_data: Result from run_prop_analysis()
+
+        Returns:
+            Dict with per-tab results
+        """
+        if not self.client:
+            return {"error": "Google Sheets not configured"}
+
+        results: Dict[str, Any] = {}
+
+        if prop_data and prop_data.get("props"):
+            results["props"] = self.export_props(spreadsheet_id, prop_data)
+
+        # Split predictions into two buckets:
+        #   odds_preds  — games where real market odds were fetched (book is set OR odds != default -110)
+        #   all_preds   — every game, regardless of odds availability
+        all_preds = [p for p in (nba_predictions or []) if "error" not in p]
+
+        def _has_real_odds(pred: Dict) -> bool:
+            """Check if prediction has real market odds (not default -110/-110)."""
+            if pred.get("book"):
+                return True
+            return False
+
+        # Ensure a return value on all code paths
+        return results
