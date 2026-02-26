@@ -4,7 +4,7 @@ Parlay model - Dan's AI Sports Picks style
 from sqlalchemy import Column, Integer, String, Float, DateTime, JSON, Text, Boolean
 from sqlalchemy.orm import relationship
 from app.database import Base
-import datetime
+from datetime import datetime, timezone
 
 
 class Parlay(Base):
@@ -70,8 +70,8 @@ class Parlay(Base):
     similar_parlays = Column(JSON, nullable=True)  # IDs of similar historical parlays
     
     # Timestamps
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     event_date = Column(DateTime)  # Date of the events in parlay
     
     # Additional metadata
@@ -112,4 +112,4 @@ class ParlayLeg(Base):
     
     # Timestamps
     game_time = Column(DateTime)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
