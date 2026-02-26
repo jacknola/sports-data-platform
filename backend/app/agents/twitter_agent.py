@@ -26,7 +26,7 @@ class TwitterAgent(BaseAgent):
         
         try:
             # Get sentiment analysis
-            sentiment_data = await self.twitter_analyzer.analyze_team_sentiment(target, n_days)
+            sentiment_data = self.twitter_analyzer.analyze_team_sentiment(target, n_days)
             
             # Check confidence
             confidence = sentiment_data.get('sentiment_confidence', 0)

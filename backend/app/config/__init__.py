@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     TWITTER_BEARER_TOKEN: Optional[str] = None
     TWITTER_CONSUMER_KEY: Optional[str] = None
     TWITTER_CONSUMER_SECRET: Optional[str] = None
+    TWITTER_ACCESS_TOKEN: Optional[str] = None
+    TWITTER_ACCESS_TOKEN_SECRET: Optional[str] = None
 
     # Hugging Face
     HUGGINGFACE_API_KEY: Optional[str] = None

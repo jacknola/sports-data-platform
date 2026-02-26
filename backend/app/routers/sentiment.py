@@ -24,7 +24,7 @@ async def get_team_sentiment(team: str, days: int = 7) -> Dict[str, Any]:
         Sentiment analysis results
     """
     try:
-        result = await twitter_analyzer.analyze_team_sentiment(team, days)
+        result = twitter_analyzer.analyze_team_sentiment(team, days)
         return result
     except Exception as e:
         logger.error(f"Sentiment analysis error: {e}")
@@ -45,6 +45,6 @@ async def analyze_tweets(texts: list[str]) -> Dict[str, Any]:
     from app.services.ml_service import MLService
     
     ml_service = MLService()
-    result = await ml_service.analyze_sentiment(texts)
+    result = ml_service.analyze_sentiment(texts)
     return result
 
