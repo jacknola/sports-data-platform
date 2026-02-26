@@ -8,7 +8,6 @@ from app.agents.odds_agent import OddsAgent
 from app.agents.analysis_agent import AnalysisAgent
 from app.agents.twitter_agent import TwitterAgent
 from app.agents.expert_agent import ExpertAgent
-from app.agents.scraping_agent import ScrapingAgent
 from app.agents.dvp_agent import DvPAgent
 from app.agents.ncaab_dvp_agent import NCAABDvPAgent
 from app.memory.agent_memory import AgentMemory
@@ -16,13 +15,12 @@ from app.memory.agent_memory import AgentMemory
 
 class OrchestratorAgent:
     """Orchestrates multiple agents to accomplish complex tasks"""
-    
+
     def __init__(self):
         self.odds_agent = OddsAgent()
         self.analysis_agent = AnalysisAgent()
         self.twitter_agent = TwitterAgent()
         self.expert_agent = ExpertAgent()
-        self.scraping_agent = ScrapingAgent()
         self.dvp_agent = DvPAgent()
         self.ncaab_dvp_agent = NCAABDvPAgent()
         self.memory = AgentMemory()
@@ -59,25 +57,7 @@ class OrchestratorAgent:
             results['odds'] = odds_result
             results['agents_used'].append('OddsAgent')
             
-            # Step 2: Scrape news and stats
-            logger.info("Step 2: Scraping sports news and stats...")
-            scraped_data = []
-            for team in teams:
-                try:
-                    news_task = {
-                        'url': f'https://www.espn.com/nfl/team/_/name/{team}',
-                        'data_type': 'news',
-                        'team': team
-                    }
-                    news_result = await self.scraping_agent.execute(news_task)
-                    scraped_data.append(news_result)
-                    results['agents_used'].append('ScrapingAgent')
-                except Exception as e:
-                    logger.warning(f"Failed to scrape news for {team}: {e}")
-            
-            results['scraped_data'] = scraped_data
-            
-            # Step 3: Analyze Twitter sentiment for each team
+            # Step 2: Analyze Twitter sentiment for each team
             logger.info("Step 3: Analyzing Twitter sentiment...")
             for team in teams:
                 sentiment_task = {
@@ -222,7 +202,6 @@ class OrchestratorAgent:
             'orchestrator': 'active',
             'agents': {
                 'odds': self.odds_agent.get_agent_status(),
-                'scraping': self.scraping_agent.get_agent_status(),
                 'analysis': self.analysis_agent.get_agent_status(),
                 'twitter': self.twitter_agent.get_agent_status(),
                 'expert': self.expert_agent.get_agent_status(),
