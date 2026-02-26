@@ -99,9 +99,6 @@ python telegram_interactive.py   # interactive bot mode
 ### Other backend scripts
 ```bash
 cd backend
-python train_nba_model.py          # train/retrain XGBoost NBA model → backend/models/nba_ml/
-python run_backfill_pipeline.py    # full historical data backfill
-python run_ncaab_backfill.py       # NCAAB historical data backfill
 python run_model_comparison.py     # compare ML model performance
 python export_to_sheets.py         # export data to Google Sheets
 python run_prop_export.py          # export player props data
@@ -123,14 +120,11 @@ API docs available at `http://localhost:8000/docs`.
 | `SPORTSRADAR_API_KEY` | SportsRadar key | Optional |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token for reports | For Telegram |
 | `TELEGRAM_CHAT_ID` | Telegram chat/channel ID | For Telegram |
-| `GEMINI_API_KEY` | Google Gemini for analysis | Optional |
 | `SUPABASE_URL` + `SUPABASE_ANON_KEY` | Supabase for data storage | Optional |
 | `TWITTER_BEARER_TOKEN` | Twitter API v2 bearer token | Optional |
-| `NOTION_API_KEY` + `NOTION_DATABASE_ID` | Notion integration | Optional |
 | `OPENAI_API_KEY` | OpenAI for agent reasoning | Optional |
 | `HUGGINGFACE_API_KEY` | HF inference API | Optional |
 | `GOOGLE_SERVICE_ACCOUNT_PATH` + `GOOGLE_SPREADSHEET_ID` | Google Sheets export | Optional |
-| `SPORTS_GAME_ODDS_API_KEY` | SportsGameOdds API key | Optional |
 | `QDRANT_HOST` + `QDRANT_PORT` + `QDRANT_API_KEY` | Qdrant vector DB connection | For vector search |
 | `SLACK_WEBHOOK_URL` | Slack webhook for reports | Optional |
 
@@ -154,7 +148,6 @@ All API keys are optional – missing keys cause services to fall back to mock/d
 | `agents.py` | `/agents` | Multi-agent orchestration |
 | `google_sheets.py` | `/sheets` | Google Sheets export |
 | `sentiment.py` | `/sentiment` | Twitter sentiment analysis |
-| `notion.py` | `/notion` | Notion integration |
 
 ---
 
@@ -191,14 +184,11 @@ All API keys are optional – missing keys cause services to fall back to mock/d
 ### Data & Integration
 | Service | Purpose |
 |---|---|
-| `sports_api.py` | Sports data API client |
-| `sports_game_odds.py` | SportsGameOdds API client |
+| `sports_api.py` | Sports data API client (ESPN + The Odds API) |
 | `google_sheets.py` | Google Sheets read/write |
 | `supabase_service.py` | Supabase data storage |
-| `gemini_service.py` | Google Gemini AI integration |
 | `twitter_analyzer.py` | Twitter sentiment analysis |
 | `slack_service.py` | Slack notifications |
-| `web_scraper.py` | Web scraping utilities |
 
 ### Vector Search & RAG
 | Service | Purpose |
@@ -232,7 +222,6 @@ All API keys are optional – missing keys cause services to fall back to mock/d
 | `odds_agent.py` | Odds data fetching |
 | `dvp_agent.py` | DvP analysis |
 | `expert_agent.py` | Expert reasoning |
-| `scraping_agent.py` | Web scraping |
 | `twitter_agent.py` | Twitter data |
 | `ncaab_dvp_agent.py` | NCAAB Defense vs Position agent |
 
@@ -310,8 +299,9 @@ npm run build   # catches TypeScript errors
 
 - All API keys are optional — services fall back to mock/demo data when keys are missing (won't crash)
 - Qdrant vector DB is required for vector search features but is **not** in the default `docker-compose.yml` — run it separately or disable RAG features
-- `backend/models/nba_ml/` contains trained model artifacts — do not delete; re-run `train_nba_model.py` to regenerate
+- `backend/models/nba_ml/` contains trained model artifacts — do not delete
 - Frontend proxies `/api` → backend — if API calls fail locally, check `vite.config.ts` proxy config
+- `open_line_cache.py` creates `backend/data/open_lines.db` (SQLite) on first run to persist opening lines for RLM/steam detection
 - `backend/venv/` is gitignored but required; recreate with `python -m venv venv && pip install -r requirements.txt`
 - The `sports_api.py` service will use demo/mock data if no API keys are set — useful for local dev without keys
 - `_parse_bookmaker_spreads()` only parses `spreads` + `totals` markets — does NOT parse `h2h`; `pinnacle_home_odds` in its result = spread pricing (-110 typical), not actual moneyline odds
