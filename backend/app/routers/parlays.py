@@ -8,13 +8,11 @@ from datetime import datetime
 from loguru import logger
 import uuid
 
-from app.services.twitter_analyzer import TwitterAnalyzer
 from app.services.rag_pipeline import RAGPipeline
 from app.database import SessionLocal
 from app.models.parlay import Parlay, ParlayLeg
 
 router = APIRouter()
-twitter_analyzer = TwitterAnalyzer()
 rag_pipeline = RAGPipeline()
 
 
@@ -167,111 +165,13 @@ async def list_parlays(
                 'confidence_level': p.confidence_level,
                 'total_odds': p.total_odds,
                 'status': p.status,
-                'created_at': p.created_at.isoformat(),
-                'twitter_post_id': p.twitter_post_id
+                'created_at': p.created_at.isoformat()
             }
             for p in parlays
         ]
         
     finally:
         db.close()
-
-
-@router.post("/parlays/{parlay_id}/post-twitter", response_model=Dict[str, Any])
-async def post_parlay_to_twitter(
-    parlay_id: str,
-    as_thread: bool = Query(False, description="Post as thread with detailed analysis")
-) -> Dict[str, Any]:
-    """
-    Post a parlay to Twitter in Dan's AI Sports Picks style
-    
-    Args:
-        parlay_id: Parlay identifier
-        as_thread: Post as thread vs single tweet
-        
-    Returns:
-        Twitter post details
-    """
-    # Retrieve parlay
-    parlay = await rag_pipeline.retrieve_parlay(parlay_id)
-    
-    if not parlay:
-        raise HTTPException(status_code=404, detail="Parlay not found")
-    
-    try:
-        if as_thread:
-            # Post as thread
-            tweets = twitter_analyzer.post_parlay_thread(parlay, include_detailed_analysis=True)
-            
-            if not tweets:
-                raise HTTPException(status_code=500, detail="Failed to post Twitter thread")
-            
-            main_tweet = tweets[0]
-            tweet_id = main_tweet['tweet_id']
-            
-            result = {
-                'parlay_id': parlay_id,
-                'tweet_id': tweet_id,
-                'thread': tweets,
-                'url': f"https://twitter.com/i/web/status/{tweet_id}",
-                'posted_at': datetime.now().isoformat()
-            }
-        else:
-            # Post single tweet
-            tweet_data = twitter_analyzer.post_parlay_tweet(parlay)
-            
-            if not tweet_data:
-                raise HTTPException(status_code=500, detail="Failed to post tweet")
-            
-            result = {
-                'parlay_id': parlay_id,
-                **tweet_data
-            }
-        
-        # Update parlay with Twitter info
-        db = SessionLocal()
-        try:
-            db_parlay = db.query(Parlay).filter(Parlay.parlay_id == parlay_id).first()
-            if db_parlay:
-                db_parlay.twitter_post_id = result['tweet_id']
-                db_parlay.twitter_posted_at = datetime.now()
-                db_parlay.tweet_text = result.get('tweet_text', '')
-                db.commit()
-        finally:
-            db.close()
-        
-        logger.info(f"Posted parlay {parlay_id} to Twitter")
-        return result
-        
-    except Exception as e:
-        logger.error(f"Failed to post parlay to Twitter: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/parlays/{parlay_id}/format", response_model=Dict[str, Any])
-async def preview_parlay_tweet(parlay_id: str) -> Dict[str, Any]:
-    """
-    Preview how a parlay will look as a tweet (without posting)
-    
-    Args:
-        parlay_id: Parlay identifier
-        
-    Returns:
-        Formatted tweet text
-    """
-    parlay = await rag_pipeline.retrieve_parlay(parlay_id)
-    
-    if not parlay:
-        raise HTTPException(status_code=404, detail="Parlay not found")
-    
-    tweet_text = twitter_analyzer.format_dan_style_parlay(parlay)
-    
-    return {
-        'parlay_id': parlay_id,
-        'tweet_text': tweet_text,
-        'character_count': len(tweet_text),
-        'within_limit': len(tweet_text) <= 280
-    }
 
 
 @router.post("/parlays/{parlay_id}/update", response_model=Dict[str, Any])
@@ -371,43 +271,6 @@ async def search_parlays(
     results = await rag_pipeline.search_parlays_by_text(query, limit=limit, filters=filters)
     
     return results
-
-
-@router.get("/parlays/{parlay_id}/engagement", response_model=Dict[str, Any])
-async def get_parlay_twitter_engagement(parlay_id: str) -> Dict[str, Any]:
-    """
-    Get Twitter engagement metrics for a posted parlay
-    
-    Args:
-        parlay_id: Parlay identifier
-        
-    Returns:
-        Engagement metrics
-    """
-    # Get parlay
-    db = SessionLocal()
-    
-    try:
-        parlay = db.query(Parlay).filter(Parlay.parlay_id == parlay_id).first()
-        
-        if not parlay:
-            raise HTTPException(status_code=404, detail="Parlay not found")
-        
-        if not parlay.twitter_post_id:
-            raise HTTPException(status_code=400, detail="Parlay not posted to Twitter")
-        
-        # Get engagement metrics
-        engagement = twitter_analyzer.get_parlay_engagement(parlay.twitter_post_id)
-        
-        return {
-            'parlay_id': parlay_id,
-            'twitter_post_id': parlay.twitter_post_id,
-            'posted_at': parlay.twitter_posted_at.isoformat() if parlay.twitter_posted_at else None,
-            'engagement': engagement
-        }
-        
-    finally:
-        db.close()
 
 
 @router.get("/parlays/stats/performance", response_model=Dict[str, Any])

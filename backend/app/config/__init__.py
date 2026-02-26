@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     QDRANT_API_KEY: Optional[str] = None
     QDRANT_COLLECTION_GAMES: str = "game_scenarios"
     QDRANT_COLLECTION_PLAYERS: str = "player_performances"
+    QDRANT_COLLECTION_NBA_PROPS: str = "nba_historical_props"
 
     # Celery
     CELERY_BROKER_URL: str = "redis://localhost:6379/1"
@@ -42,6 +43,8 @@ class Settings(BaseSettings):
     TWITTER_BEARER_TOKEN: Optional[str] = None
     TWITTER_CONSUMER_KEY: Optional[str] = None
     TWITTER_CONSUMER_SECRET: Optional[str] = None
+    TWITTER_ACCESS_TOKEN: Optional[str] = None
+    TWITTER_ACCESS_TOKEN_SECRET: Optional[str] = None
 
     # Hugging Face
     HUGGINGFACE_API_KEY: Optional[str] = None
