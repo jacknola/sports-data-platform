@@ -84,6 +84,21 @@ async def _run_nba() -> tuple:
     return predictions, bets
 
 
+async def _run_ncaab_ml() -> List[Dict[str, Any]]:
+    """Run NCAAB ML predictor (Pythagorean / XGBoost). Returns list of predictions."""
+    try:
+        from app.services.ncaab_ml_predictor import NCAABMLPredictor
+
+        logger.info("Running NCAAB ML predictions...")
+        predictor = NCAABMLPredictor()
+        predictions = await predictor.predict_today_games()
+        logger.info(f"NCAAB ML: {len(predictions)} predictions")
+        return predictions
+    except Exception as e:
+        logger.error(f"NCAAB ML predictor failed: {e}")
+        return []
+
+
 async def _run_ncaab() -> Optional[Dict[str, Any]]:
     """Run NCAAB sharp money analysis."""
     import concurrent.futures
@@ -149,6 +164,7 @@ async def run_and_export(
         return False
 
     ncaab_data: Optional[Dict[str, Any]] = None
+    ncaab_ml_predictions: List[Dict[str, Any]] = []
     nba_predictions: List[Dict[str, Any]] = []
     nba_bets: List[Dict[str, Any]] = []
     prop_data: Optional[Dict[str, Any]] = None
@@ -156,6 +172,7 @@ async def run_and_export(
     # Run pipelines
     if include_ncaab:
         ncaab_data = await _run_ncaab()
+        ncaab_ml_predictions = await _run_ncaab_ml()
 
     if include_nba:
         nba_predictions, nba_bets = await _run_nba()
@@ -165,14 +182,15 @@ async def run_and_export(
 
     # Check if we have anything
     has_ncaab = ncaab_data and ncaab_data.get("game_analyses")
+    has_ncaab_ml = bool(ncaab_ml_predictions)
     has_nba = bool(nba_predictions)
     has_props = prop_data and prop_data.get("props")
 
-    if not has_ncaab and not has_nba and not has_props:
+    if not has_ncaab and not has_ncaab_ml and not has_nba and not has_props:
         logger.warning("No data from any pipeline — nothing to export")
         return False
 
-    # Export
+    # Export core tabs via export_daily_picks (NBA odds, NBA ML Predictions, NCAAB sharp, Props, Summary)
     results = sheets.export_daily_picks(
         spreadsheet_id=spreadsheet_id,
         ncaab_data=ncaab_data if has_ncaab else None,
@@ -180,6 +198,15 @@ async def run_and_export(
         nba_bets=nba_bets,
         prop_data=prop_data if has_props else None,
     )
+
+    # Export NCAAB ML predictions to its own tab
+    if has_ncaab_ml:
+        results["ncaab_ml"] = sheets.export_ml_predictions(
+            spreadsheet_id=spreadsheet_id,
+            predictions=ncaab_ml_predictions,
+            sport="NCAAB",
+            tab_name="NCAAB ML",
+        )
 
     # Report
     errors = [k for k, v in results.items() if isinstance(v, dict) and v.get("error")]

@@ -459,6 +459,98 @@ class GoogleSheetsService:
             return {"error": str(e)}
 
     # ───────────────────────────────────────────────────────────────
+    # ML Predictions tab (NBA + NCAAB model outputs)
+    # ───────────────────────────────────────────────────────────────
+
+    def export_ml_predictions(
+        self,
+        spreadsheet_id: str,
+        predictions: List[Dict[str, Any]],
+        sport: str = "NBA",
+        tab_name: str = "ML Predictions",
+    ) -> Dict[str, Any]:
+        """Export ML model win-probability predictions to a dedicated tab.
+
+        Works with output from NBAMLPredictor.predict_today_games() or
+        NCAABMLPredictor.predict_today_games().
+
+        Args:
+            spreadsheet_id: Google Sheets ID
+            predictions: List of prediction dicts from the ML predictor
+            sport: Label string ("NBA" or "NCAAB")
+            tab_name: Worksheet name
+
+        Returns:
+            Status dict with rows_written count
+        """
+        if not self.client:
+            return {"error": "Google Sheets not configured"}
+
+        try:
+            sheet = self.client.open_by_key(spreadsheet_id)
+            ws = self._get_or_create_worksheet(sheet, tab_name)
+
+            headers = [
+                "Date", "Sport", "Home", "Away",
+                "Predicted Winner", "Home Win %", "Away Win %",
+                "Best Bet", "Home Odds", "Away Odds",
+                "Home EV", "Away EV",
+                "Edge %", "Kelly %",
+                "Confidence", "Method",
+            ]
+
+            today = datetime.now().strftime("%Y-%m-%d")
+            rows: List[List[Any]] = []
+
+            for p in predictions:
+                if "error" in p:
+                    continue
+
+                ev = p.get("expected_value", {})
+                home_prob = p.get("home_win_probability") or p.get(
+                    "moneyline_prediction", {}
+                ).get("home_win_prob", 0.5)
+                away_prob = p.get("away_win_probability") or (1 - home_prob)
+
+                best_bet = ev.get("best_bet", "")
+                predicted_winner = (
+                    p.get("home_team") if best_bet == "home" else p.get("away_team")
+                )
+
+                # Edge: best EV side
+                best_ev = ev.get("home_ev", 0) if best_bet == "home" else ev.get("away_ev", 0)
+
+                # Kelly
+                kelly = p.get("kelly_criterion", 0)
+
+                rows.append([
+                    today,
+                    sport.upper(),
+                    p.get("home_team", ""),
+                    p.get("away_team", ""),
+                    predicted_winner or "",
+                    round(home_prob * 100, 1),
+                    round(away_prob * 100, 1),
+                    best_bet.upper() if best_bet else "",
+                    _fmt_odds(ev.get("home_odds", 0)) if ev.get("home_odds") else "",
+                    _fmt_odds(ev.get("away_odds", 0)) if ev.get("away_odds") else "",
+                    round(ev.get("home_ev", 0) * 100, 2),
+                    round(ev.get("away_ev", 0) * 100, 2),
+                    round(best_ev * 100, 2),
+                    round(kelly * 100, 2),
+                    round(p.get("confidence", 0), 3),
+                    p.get("method", ""),
+                ])
+
+            written = self._batch_write(ws, headers, rows)
+            logger.info(f"Exported {written} {sport} ML predictions to tab '{tab_name}'")
+            return {"status": "success", "tab": tab_name, "rows_written": written}
+
+        except Exception as e:
+            logger.error(f"ML predictions export failed: {e}")
+            return {"error": str(e)}
+
+    # ───────────────────────────────────────────────────────────────
     # Summary tab
     # ───────────────────────────────────────────────────────────────
 
@@ -554,6 +646,12 @@ class GoogleSheetsService:
         if nba_predictions:
             results["nba"] = self.export_nba(
                 spreadsheet_id, nba_predictions, nba_bets or []
+            )
+            results["nba_ml"] = self.export_ml_predictions(
+                spreadsheet_id,
+                nba_predictions,
+                sport="NBA",
+                tab_name="ML Predictions",
             )
 
         if ncaab_data and ncaab_data.get("game_analyses"):
