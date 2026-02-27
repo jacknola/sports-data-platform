@@ -6,6 +6,7 @@ import Bets from './pages/Bets'
 import Analysis from './pages/Analysis'
 import Settings from './pages/Settings'
 import CollegeBasketball from './pages/CollegeBasketball'
+import Parlays from './pages/Parlays'
 
 function App() {
   return (
@@ -18,6 +19,7 @@ function App() {
           <Route path="/agents" element={<Agents />} />
           <Route path="/analysis" element={<Analysis />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/parlays" element={<Parlays />} />
         </Routes>
       </Layout>
     </Router>

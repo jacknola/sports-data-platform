@@ -6,9 +6,12 @@ from app.routers import (
     odds,
     sentiment,
     predictions,
-    notion,
     agents,
     google_sheets,
+    props,
+    live_props,
+    dvp,
+    cbb_sharp,
     parlays
 )
 
@@ -18,8 +21,11 @@ __all__ = [
     'odds',
     'sentiment',
     'predictions',
-    'notion',
     'agents',
     'google_sheets',
+    'props',
+    'live_props',
+    'dvp',
+    'cbb_sharp',
     'parlays'
 ]

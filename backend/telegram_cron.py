@@ -76,7 +76,7 @@ def _label_for_hour(hour: int) -> str:
     return "EVENING"
 
 
-def send_report(picks_only: bool = False) -> bool:
+def send_report(picks_only: bool = False, prediction_only: bool = False) -> bool:
     """
     Run orchestrated analysis, format, and send live picks to Telegram.
 
@@ -100,7 +100,9 @@ def send_report(picks_only: bool = False) -> bool:
     now = datetime.now()
     label = _label_for_hour(now.hour)
 
-    logger.info(f"Starting {label} report send (picks_only={picks_only})")
+    logger.info(
+        f"Starting {label} report send (picks_only={picks_only}, prediction_only={prediction_only})"
+    )
 
     # 1. Settle pending bets from previous days
     settler = BetSettlementEngine()
@@ -124,7 +126,7 @@ def send_report(picks_only: bool = False) -> bool:
     # 3. Run orchestrated analysis (structured data + agent enrichment)
     data = None
     try:
-        data = run_orchestrated_analysis()
+        data = run_orchestrated_analysis(prediction_only=prediction_only)
         logger.info(
             f"Orchestrated analysis done: {data['total_game_count']} games, "
             f"{len(data['picks'])} picks (max {data['max_picks']})"
@@ -135,11 +137,16 @@ def send_report(picks_only: bool = False) -> bool:
     # 4. Format and send
     if data and data.get("picks") is not None:
         # ── Orchestrator path (primary) ──
-        if picks_only:
+        if prediction_only:
+            ok = telegram.send_prediction_summary(
+                data.get("picks", []), label=f"{label} PREDICTION-ONLY"
+            )
+        elif picks_only:
             formatted = ReportFormatter.format_picks_only_live(data)
+            ok = telegram.send_message(formatted)
         else:
             formatted = ReportFormatter.format_live_report(data, metrics=metrics)
-        ok = telegram.send_message(formatted)
+            ok = telegram.send_message(formatted)
     else:
         # ── Legacy fallback ──
         logger.warning("Using legacy capture_analysis() fallback")
@@ -255,7 +262,7 @@ def _parse_cron_minute(cron_expr: str) -> int:
     raise ValueError(f"Cannot parse minute from cron expression: {cron_expr!r}")
 
 
-def run_daemon(picks_only: bool = False) -> None:
+def run_daemon(picks_only: bool = False, prediction_only: bool = False) -> None:
     """
     Run as a persistent scheduler. Fires three times daily per .env config.
     Handles SIGTERM/SIGINT gracefully.
@@ -293,7 +300,11 @@ def run_daemon(picks_only: bool = False) -> None:
         sys.exit(1)
 
     for label, time_str in schedule_times:
-        schedule.every().day.at(time_str).do(send_report, picks_only=picks_only)
+        schedule.every().day.at(time_str).do(
+            send_report,
+            picks_only=picks_only,
+            prediction_only=prediction_only,
+        )
         logger.info(
             f"Scheduled {label} report at {time_str} {settings.TELEGRAM_TIMEZONE}"
         )
@@ -344,6 +355,11 @@ def main():
         action="store_true",
         help="Send a test ping to verify bot token and chat ID",
     )
+    parser.add_argument(
+        "--prediction-only",
+        action="store_true",
+        help="Run model predictions without odds-dependent report formatting",
+    )
 
     args = parser.parse_args()
 
@@ -353,11 +369,13 @@ def main():
         sys.exit(0 if ok else 1)
 
     if args.send_now:
-        ok = send_report(picks_only=args.picks_only)
+        ok = send_report(
+            picks_only=args.picks_only, prediction_only=args.prediction_only
+        )
         sys.exit(0 if ok else 1)
 
     if args.daemon:
-        run_daemon(picks_only=args.picks_only)
+        run_daemon(picks_only=args.picks_only, prediction_only=args.prediction_only)
         sys.exit(0)
 
     # Default: show help if no args given

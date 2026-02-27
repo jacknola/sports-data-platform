@@ -71,7 +71,7 @@ class TelegramService:
             ok = self._send_chunk(chunk, parse_mode)
             if not ok:
                 success = False
-                logger.error(f"Failed to send chunk {i+1}/{len(chunks)}")
+                logger.error(f"Failed to send chunk {i + 1}/{len(chunks)}")
             if i < len(chunks) - 1:
                 time.sleep(_RATE_LIMIT_DELAY)
 
@@ -95,9 +95,7 @@ class TelegramService:
         now = datetime.now(tz).strftime("%a %b %-d, %Y · %-I:%M %p %Z")
 
         header = (
-            f"<b>📊 SPORTS BETTING REPORT — {label}</b>\n"
-            f"<i>{now}</i>\n"
-            f"{'─' * 32}\n\n"
+            f"<b>📊 SPORTS BETTING REPORT — {label}</b>\n<i>{now}</i>\n{'─' * 32}\n\n"
         )
         footer = (
             f"\n{'─' * 32}\n"
@@ -128,7 +126,29 @@ class TelegramService:
             lines.append(
                 f"{emoji} <b>#{p['rank']} {p['bet_on']} ({p['odds']:+d})</b>\n"
                 f"   {p['matchup']}\n"
-                f"   Edge: <code>{edge*100:+.2f}%</code> | {signals}\n"
+                f"   Edge: <code>{edge * 100:+.2f}%</code> | {signals}\n"
+            )
+
+        return self.send_message("\n".join(lines))
+
+    def send_prediction_summary(
+        self, predictions: list, label: str = "PREDICTION-ONLY"
+    ) -> bool:
+        if not predictions:
+            return self.send_message(
+                "<b>No model predictions available for this slate.</b>"
+            )
+
+        lines = [f"<b>🔮 {label}</b>\n"]
+        for i, p in enumerate(predictions[:20], 1):
+            edge = float(p.get("edge", 0.0))
+            matchup = p.get("matchup", "")
+            pick = p.get("bet_on", "")
+            sport = p.get("sport", "").upper()
+            lines.append(
+                f"<b>#{i} {sport} — {pick}</b>\n"
+                f"{matchup}\n"
+                f"Confidence: <code>{edge * 100:.1f}%</code>\n"
             )
 
         return self.send_message("\n".join(lines))
@@ -189,7 +209,7 @@ class TelegramService:
                 logger.warning(f"Telegram request error attempt {attempt}: {e}")
 
             if attempt < _MAX_RETRIES:
-                backoff = 2 ** attempt
+                backoff = 2**attempt
                 logger.info(f"Retrying in {backoff}s...")
                 time.sleep(backoff)
 

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file provides guidance to WARP (warp.dev) when working with code in this repository.
+This file provides guidance to WARP (warp.dev), Cursor, and other AI agents when working with code in this repository.
 
 ## Project Context
 Quantitative sports betting platform that identifies +EV wagers by comparing devigged market-maker odds (Pinnacle/Circa) against retail books (FanDuel, DraftKings). Uses Bayesian modeling, XGBoost ML, and sharp money signals (RLM, Steam, CLV). Bet sizing via Multivariate Fractional Kelly Criterion (Half or Quarter Kelly) with convex optimization for correlated risks.
@@ -73,7 +73,7 @@ python3 backend/telegram_cron.py --send-now # Send report immediately
 cd frontend && npm install
 npm run dev       # Dev server (port 3000, proxies /api → backend:8000)
 npm run build     # tsc && vite build
-npm run lint      # ESLint (ts,tsx)
+npm run lint      # eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0
 ```
 
 ### Docker (full stack)
@@ -82,16 +82,26 @@ docker-compose up --build
 # Frontend: http://localhost:3000 | Backend: http://localhost:8000 | Docs: http://localhost:8000/docs
 ```
 
-### Testing
+### Testing (Crucial)
+**Run ALL tests:**
 ```bash
-pytest backend/                                       # All tests
-pytest backend/tests/path/to/test_file.py             # Single file
-pytest backend/tests/path/to/test_file.py::test_func  # Single test
+pytest backend/
 ```
-Set `PYTHONPATH=$(pwd)/backend` if module imports fail.
+
+**Run a SINGLE test file:**
+```bash
+pytest backend/tests/test_api_health.py
+```
+
+**Run a SINGLE test function:**
+```bash
+pytest backend/tests/test_api_health.py::test_health_check
+```
+*Note: Set `PYTHONPATH=$(pwd)/backend` if module imports fail during testing.*
 
 ### Linting & Formatting
-Use `black` + `isort` conventions (88-100 char lines). Use `ruff` or `flake8` for static analysis.
+- **Python:** Use `black` + `isort` conventions (88-100 char lines). Use `ruff` or `flake8` for static analysis.
+- **TypeScript:** Use `npm run lint` (ESLint) and Prettier.
 
 ## Code Style
 

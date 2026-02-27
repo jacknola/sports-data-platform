@@ -8,6 +8,7 @@ to the live NBA slate from the Odds API.
 import sys
 import os
 import asyncio
+import argparse
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -18,7 +19,7 @@ from app.services.nba_ml_predictor import NBAMLPredictor
 from app.services.bet_tracker import BetTracker
 
 
-async def run_nba_analysis() -> Dict[str, Any]:
+async def run_nba_analysis(prediction_only: bool = False) -> Dict[str, Any]:
     """Run NBA ML analysis.
 
     Returns structured data dict in addition to printing to stdout.
@@ -35,10 +36,17 @@ async def run_nba_analysis() -> Dict[str, Any]:
 
     print("\n" + "=" * 76)
     print(f"  NBA ML ANALYSIS — {datetime.now().strftime('%A, %B %d, %Y')}")
-    print(f"  Methodology: Live API Stats + XGBoost ML + Kelly Optimization")
+    method = (
+        "Live API Stats + XGBoost ML (Prediction-Only)"
+        if prediction_only
+        else "Live API Stats + XGBoost ML + Kelly Optimization"
+    )
+    print(f"  Methodology: {method}")
     print("=" * 76)
 
-    predictions = await predictor.predict_today_games("nba")
+    predictions = await predictor.predict_today_games(
+        "nba", prediction_only=prediction_only
+    )
 
     if not predictions:
         print("\n  No NBA games found today.")
@@ -46,6 +54,7 @@ async def run_nba_analysis() -> Dict[str, Any]:
 
     try:
         from app.config import settings
+
         BANKROLL = getattr(settings, "BETTING_BANKROLL", 1000.0)
     except Exception:
         BANKROLL = float(os.getenv("BETTING_BANKROLL", "1000"))
@@ -65,7 +74,7 @@ async def run_nba_analysis() -> Dict[str, Any]:
         h = p["home_team"]
         a = p["away_team"]
         ev = p["expected_value"]
-        best_bet = ev["best_bet"]
+        best_bet = ev.get("best_bet")
         home_prob = p["moneyline_prediction"]["home_win_prob"]
         away_prob = p["moneyline_prediction"]["away_win_prob"]
 
@@ -87,11 +96,19 @@ async def run_nba_analysis() -> Dict[str, Any]:
         kelly_fraction = p.get("kelly_criterion", 0)
         bet_size = kelly_fraction * BANKROLL
 
-        best_side_team = h if best_bet == "home" else a
-        best_side_odds = ev["home_odds"] if best_bet == "home" else ev["away_odds"]
-        best_side_edge = home_edge if best_bet == "home" else away_edge
+        best_side_team = h if best_bet == "home" else a if best_bet == "away" else ""
+        best_side_odds = (
+            ev["home_odds"]
+            if best_bet == "home"
+            else ev["away_odds"]
+            if best_bet == "away"
+            else 0
+        )
+        best_side_edge = (
+            home_edge if best_bet == "home" else away_edge if best_bet == "away" else 0
+        )
 
-        if kelly_fraction > 0.001 and best_side_edge > 0.025:
+        if (not prediction_only) and kelly_fraction > 0.001 and best_side_edge > 0.025:
             print(
                 f"  ★ ML BET: {best_side_team} {best_side_odds:+d} → ${bet_size:.0f} ({kelly_fraction * 100:.2f}% of bankroll)"
             )
@@ -123,7 +140,11 @@ async def run_nba_analysis() -> Dict[str, Any]:
             uo_prob = uo["over_prob"] if rec == "over" else uo["under_prob"]
 
             # Use real odds from the API
-            uo_odds = total_data["over_odds"] if rec == "over" else total_data.get("under_odds", -110)
+            uo_odds = (
+                total_data["over_odds"]
+                if rec == "over"
+                else total_data.get("under_odds", -110)
+            )
 
             # Convert American odds to decimal and implied probability
             if uo_odds >= 100:
@@ -146,19 +167,25 @@ async def run_nba_analysis() -> Dict[str, Any]:
 
                 if uo_bet_size >= 5.0:  # minimum $5 bet
                     total_line = total_data.get("point", uo["total_points"])
-                    print(f"  ★ TOTAL BET: {rec.upper()} {total_line} ({uo_odds:+d}) → ${uo_bet_size:.0f} ({uo_kelly * 100:.2f}% of bankroll) [edge {uo_edge*100:+.1f}%]")
+                    print(
+                        f"  ★ TOTAL BET: {rec.upper()} {total_line} ({uo_odds:+d}) → ${uo_bet_size:.0f} ({uo_kelly * 100:.2f}% of bankroll) [edge {uo_edge * 100:+.1f}%]"
+                    )
 
-                    bets_to_save.append({
-                        "game_id": f"NBA_TOTAL_{h}_{a}_{datetime.now().strftime('%Y%m%d')}".replace(" ", ""),
-                        "sport": "nba",
-                        "side": f"{rec.upper()} {total_line}",
-                        "market": "total",
-                        "odds": uo_odds,
-                        "line": total_line,
-                        "edge": uo_edge,
-                        "bet_size": uo_bet_size,
-                        "date": datetime.utcnow().strftime("%Y-%m-%d"),
-                    })
+                    bets_to_save.append(
+                        {
+                            "game_id": f"NBA_TOTAL_{h}_{a}_{datetime.now().strftime('%Y%m%d')}".replace(
+                                " ", ""
+                            ),
+                            "sport": "nba",
+                            "side": f"{rec.upper()} {total_line}",
+                            "market": "total",
+                            "odds": uo_odds,
+                            "line": total_line,
+                            "edge": uo_edge,
+                            "bet_size": uo_bet_size,
+                            "date": datetime.utcnow().strftime("%Y-%m-%d"),
+                        }
+                    )
 
     print("\n" + "=" * 76)
     print("  PORTFOLIO SUMMARY — NBA ML (QUARTER-KELLY)")
@@ -188,8 +215,29 @@ async def run_nba_analysis() -> Dict[str, Any]:
         for b in bets_to_save:
             tracker.save_bet(b)
         print(f"\n  Saved {len(bets_to_save)} pending ML bets to tracker.")
-    else:
+    elif not prediction_only:
         print("\n  No bets meet all ML criteria today.")
+    else:
+        print("\n  Prediction-only mode: no bet sizing or bet persistence executed.")
+
+    # Export predictions to Google Sheets if configured
+    try:
+        from app.services.google_sheets import GoogleSheetsService
+
+        spreadsheet_id = getattr(settings, "GOOGLE_SPREADSHEET_ID", None)
+        if spreadsheet_id:
+            sheets_svc = GoogleSheetsService()
+            export_result = sheets_svc.export_nba(
+                spreadsheet_id, predictions, bets_to_save
+            )
+            if export_result.get("status") == "success":
+                logger.info(
+                    f"Exported {export_result.get('rows_written', 0)} NBA rows to Google Sheets"
+                )
+            else:
+                logger.warning(f"Sheets NBA export issue: {export_result.get('error')}")
+    except Exception as exc:
+        logger.warning(f"Google Sheets export skipped: {exc}")
 
     return {
         "sport": "nba",
@@ -200,7 +248,14 @@ async def run_nba_analysis() -> Dict[str, Any]:
 
 
 def main():
-    asyncio.run(run_nba_analysis())
+    parser = argparse.ArgumentParser(description="Run NBA ML analysis")
+    parser.add_argument(
+        "--prediction-only",
+        action="store_true",
+        help="Run without bet sizing and bet persistence",
+    )
+    args = parser.parse_args()
+    asyncio.run(run_nba_analysis(prediction_only=args.prediction_only))
 
 
 if __name__ == "__main__":

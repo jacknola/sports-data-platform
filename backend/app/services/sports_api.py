@@ -36,8 +36,14 @@ ODDS_API_SPORT_DISPLAY = {
 }
 
 # Bookmakers to request (reduces credit burn vs. requesting all)
-SHARP_BOOKMAKERS = {"pinnacle", "circa", "betonlineag", "lowvig"}
-RETAIL_BOOKMAKERS = {"draftkings", "fanduel", "betmgm", "caesars", "pointsbet"}
+SHARP_BOOKMAKERS = {"pinnacle", "circa", "betonlineag", "lowvig", "betcris", "bookmaker", "betfair", "matchbook"}
+RETAIL_BOOKMAKERS = {
+    "draftkings", "fanduel", "betmgm", "caesars", "pointsbet", "bovada", 
+    "betrivers", "williamhill_us", "unibet_us", "superbook", "betway", 
+    "sugarhouse", "foxbet", "barstool", "twinspires", "pointsbetus", 
+    "wynnbet", "betright", "topsport", "ladbrokes", "neds", "unibet"
+}
+BOOKMAKER_FILTER = ",".join(sorted(SHARP_BOOKMAKERS | RETAIL_BOOKMAKERS))
 BOOKMAKER_FILTER = ",".join(sorted(SHARP_BOOKMAKERS | RETAIL_BOOKMAKERS))
 
 # ESPN conference ID → display name (NCAAB only)
@@ -118,10 +124,11 @@ class PersistentCache:
         try:
             from app.database import SessionLocal, engine, Base
             from app.models.api_cache import APICache
+
             self._Session = SessionLocal
             self._Model = APICache
             self._default_ttl = default_ttl
-            
+
             # Ensure tables are created
             Base.metadata.create_all(bind=engine)
             self._enabled = True
@@ -133,7 +140,7 @@ class PersistentCache:
         """Retrieve from database if not expired."""
         if not self._enabled:
             return None
-            
+
         session = self._Session()
         try:
             entry = session.query(self._Model).filter_by(key=key).first()
@@ -145,10 +152,11 @@ class PersistentCache:
                 return None  # Expired
 
             import json
+
             return FetchResult(
                 data=json.loads(entry.data),
                 source="cached_db",
-                game_count=0  # FetchResult __post_init__ handles this
+                game_count=0,  # FetchResult __post_init__ handles this
             )
         except Exception as e:
             logger.error(f"Persistent cache retrieval failed: {e}")
@@ -160,10 +168,11 @@ class PersistentCache:
         """Save to database, updating if key exists."""
         if not self._enabled:
             return
-            
+
         session = self._Session()
         try:
             import json
+
             entry = session.query(self._Model).filter_by(key=key).first()
             if entry:
                 entry.data = json.dumps(data)
@@ -174,7 +183,7 @@ class PersistentCache:
                     key=key,
                     data=json.dumps(data),
                     source=source,
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.utcnow(),
                 )
                 session.add(new_entry)
             session.commit()
@@ -235,8 +244,10 @@ class SportsAPIService:
 
     def __init__(self):
         # Dual API key resolution (from sports-betting-edge-tool branch)
-        self.odds_api_key = getattr(settings, "ODDSAPI_API_KEY", None) or getattr(
-            settings, "THE_ODDS_API_KEY", None
+        self.odds_api_key = (
+            getattr(settings, "ODDS_API_KEY", None)
+            or getattr(settings, "ODDSAPI_API_KEY", None)
+            or getattr(settings, "THE_ODDS_API_KEY", None)
         )
         self.sportsradar_key = getattr(settings, "SPORTSRADAR_API_KEY", None)
         self.base_url = "https://api.the-odds-api.com/v4"
@@ -405,7 +416,9 @@ class SportsAPIService:
             return FetchResult(data=mem_cached.data, source="cached")
 
         # 2. Check persistent database cache
-        db_cached = _db_cache.get(cache_key, ttl=14400)  # 4 hours persistence for events
+        db_cached = _db_cache.get(
+            cache_key, ttl=14400
+        )  # 4 hours persistence for events
         if db_cached:
             _cache.set(cache_key, db_cached.data, source="cached_db")
             return db_cached
@@ -675,10 +688,7 @@ class SportsAPIService:
         "player_rebounds",
         "player_assists",
         "player_threes",
-        "player_points_rebounds_assists",
-        "player_points_rebounds",
-        "player_points_assists",
-        "player_rebounds_assists",
+        # Combinations removed per user request to focus on main stats + alternate lines
     ]
 
     # Extended markets (use when credit budget allows)
@@ -690,10 +700,7 @@ class SportsAPIService:
         "player_double_double",
     ]
 
-    PROP_BOOKMAKERS: str = (
-        "draftkings,fanduel,betmgm,williamhill_us,pointsbetus,"
-        "betrivers,unibet_us,superbook"
-    )
+    PROP_BOOKMAKERS: str = BOOKMAKER_FILTER  # Use combined sharp + retail books for wider odds ranges
 
     async def get_event_player_props(
         self,
@@ -742,7 +749,7 @@ class SportsAPIService:
                     f"{self.base_url}/sports/{sport}/events/{event_id}/odds",
                     params={
                         "apiKey": self.odds_api_key,
-                        "regions": "us",
+                        "regions": "us,eu,uk,au",
                         "markets": markets_csv,
                         "oddsFormat": "american",
                         "bookmakers": self.PROP_BOOKMAKERS,
@@ -830,7 +837,9 @@ class SportsAPIService:
             return mem_cached.data
 
         # 2. Check persistent database cache
-        db_cached = _db_cache.get(cache_key, ttl=600)  # 10 mins persistence for full scans
+        db_cached = _db_cache.get(
+            cache_key, ttl=600
+        )  # 10 mins persistence for full scans
         if db_cached:
             _cache.set(cache_key, db_cached.data, source="cached_db")
             return db_cached.data
@@ -906,27 +915,41 @@ class SportsAPIService:
                     market_key = market.get("key", "")
                     outcomes = market.get("outcomes", [])
 
-                    # Pair Over/Under by player description
+                    # Pair Over/Under by player description + line to support alternate lines
                     player_pairs: Dict[str, Dict[str, Any]] = {}
                     for out in outcomes:
                         player = out.get("description", "")
+                        line = out.get("point", 0.0)
                         if not player:
                             continue
 
-                        if player not in player_pairs:
-                            player_pairs[player] = {}
+                        # Key by player + line to distinguish alternate lines (+250, +300 props)
+                        player_key = f"{player}|{line}"
+                        if player_key not in player_pairs:
+                            player_pairs[player_key] = {"player": player, "line": line}
 
                         side = out.get("name", "").lower()
                         if side == "over":
-                            player_pairs[player]["over_odds"] = out.get("price", -110)
-                            player_pairs[player]["line"] = out.get("point", 0.0)
+                            player_pairs[player_key]["over_odds"] = out.get("price", -110)
                         elif side == "under":
-                            player_pairs[player]["under_odds"] = out.get("price", -110)
-                            if "line" not in player_pairs[player]:
-                                player_pairs[player]["line"] = out.get("point", 0.0)
+                            player_pairs[player_key]["under_odds"] = out.get("price", -110)
 
-                    for player, pair in player_pairs.items():
+                    for pk, pair in player_pairs.items():
                         if "over_odds" in pair and "under_odds" in pair:
+                            all_raw_props.append(
+                                {
+                                    "player": pair["player"],
+                                    "prop_type": market_key,
+                                    "line": pair["line"],
+                                    "over_odds": pair["over_odds"],
+                                    "under_odds": pair["under_odds"],
+                                    "book": book_title,
+                                    "book_key": book_key,
+                                    "event_id": eid,
+                                    "home_team": home,
+                                    "away_team": away,
+                                }
+                            )
                             all_raw_props.append(
                                 {
                                     "player": player,
@@ -975,36 +998,32 @@ class SportsAPIService:
         Returns:
             List of grouped, enriched prop dicts
         """
-        # Group by player + prop_type
+        # Group by player + prop_type + line to distinguish alternate props
         groups: Dict[str, List[Dict[str, Any]]] = {}
         for prop in raw_props:
-            key = f"{prop['player']}|{prop['prop_type']}"
+            # Adding line to key so alternate lines (+250, +300 odds) are treated as separate props
+            key = f"{prop['player']}|{prop['prop_type']}|{prop['line']}"
             if key not in groups:
                 groups[key] = []
             groups[key].append(prop)
-
         enriched: List[Dict[str, Any]] = []
 
         for key, offerings in groups.items():
             if not offerings:
                 continue
 
-            # Find best over and under odds across all books
+            # Find best over and under odds across all books for this specific line
             best_over = max(offerings, key=lambda x: x.get("over_odds", -999))
             best_under = max(offerings, key=lambda x: x.get("under_odds", -999))
 
-            # Use the median line as canonical
-            lines = [o["line"] for o in offerings if o.get("line")]
-            canonical_line = (
-                sorted(lines)[len(lines) // 2] if lines else offerings[0].get("line", 0)
-            )
+            # Since we group by line now, canonical_line is just the line of the offerings
+            first = offerings[0]
+            canonical_line = first.get("line", 0)
 
             # Devig using best available odds (sharp book preferred)
             over_odds = best_over.get("over_odds", -110)
             under_odds = best_under.get("under_odds", -110)
             devig_over, devig_under = self._devig_american(over_odds, under_odds)
-
-            first = offerings[0]
             enriched.append(
                 {
                     "player": first["player"],

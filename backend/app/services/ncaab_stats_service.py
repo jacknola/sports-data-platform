@@ -50,6 +50,21 @@ class NCAABStatsService:
             
             # Use a more specific but flexible pattern
             # Search for the assignment to window["__espnfitt__"]
+            pattern = re.compile(r'window\["__espnfitt__"\]\s*=\s*({.*?});', re.DOTALL)
+            match = pattern.search(response.text)
+            
+            stats = {}
+            
+            if not match:
+                # Try single quotes
+                pattern = re.compile(r"window\['__espnfitt__'\]\s*=\s*({.*?});", re.DOTALL)
+                match = pattern.search(response.text)
+            
+            if not match:
+                # Try just the variable name
+                pattern = re.compile(r'__espnfitt__\s*=\s*({.*?});', re.DOTALL)
+                match = pattern.search(response.text)
+            # Search for the assignment to window["__espnfitt__"]
             pattern = re.compile(r'window\["__espnfitt__"\]\s*=\s*({.*?});')
             match = pattern.search(response.text)
             
@@ -145,8 +160,8 @@ class NCAABStatsService:
                 soup = BeautifulSoup(response.text, 'lxml')
                 tables = soup.find_all('table')
                 if len(tables) >= 2:
-                    name_rows = tables[0].find_all('tr')[1:] 
-                    stat_rows = tables[1].find_all('tr')[1:] 
+                    name_rows = tables[0].find_all('tr')[2:]  # Skip header rows
+                    stat_rows = tables[1].find_all('tr')[2:]  # Skip header rows
                     
                     for name_row, stat_row in zip(name_rows, stat_rows):
                         try:
@@ -155,9 +170,9 @@ class NCAABStatsService:
                             team_name = name_cell.get_text().strip()
                             
                             cells = stat_row.find_all('td')
-                            off_eff = float(cells[2].get_text())
-                            def_eff = float(cells[4].get_text())
-                            bpi = float(cells[0].get_text())
+                            bpi = float(cells[1].get_text())  # BPI column
+                            off_eff = float(cells[4].get_text())  # OFF column
+                            def_eff = float(cells[5].get_text())  # DEF column
                             
                             stats[team_name] = {
                                 "AdjOE": off_eff,

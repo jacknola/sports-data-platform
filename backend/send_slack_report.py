@@ -34,7 +34,7 @@ logger.add(
     format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}",
 )
 
-BANKROLL = 25.0
+BANKROLL = 100.0
 
 
 # ---------------------------------------------------------------------------

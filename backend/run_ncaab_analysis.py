@@ -48,7 +48,7 @@ from app.services.similarity_search import find_similar_games
 
 TONIGHT_GAMES = []
 
-BANKROLL = 25.0
+BANKROLL = 100.0
 
 
 # ============================================================================
@@ -143,7 +143,58 @@ def calculate_model_prob(home: str, away: str, spread: float, team_stats: Option
         return estimate_model_prob(spread)
 
     # Fuzzy lookup helper
-    def get_stats(team_name):
+    # Fuzzy lookup helper with common abbreviations and fuzzy matching
+    def get_stats(team_name: str) -> Optional[Dict[str, Any]]:
+        if not team_stats:
+            return None
+            
+        # 1. Exact match
+        if team_name in team_stats:
+            return team_stats[team_name]
+            
+        # 2. Common abbreviations mapping
+        abbreviations = {
+            "UNC": "North Carolina",
+            "UConn": "Connecticut",
+            "UCONN": "Connecticut",
+            "Pitt": "Pittsburgh",
+            "Ole Miss": "Mississippi",
+            "USC": "Southern California",
+            "UCF": "Central Florida",
+            "BYU": "Brigham Young",
+            "VCU": "Virginia Commonwealth",
+            "LSU": "LSU",
+            "SMU": "Southern Methodist",
+            "UNLV": "UNLV",
+            "TCU": "TCU",
+            "UMass": "Massachusetts",
+            "Penn St": "Penn State",
+            "NC State": "North Carolina State",
+            "St. John's": "St. Johns",
+        }
+        
+        # Check if team_name starts with or is an abbreviation
+        for abbr, full in abbreviations.items():
+            if team_name.lower() == abbr.lower() or team_name.lower().startswith(abbr.lower() + " "):
+                if full in team_stats:
+                    return team_stats[full]
+        
+        # 3. Substring matching (case-insensitive)
+        t_lower = team_name.lower()
+        for name, data in team_stats.items():
+            n_lower = name.lower()
+            if n_lower in t_lower or t_lower in n_lower:
+                return data
+                
+        # 4. Handle "St." vs "State" and "St" vs "Saint"
+        normalized_t = t_lower.replace("st.", "state").replace("st ", "state ").replace("saint ", "state ")
+        for name, data in team_stats.items():
+            normalized_n = name.lower().replace("st.", "state").replace("st ", "state ").replace("saint ", "state ")
+            if normalized_n in normalized_t or normalized_t in normalized_n:
+                return data
+                
+        return None
+
         if team_name in team_stats:
             return team_stats[team_name]
         for name, data in team_stats.items():
@@ -396,9 +447,22 @@ async def get_live_ncaab_games(team_stats: Optional[Dict[str, Any]] = None) -> T
                 if team_stats:
                     def get_stats(team_name):
                         if team_name in team_stats: return team_stats[team_name]
+                        def _normalize(s):
+                            t = (s or "").strip().lower()
+                            t = t.replace(".", "").replace("st.", "state").replace(" saint ", " state ").replace(" st ", " state ").replace("  ", " ")
+                            return t
+                        abbreviations = {"UNC": "North Carolina", "UConn": "Connecticut", "UCONN": "Connecticut", "Pitt": "Pittsburgh", "Ole Miss": "Mississippi", "USC": "Southern California", "UCF": "Central Florida", "BYU": "Brigham Young", "VCU": "Virginia Commonwealth", "LSU": "LSU", "SMU": "Southern Methodist", "UNLV": "UNLV", "TCU": "TCU", "UMass": "Massachusetts", "Penn St": "Penn State", "NC State": "North Carolina State", "St. John's": "St. Johns"}
+                        t_lower = _normalize(team_name)
+                        for abbr, full in abbreviations.items():
+                            abbr_l, full_l = abbr.lower(), full.lower()
+                            if t_lower == abbr_l or t_lower == full_l or abbr_l in t_lower or full_l in t_lower:
+                                if full in team_stats: return team_stats[full]
+                                for name, data in team_stats.items():
+                                    if _normalize(name) == full_l: return data
                         for name, data in team_stats.items():
-                            if name.lower() in team_name.lower() or team_name.lower() in name.lower():
-                                return data
+                            if _normalize(name) in t_lower or t_lower in _normalize(name): return data
+                        for name, data in team_stats.items():
+                            if _normalize(name) in _normalize(team_name) or _normalize(team_name) in _normalize(name): return data
                         return None
                     h_stats = get_stats(matched_odds.get("home_team", home))
                     a_stats = get_stats(matched_odds.get("away_team", away))
@@ -476,9 +540,22 @@ async def get_live_ncaab_games(team_stats: Optional[Dict[str, Any]] = None) -> T
             if team_stats:
                 def get_stats(team_name):
                     if team_name in team_stats: return team_stats[team_name]
+                    def _normalize(s):
+                        t = (s or "").strip().lower()
+                        t = t.replace(".", "").replace("st.", "state").replace(" saint ", " state ").replace(" st ", " state ").replace("  ", " ")
+                        return t
+                    abbreviations = {"UNC": "North Carolina", "UConn": "Connecticut", "UCONN": "Connecticut", "Pitt": "Pittsburgh", "Ole Miss": "Mississippi", "USC": "Southern California", "UCF": "Central Florida", "BYU": "Brigham Young", "VCU": "Virginia Commonwealth", "LSU": "LSU", "SMU": "Southern Methodist", "UNLV": "UNLV", "TCU": "TCU", "UMass": "Massachusetts", "Penn St": "Penn State", "NC State": "North Carolina State", "St. John's": "St. Johns"}
+                    t_lower = _normalize(team_name)
+                    for abbr, full in abbreviations.items():
+                        abbr_l, full_l = abbr.lower(), full.lower()
+                        if t_lower == abbr_l or t_lower == full_l or abbr_l in t_lower or full_l in t_lower:
+                            if full in team_stats: return team_stats[full]
+                            for name, data in team_stats.items():
+                                if _normalize(name) == full_l: return data
                     for name, data in team_stats.items():
-                        if name.lower() in team_name.lower() or team_name.lower() in name.lower():
-                            return data
+                        if _normalize(name) in t_lower or t_lower in _normalize(name): return data
+                    for name, data in team_stats.items():
+                        if _normalize(name) in _normalize(team_name) or _normalize(team_name) in _normalize(name): return data
                     return None
                 h_stats = get_stats(home)
                 a_stats = get_stats(away)

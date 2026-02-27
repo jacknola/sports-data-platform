@@ -18,9 +18,13 @@ class OddsAgent(BaseAgent):
     
     async def execute(self, task: Dict[str, Any]) -> Dict[str, Any]:
         """Fetch and analyze odds for a sport"""
+        task_type = task.get('type', 'fetch_odds')
         sport = task.get('sport', 'nfl')
         
-        logger.info(f"OddsAgent: Fetching odds for {sport}")
+        logger.info(f"OddsAgent: Executing task {task_type} for {sport}")
+        
+        if task_type == 'fetch_props':
+            return await self._fetch_player_props(task)
         
         try:
             # Fetch odds from APIs
@@ -45,6 +49,58 @@ class OddsAgent(BaseAgent):
             self.record_mistake({
                 'task_type': 'fetch_odds',
                 'sport': sport,
+                'error': str(e)
+            })
+            raise
+
+    async def _fetch_player_props(self, task: Dict[str, Any]) -> Dict[str, Any]:
+        """Fetch player props for a specific player and stat"""
+        sport = task.get('sport')
+        player_name = task.get('player_name')
+        prop_type = task.get('prop_type')  # e.g., 'player_points'
+
+        if not all([sport, player_name, prop_type]):
+            raise ValueError("Missing required fields: sport, player_name, prop_type")
+
+        try:
+            # Ensure prop_type has correct prefix
+            api_market = prop_type
+            if not api_market.startswith('player_'):
+                api_market = f"player_{prop_type}"
+
+            # Fetch props for the sport and market
+            # Note: This scans all events, which might be heavy but is cached by SportsAPIService
+            all_props = await self.sports_api.get_all_player_props(
+                sport=sport,
+                markets=[api_market]
+            )
+
+            # Filter for the specific player
+            matches = []
+            for p in all_props:
+                # Case-insensitive partial match
+                if player_name.lower() in p['player'].lower():
+                    matches.append(p)
+
+            result = {
+                'status': 'success',
+                'sport': sport,
+                'player': player_name,
+                'prop_type': prop_type,
+                'count': len(matches),
+                'props': matches,
+                'agent': self.name
+            }
+
+            self.record_execution(task, result)
+            return result
+
+        except Exception as e:
+            logger.error(f"OddsAgent prop fetch error: {e}")
+            self.record_mistake({
+                'task_type': 'fetch_props',
+                'sport': sport,
+                'player': player_name,
                 'error': str(e)
             })
             raise
