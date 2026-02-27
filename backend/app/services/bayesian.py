@@ -43,7 +43,9 @@ MEDIUM_SPREAD_THRESHOLD = 5.0  # Spread size triggering medium penalty
 class BayesianAnalyzer:
     """Bayesian probability calculator for sports betting"""
 
-    def compute_posterior(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def compute_posterior(
+        self, data: Dict[str, Any], mode: str = "full"
+    ) -> Dict[str, Any]:
         """
         Compute Bayesian posterior probability for a betting selection
 
@@ -53,17 +55,36 @@ class BayesianAnalyzer:
         Returns:
             Dictionary with posterior_p, fair_american_odds, edge, and confidence interval
         """
-        prior_prob = data.get("devig_prob", 0.5)
+        devig_prob = data.get("devig_prob")
+        model_prob = data.get("model_prob")
         implied_prob = data.get("implied_prob", 0.5)
         features = data.get("features", {})
 
-        logger.info(f"Computing posterior for selection {data.get('selection_id')}")
+        logger.info(
+            f"Computing posterior for selection {data.get('selection_id')} | mode={mode}"
+        )
+
+        # FIX: Prioritize the historical model projection as the primary prior.
+        # The market-derived probability is a weaker, secondary signal.
+        if model_prob is not None and model_prob != 0.5:
+            prior_prob = float(model_prob)
+            prior_source = "model"
+            prior_strength = 6  # Stronger prior based on historical data
+        elif devig_prob is not None and devig_prob != 0.5:
+            prior_prob = float(devig_prob)
+            prior_source = "market"
+            prior_strength = 4  # Weaker prior, used as a fallback
+        else:
+            prior_prob = 0.5
+            prior_source = "uninformed"
+            prior_strength = 4
+
+        logger.info(f"Bayesian prior: {prior_source} = {prior_prob:.3f}")
 
         # Convert prior to Beta parameters.
         # prior_strength controls how much the prior resists the model projection.
         # For props, we want the Normal CDF / hit-rate projection to dominate
         # over the market-implied prior — so keep this weak (4 = ~4 pseudo-obs).
-        prior_strength = 4  # was 10 — weakened so model projection dominates
         alpha_prior = prior_prob * prior_strength
         beta_prior = (1 - prior_prob) * prior_strength
 
@@ -94,15 +115,27 @@ class BayesianAnalyzer:
         fair_american = self._prob_to_american_odds(posterior_p)
 
         # Calculate edge
-        edge = posterior_p - implied_prob
+        if mode == "prediction_only":
+            edge = posterior_p - prior_prob
+            kelly_fraction = 0.0
+        else:
+            edge = (
+                posterior_p - implied_prob
+                if implied_prob is not None
+                else posterior_p - prior_prob
+            )
+            kelly_fraction = 0.0
 
         result = {
             "selection_id": data.get("selection_id"),
             "prior_prob": round(prior_prob, 4),
+            "prior_source": prior_source,
             "posterior_p": round(posterior_p, 4),
             "fair_american_odds": round(fair_american, 1),
             "current_american_odds": data.get("current_american_odds"),
             "edge": round(edge, 4),
+            "mode": mode,
+            "kelly_fraction": round(kelly_fraction, 4),
             "confidence_interval": {"p05": round(p05, 4), "p95": round(p95, 4)},
             "monte_carlo": {
                 "n_simulations": n_simulations,
@@ -116,24 +149,36 @@ class BayesianAnalyzer:
 
         return result
 
-    def _compute_adjustments(self, features: Dict[str, Any]) -> Dict[str, float]:
+    def _compute_adjustments(
+        self, features: Dict[str, Any], prior_prob: Optional[float] = None
+    ) -> Dict[str, float]:
         """Compute adjustments based on feature values"""
-        adjustments = {}
+        adjustments = {
+            "injury": self._get_injury_adjustment(
+                features.get("injury_status", "ACTIVE")
+            ),
+            "pace": self._get_pace_adjustment(features),
+            "usage": self._get_usage_adjustment(features.get("usage", {})),
+            "home_advantage": self._get_home_advantage_adjustment(
+                features.get("is_home")
+            ),
+        }
 
-        adjustments["injury"] = self._get_injury_adjustment(features.get("injury_status", "ACTIVE"))
-        adjustments["pace"] = self._get_pace_adjustment(features)
-        adjustments["usage"] = self._get_usage_adjustment(features.get("usage", {}))
-        adjustments["weather"] = self._get_weather_adjustment(features.get("weather", {}))
-        adjustments["home_advantage"] = self._get_home_advantage_adjustment(features.get("is_home"))
-        adjustments["form"] = self._get_form_adjustment(features.get("recent_form", []))
+        if "weather" in features:
+            adjustments["weather"] = self._get_weather_adjustment(
+                features.get("weather", {})
+            )
 
-        # Conference tier variance penalty for large spreads
+        if features.get("recent_form"):
+            adjustments["form"] = self._get_form_adjustment(
+                features.get("recent_form", [])
+            )
+
         spread_penalty = self._get_conference_spread_adjustment(features)
         if spread_penalty != 0.0:
             adjustments["conference_spread_variance"] = spread_penalty
 
-        # Remove 0.0 adjustments to keep it clean
-        return {k: v for k, v in adjustments.items() if v != 0.0}
+        return adjustments
 
     def _get_injury_adjustment(self, injury_status: str) -> float:
         """Calculate adjustment based on injury status."""

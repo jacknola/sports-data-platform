@@ -29,4 +29,5 @@ class Game(Base):
     
     # Relationships
     bets = relationship("Bet", back_populates="game")
+    player_game_logs = relationship("PlayerGameLog", back_populates="game")
 

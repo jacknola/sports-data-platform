@@ -35,6 +35,7 @@ class Settings(BaseSettings):
 
     # API Keys
     SPORTSRADAR_API_KEY: Optional[str] = None
+    ODDS_API_KEY: Optional[str] = None
     ODDSAPI_API_KEY: Optional[str] = None
     THE_ODDS_API_KEY: Optional[str] = None
     SPORTS_GAME_ODDS_API_KEY: Optional[str] = None
@@ -91,6 +92,7 @@ class Settings(BaseSettings):
     EDGE_THRESHOLD_MEDIUM: float = 0.05
     EDGE_THRESHOLD_HIGH: float = 0.07
     EDGE_THRESHOLD_MAX: float = 0.10
+    ENABLE_SHARP_SIGNALS: bool = False
 
     # Google Sheets
     GOOGLE_SERVICE_ACCOUNT_PATH: Optional[str] = None

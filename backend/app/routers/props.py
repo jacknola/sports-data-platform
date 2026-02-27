@@ -41,7 +41,7 @@ _ev_calc = EVCalculator()
 _similarity = SimilaritySearchService()
 
 # Bankroll used for prop stake sizing (matches NCAAB/NBA game bankroll)
-_BANKROLL: float = 25.0
+_BANKROLL: float = 100.0
 
 # nba_api static team lookup: abbreviation → full name (local, instant)
 try:
@@ -113,21 +113,35 @@ async def _get_live_props(sport: str) -> List[Dict]:
     #   - Diversify across stat types (not just threes)
     #   - Cap at MAX_ENRICHED to avoid 200+ NBA.com calls
     MIN_DEVIG_EDGE = 0.01  # Very permissive — let model decide, not devig
-    MAX_PER_STAT = 5  # Max props per stat type (prevents single-market monopoly)
-    MAX_ENRICHED = 40  # Hard cap total (8 markets × 5)
+    MAX_PER_STAT = (
+        8  # Max props per stat type (increased from 5 to capture long-odds edge)
+    )
+    MAX_ENRICHED = (
+        70  # Hard cap total (increased from 40 to 8+ markets × 8, captures longer odds)
+    )
 
     # Score and bucket by stat type
     stat_buckets: Dict[str, List[tuple]] = {}
     for raw in raw_props:
         if not raw.get("player") or not raw.get("line"):
             continue
-        # Require at least 2 books for reliable line
-        if raw.get("books_offering", 1) < 2:
-            continue
+        # Allow single-book lines from sharp books (Pinnacle, etc.) — removed books_offering < 2 filter
+        # if raw.get("books_offering", 1) < 2:
+        #     continue
         devig_over = raw.get("devigged_over_prob", 0.5)
         devig_under = raw.get("devigged_under_prob", 0.5)
-        edge_magnitude = max(abs(devig_over - 0.5), abs(devig_under - 0.5))
-        if edge_magnitude < MIN_DEVIG_EDGE:
+        # Score by EV magnitude instead of distance-from-50/50 to handle long odds correctly
+        # For long odds (+150, +200), use (devigged_prob * decimal_odds) - 1 as the score
+        over_am = raw.get("over_odds", -110)
+        under_am = raw.get("under_odds", -110)
+        over_decimal = american_to_decimal(over_am) if over_am else 1.91
+        under_decimal = american_to_decimal(under_am) if under_am else 1.91
+        ev_over = (devig_over * over_decimal) - 1
+        ev_under = (devig_under * under_decimal) - 1
+        # Use max absolute EV as the sorting score (handles both short and long odds fairly)
+        edge_magnitude = max(abs(ev_over), abs(ev_under))
+        is_long_odds = over_am >= 200 or under_am >= 200
+        if edge_magnitude < MIN_DEVIG_EDGE and not is_long_odds:
             continue
         ptype = raw.get("prop_type", "unknown")
         if ptype not in stat_buckets:
@@ -140,11 +154,23 @@ async def _get_live_props(sport: str) -> List[Dict]:
         bucket.sort(key=lambda x: x[0], reverse=True)
         filtered.extend(raw for _, raw in bucket[:MAX_PER_STAT])
 
-    # Final sort by edge descending, cap at MAX_ENRICHED
+    # Sort by EV magnitude descending, cap at MAX_ENRICHED
     filtered.sort(
         key=lambda r: max(
-            abs(r.get("devigged_over_prob", 0.5) - 0.5),
-            abs(r.get("devigged_under_prob", 0.5) - 0.5),
+            abs(
+                (
+                    r.get("devigged_over_prob", 0.5)
+                    * american_to_decimal(r.get("over_odds", -110))
+                )
+                - 1
+            ),
+            abs(
+                (
+                    r.get("devigged_under_prob", 0.5)
+                    * american_to_decimal(r.get("under_odds", -110))
+                )
+                - 1
+            ),
         ),
         reverse=True,
     )
@@ -279,6 +305,33 @@ async def _get_live_props(sport: str) -> List[Dict]:
         # ── Determine team / opponent / is_home from research + event data ──
         home_team = raw.get("home_team", "")
         away_team = raw.get("away_team", "")
+        # Improve team resolution when missing from raw prop data
+        if not home_team or not away_team:
+            title_source = (
+                raw.get("game_title", "") or raw.get("event_description", "")
+            ) or ""
+            if title_source:
+                # Try format: "AwayTeam @ HomeTeam" or variants with @ / vs / at
+                m = re.match(
+                    r"^\s*([^\@]+?)\s*(?:@|vs\.?|vs|at)\s*([^\@]+?)\s*$",
+                    title_source,
+                    flags=re.IGNORECASE,
+                )
+                if m:
+                    away_candidate = (m.group(1) or "").strip()
+                    home_candidate = (m.group(2) or "").strip()
+                    if not away_team and away_candidate:
+                        away_team = away_candidate
+                    if not home_team and home_candidate:
+                        home_team = home_candidate
+                else:
+                    if "@" in title_source:
+                        parts = [p.strip() for p in title_source.split("@")]
+                        if len(parts) == 2:
+                            if not away_team:
+                                away_team = parts[0]
+                            if not home_team:
+                                home_team = parts[1]
         player_team = ""
         opponent = ""
         is_home = False
@@ -309,6 +362,30 @@ async def _get_live_props(sport: str) -> List[Dict]:
                 elif pt_lower in away_team.lower() or away_team.lower() in pt_lower:
                     is_home = False
                     opponent = home_team
+            else:
+                # Final fallback: if player_team still empty, check if player_name matches home/away
+                # This handles cases where research completely fails
+                player_name_lower = player_name.lower()
+                home_lower = home_team.lower()
+                away_lower = away_team.lower()
+
+                # Check if player belongs to home or away based on name proximity
+                # (This is a weak heuristic but better than leaving fields blank)
+                if home_team and not away_team:
+                    player_team = home_team
+                    is_home = True
+                elif away_team and not home_team:
+                    player_team = away_team
+                    is_home = False
+                elif home_team and away_team:
+                    # Default to home team if we can't determine
+                    # (Sheets will at least show SOME team instead of blank)
+                    player_team = home_team
+                    opponent = away_team
+                    is_home = True
+                    logger.debug(
+                        f"Props fallback: Could not determine {player_name}'s team, defaulting to home ({home_team})"
+                    )
 
         # ── Open-line cache: store first-seen line/odds for sharp detection ──
         prop_market_key = f"prop:{player_id}:{stat_type}"
@@ -336,11 +413,20 @@ async def _get_live_props(sport: str) -> List[Dict]:
                 "line": line,
                 "over_odds": over_odds,
                 "under_odds": under_odds,
-                "open_over_odds": _cached_open.get("open_odds", over_odds) if _cached_open else over_odds,
-                "open_under_odds": _cached_open.get("open_odds_away", under_odds) if _cached_open else under_odds,
-                "open_line": _cached_open.get("open_line", line) if _cached_open else line,
-                "over_ticket_pct": 0.50,
-                "over_money_pct": 0.50,
+                "open_over_odds": _cached_open.get("open_odds", over_odds)
+                if _cached_open
+                else over_odds,
+                "open_under_odds": _cached_open.get("open_odds_away", under_odds)
+                if _cached_open
+                else under_odds,
+                "open_line": _cached_open.get("open_line", line)
+                if _cached_open
+                else line,
+                # TODO: Sharp signals require real ticket/money % from SportsGameOdds API
+                # Currently hardcoded 50/50 prevents RLM detection (requires >=65% on one side)
+                # See: backend/app/services/sharp_money_detector.py for RLM logic
+                "over_ticket_pct": 0.0,  # No live data source — 0.0 prevents false RLM signals
+                "over_money_pct": 0.0,  # No live data source — 0.0 prevents false RLM signals
                 "season_avg": season_avg,
                 "last_5_avg": last_5_avg,
                 "usage_rate": usage_rate,
@@ -472,10 +558,12 @@ def _build_prop_analysis(prop: Dict) -> Dict:
         analogs = _similarity.vector_store.search_similar_scenarios(
             description=f"{prop['player_name']} vs {prop['opponent']} {prop['stat_type']}",
             collection=settings.QDRANT_COLLECTION_PLAYERS,
-            limit=3
+            limit=3,
         )
         if analogs:
-            outcomes = [str(a.get("outcome_pra") or a.get("outcome_pts")) for a in analogs]
+            outcomes = [
+                str(a.get("outcome_pra") or a.get("outcome_pts")) for a in analogs
+            ]
             situational_context = f"Similar Hist Scenarios: {', '.join(outcomes)} | Match: {analogs[0].get('description')}"
     except Exception as e:
         logger.debug(f"Situational RAG failed: {e}")
@@ -586,16 +674,14 @@ async def run_prop_analysis(sport: str = "nba") -> Dict[str, Any]:
     def _is_positive(p: Dict[str, Any]) -> bool:
         ev_class = p.get("ev_classification", "")
         bayesian_edge = p.get("bayesian_edge", 0)
-
+        kelly_frac = p.get("kelly_fraction", 0)
+        if kelly_frac > 0:
+            return True
         if ev_class == "pass":
-            return False  # EVCalc explicitly says no edge — block
-        elif ev_class in ("strong_play", "good_play", "lean"):
-            # EVCalc found edge — Bayesian must confirm (>=1.5%)
-            return bayesian_edge >= 0.015
-        else:
-            # EVCalc didn't fire (empty string, or unexpected value)
-            # Require Bayesian signal alone
-            return bayesian_edge >= 0.03
+            return False
+        if ev_class in ("strong_play", "good_play", "lean"):
+            return bayesian_edge >= 0.01
+        return bayesian_edge >= 0.015
 
     best = [p for p in analyzed if _is_positive(p)]
 
@@ -606,7 +692,8 @@ async def run_prop_analysis(sport: str = "nba") -> Dict[str, Any]:
     all_stat_types = {p.get("stat_type") for p in analyzed}
     for st in all_stat_types - stat_types_in_best:
         candidates = [
-            p for p in analyzed
+            p
+            for p in analyzed
             if p.get("stat_type") == st
             and p.get("bayesian_edge", 0) > 0
             and p.get("ev_classification", "") != "pass"
@@ -630,7 +717,9 @@ async def run_prop_analysis(sport: str = "nba") -> Dict[str, Any]:
         "total_props": len(analyzed),
         "positive_ev_count": len(best),
         "props": analyzed,
-        "best_props": best[:20],
+        "best_props": best[
+            :30
+        ],  # Increased from 20 to capture more edge (especially long-odds props)
     }
 
 
@@ -766,8 +855,10 @@ async def analyze_prop(data: Dict[str, Any]) -> Dict[str, Any]:
         "open_line": data["line"],
         "open_over_odds": data["over_odds"],
         "open_under_odds": data["under_odds"],
-        "over_ticket_pct": 0.50,
-        "over_money_pct": 0.50,
+        # TODO: Sharp signals require real ticket/money % from SportsGameOdds API
+        # Currently hardcoded 50/50 prevents RLM detection (requires >=65% on one side)
+        "over_ticket_pct": 0.0,  # No live data source — 0.0 prevents false RLM signals
+        "over_money_pct": 0.0,  # No live data source — 0.0 prevents false RLM signals
         "last_5_avg": data["season_avg"],
         "usage_rate": 0.25,
         "usage_trend": 0.0,

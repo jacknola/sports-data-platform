@@ -33,19 +33,19 @@ from app.services.prop_analyzer import PropAnalyzer
 # Constants — NBA league averages (2024-25 season baselines)
 # ---------------------------------------------------------------------------
 
-LEAGUE_AVG_PACE = 100.0          # possessions per 48 min
-LEAGUE_AVG_DEF_RATING = 113.5   # points allowed per 100 possessions
+LEAGUE_AVG_PACE = 100.0  # possessions per 48 min
+LEAGUE_AVG_DEF_RATING = 113.5  # points allowed per 100 possessions
 
 # Empirical standard deviation as fraction of mean (Normal approximation)
 # Points: ~0.40, Rebounds: ~0.45, Assists: ~0.50, Threes: ~0.55
 STAT_STD_FACTORS: Dict[str, float] = {
-    'points':   0.40,
-    'rebounds': 0.45,
-    'assists':  0.50,
-    'threes':   0.55,
-    'blocks':   0.60,
-    'steals':   0.60,
-    'pra':      0.35,   # points + rebounds + assists (diversified, lower CV)
+    "points": 0.40,
+    "rebounds": 0.45,
+    "assists": 0.50,
+    "threes": 0.55,
+    "blocks": 0.60,
+    "steals": 0.60,
+    "pra": 0.35,  # points + rebounds + assists (diversified, lower CV)
 }
 
 # Minimum σ floor to avoid division edge cases on near-zero stats
@@ -55,6 +55,7 @@ MIN_STD = 1.0
 # ---------------------------------------------------------------------------
 # Data Structures
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class PropProjection:
@@ -66,6 +67,7 @@ class PropProjection:
         implied_prob → market_over_implied (retail book implied)
         features    → prop_features dict
     """
+
     player_id: str
     player_name: str
     stat_type: str
@@ -98,12 +100,13 @@ class PropProjection:
     model_edge_under: float = 0.0
 
     # Bayesian posterior inputs (ready to pass to BayesianAnalyzer)
-    devig_prob: float = 0.0       # true_over_prob from devigged market (prior)
-    implied_prob: float = 0.0     # retail over implied probability
+    devig_prob: float = 0.0  # true_over_prob from devigged market (prior)
+    implied_prob: float = 0.0  # retail over implied probability
+    model_prob: float = 0.0
 
     @property
     def best_side(self) -> str:
-        return 'over' if self.model_edge_over >= self.model_edge_under else 'under'
+        return "over" if self.model_edge_over >= self.model_edge_under else "under"
 
     @property
     def best_edge(self) -> float:
@@ -112,11 +115,12 @@ class PropProjection:
     def to_bayesian_input(self) -> Dict:
         """Format as input dict for BayesianAnalyzer.compute_posterior()"""
         return {
-            'selection_id': f"{self.player_id}:{self.stat_type}:{self.best_side}",
-            'devig_prob': self.devig_prob,
-            'implied_prob': self.implied_prob,
-            'current_american_odds': None,  # set by caller from snapshot
-            'features': self._build_features(),
+            "selection_id": f"{self.player_id}:{self.stat_type}:{self.best_side}",
+            "devig_prob": self.devig_prob,
+            "implied_prob": self.implied_prob,
+            "model_prob": self.model_prob,
+            "current_american_odds": None,  # set by caller from snapshot
+            "features": self._build_features(),
         }
 
     def _build_features(self) -> Dict:
@@ -127,22 +131,24 @@ class PropProjection:
         adjustments on top of the model projection.
         """
         return {
-            'injury_status': 'ACTIVE',          # caller overrides if needed
-            'team_pace': self.adjustments.get('_team_pace', 0),
-            'opponent_pace': self.adjustments.get('_opp_pace', 0),
-            'league_avg_pace': LEAGUE_AVG_PACE,
-            'usage': {
-                'value': True,
-                'trend': self.adjustments.get('usage_trend', 0) / 0.02  # undo the 0.02 scaling
+            "injury_status": "ACTIVE",  # caller overrides if needed
+            "team_pace": self.adjustments.get("_team_pace", 0),
+            "opponent_pace": self.adjustments.get("_opp_pace", 0),
+            "league_avg_pace": LEAGUE_AVG_PACE,
+            "usage": {
+                "value": True,
+                "trend": self.adjustments.get("usage_trend", 0)
+                / 0.02,  # undo the 0.02 scaling
             },
-            'is_home': self.adjustments.get('home_advantage', 0) > 0,
-            'recent_form': [],  # pre-computed in adjustments; pass empty to avoid double-dip
+            "is_home": self.adjustments.get("home_advantage", 0) > 0,
+            "recent_form": [],  # pre-computed in adjustments; pass empty to avoid double-dip
         }
 
 
 # ---------------------------------------------------------------------------
 # Probability Model
 # ---------------------------------------------------------------------------
+
 
 class PropProbabilityModel:
     """
@@ -194,11 +200,11 @@ class PropProbabilityModel:
         Returns:
             PropProjection with all probabilities and Bayesian inputs populated
         """
-        player_id = player_data['player_id']
-        player_name = player_data['player_name']
-        stat_type = player_data['stat_type']
-        line = player_data['line']
-        season_avg = player_data['season_avg']
+        player_id = player_data["player_id"]
+        player_name = player_data["player_name"]
+        stat_type = player_data["stat_type"]
+        line = player_data["line"]
+        season_avg = player_data["season_avg"]
 
         logger.info(
             f"Projecting {player_name} {stat_type} vs line {line} "
@@ -211,15 +217,21 @@ class PropProbabilityModel:
         base_std = max(MIN_STD, base_mean * std_factor)
 
         # Compute adjustments (returns dict of {factor: delta_mean})
-        adjustments = self._compute_mean_adjustments(player_data, game_context, base_mean)
-        total_adj = sum(v for k, v in adjustments.items() if not k.startswith('_'))
+        adjustments = self._compute_mean_adjustments(
+            player_data, game_context, base_mean
+        )
+        total_adj = sum(v for k, v in adjustments.items() if not k.startswith("_"))
 
         projected_mean = max(0.5, base_mean + total_adj)
         projected_std = self._compute_std(projected_mean, player_data, std_factor)
 
         # Model probabilities (Normal CDF)
-        model_p_over = float(1.0 - stats.norm.cdf(line, loc=projected_mean, scale=projected_std))
-        model_p_under = float(stats.norm.cdf(line, loc=projected_mean, scale=projected_std))
+        model_p_over = float(
+            1.0 - stats.norm.cdf(line, loc=projected_mean, scale=projected_std)
+        )
+        model_p_under = float(
+            stats.norm.cdf(line, loc=projected_mean, scale=projected_std)
+        )
 
         # Market probabilities
         market_p_over, market_p_under = PropAnalyzer.devig_prop(over_odds, under_odds)
@@ -246,10 +258,15 @@ class PropProbabilityModel:
             market_over_implied=round(market_over_implied, 4),
             model_edge_over=round(model_edge_over, 4),
             model_edge_under=round(model_edge_under, 4),
-            # Bayesian inputs: devig_prob = market devigged (sharp market prior)
-            # implied_prob = retail implied (what we're betting into)
-            devig_prob=round(market_p_over, 4),
-            implied_prob=round(market_over_implied, 4),
+            # Pass model projection to `model_prob` and market to `devig_prob`
+            # The fixed Bayesian engine will now correctly prioritize the model.
+            devig_prob=round(market_p_over, 4),  # Market's opinion (now a weak prior)
+            model_prob=round(
+                model_p_over, 4
+            ),  # Historical Model's prediction (now a strong prior)
+            implied_prob=round(
+                market_over_implied, 4
+            ),  # Retail odds we're betting into
         )
 
         logger.info(
@@ -278,62 +295,64 @@ class PropProbabilityModel:
         adjustments: Dict[str, float] = {}
 
         # --- Recent form ---
-        last_5_avg = player_data.get('last_5_avg', base_mean)
+        last_5_avg = player_data.get("last_5_avg", base_mean)
         form_delta = (last_5_avg - base_mean) * 0.40  # blend 40% toward recent form
-        adjustments['recent_form'] = round(form_delta, 3)
+        adjustments["recent_form"] = round(form_delta, 3)
 
         # --- Pace adjustment ---
-        team_pace = game_context.get('team_pace', LEAGUE_AVG_PACE)
-        opp_pace = game_context.get('opponent_pace', LEAGUE_AVG_PACE)
+        team_pace = game_context.get("team_pace", LEAGUE_AVG_PACE)
+        opp_pace = game_context.get("opponent_pace", LEAGUE_AVG_PACE)
         game_pace = (team_pace + opp_pace) / 2.0
         pace_delta = (game_pace - LEAGUE_AVG_PACE) / LEAGUE_AVG_PACE
         # Each 1% faster pace ≈ +1% more volume
-        adjustments['pace'] = round(base_mean * pace_delta, 3)
+        adjustments["pace"] = round(base_mean * pace_delta, 3)
         # Store raw values for feature dict (prefixed _ = excluded from total_adj sum)
-        adjustments['_team_pace'] = team_pace
-        adjustments['_opp_pace'] = opp_pace
+        adjustments["_team_pace"] = team_pace
+        adjustments["_opp_pace"] = opp_pace
 
         # --- Matchup (opponent defensive rating vs position) ---
-        opp_def_rating = game_context.get('opponent_def_rating', LEAGUE_AVG_DEF_RATING)
+        opp_def_rating = game_context.get("opponent_def_rating", LEAGUE_AVG_DEF_RATING)
         # Worse defense (higher rating) = more stat production
         def_delta = (opp_def_rating - LEAGUE_AVG_DEF_RATING) / LEAGUE_AVG_DEF_RATING
-        adjustments['matchup'] = round(base_mean * def_delta * 0.5, 3)
+        adjustments["matchup"] = round(base_mean * def_delta * 0.5, 3)
 
         # --- Usage rate trend ---
-        usage_trend = player_data.get('usage_trend', 0.0)  # positive = usage rising
-        adjustments['usage_trend'] = round(base_mean * usage_trend * 0.15, 3)
+        usage_trend = player_data.get("usage_trend", 0.0)  # positive = usage rising
+        adjustments["usage_trend"] = round(base_mean * usage_trend * 0.15, 3)
 
         # --- Injury / rest ---
-        injury_status = player_data.get('injury_status', 'ACTIVE')
-        if injury_status == 'QUESTIONABLE':
-            adjustments['injury'] = round(-base_mean * 0.08, 3)
-        elif injury_status == 'OUT':
-            adjustments['injury'] = round(-base_mean * 0.99, 3)  # player doesn't play
+        injury_status = player_data.get("injury_status", "ACTIVE")
+        if injury_status == "QUESTIONABLE":
+            adjustments["injury"] = round(-base_mean * 0.08, 3)
+        elif injury_status == "OUT":
+            adjustments["injury"] = round(-base_mean * 0.99, 3)  # player doesn't play
         else:
-            adjustments['injury'] = 0.0
+            adjustments["injury"] = 0.0
 
-        rest_days = player_data.get('rest_days', 2)
+        rest_days = player_data.get("rest_days", 2)
         if rest_days == 0:  # back-to-back
-            adjustments['rest'] = round(-base_mean * 0.04, 3)
+            adjustments["rest"] = round(-base_mean * 0.04, 3)
         elif rest_days >= 3:  # well-rested
-            adjustments['rest'] = round(base_mean * 0.02, 3)
+            adjustments["rest"] = round(base_mean * 0.02, 3)
         else:
-            adjustments['rest'] = 0.0
+            adjustments["rest"] = 0.0
 
         # --- Home/away ---
-        is_home = game_context.get('is_home', False)
-        adjustments['home_advantage'] = round(base_mean * 0.02, 3) if is_home else round(-base_mean * 0.01, 3)
+        is_home = game_context.get("is_home", False)
+        adjustments["home_advantage"] = (
+            round(base_mean * 0.02, 3) if is_home else round(-base_mean * 0.01, 3)
+        )
 
         # --- DvP positional modifier ---
         # When available (from NBADvPAnalyzer or NCAABDvPAnalyzer), dvp_modifier
         # is the % delta vs league average for the opposing defense at the
         # player's position and stat type.  E.g. +0.06 → opponent allows 6%
         # more than average.
-        dvp_modifier = game_context.get('dvp_modifier')
+        dvp_modifier = game_context.get("dvp_modifier")
         if dvp_modifier is not None and dvp_modifier != 0.0:
-            adjustments['dvp_positional'] = round(base_mean * dvp_modifier * 0.60, 3)
+            adjustments["dvp_positional"] = round(base_mean * dvp_modifier * 0.60, 3)
         else:
-            adjustments['dvp_positional'] = 0.0
+            adjustments["dvp_positional"] = 0.0
 
         return adjustments
 
@@ -351,8 +370,8 @@ class PropProbabilityModel:
         """
         base_std = max(MIN_STD, projected_mean * std_factor)
 
-        injury_status = player_data.get('injury_status', 'ACTIVE')
-        if injury_status == 'QUESTIONABLE':
+        injury_status = player_data.get("injury_status", "ACTIVE")
+        if injury_status == "QUESTIONABLE":
             base_std *= 1.15  # more uncertain
 
         return round(base_std, 2)

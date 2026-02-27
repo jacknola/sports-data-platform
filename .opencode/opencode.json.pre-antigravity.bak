@@ -1,0 +1,37 @@
+{
+    "$schema": "https://opencode.ai/config.json",
+    "model": "gemini/gemini-2.5-pro",
+    "small_model": "gemini/gemini-2.5-flash",
+    "autoupdate": true,
+    "enabled_providers": ["openai", "anthropic", "google", "opencode", "deepseek", "xai"],
+    "plugin": [
+        "opencode-gemini-auth@latest",
+        "@tarquinen/opencode-dcp@latest",
+        "opencode-pty@latest",
+        "@franlol/opencode-md-table-formatter@latest",
+        "@zenobius/opencode-skillful"
+    ],
+    "instructions": [
+        "~/.config/opencode/plugin/shell-strategy/shell_strategy.md"
+    ],
+    "agent": {
+        "OpenAgent": {
+            "model": "opencode/claude-opus-4-6"
+        },
+        "ContextScout": {
+            "model": "gemini/gemini-2.5-flash"
+        },
+        "ExternalScout": {
+            "model": "gemini/gemini-2.5-flash"
+        },
+        "DocWriter": {
+            "model": "gemini/gemini-2.5-flash"
+        },
+        "TaskManager": {
+            "model": "gemini/gemini-3-pro"
+        },
+        "ContextOrganizer": {
+            "model": "gemini/gemini-2.5-flash"
+        }
+    }
+}

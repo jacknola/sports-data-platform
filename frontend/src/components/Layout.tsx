@@ -7,7 +7,8 @@ import {
   BarChart3,
   Settings,
   Zap,
-  Trophy
+  Trophy,
+  Layers
 } from 'lucide-react'
 import { clsx } from 'clsx'
 
@@ -21,6 +22,7 @@ export default function Layout({ children }: LayoutProps) {
   const navItems = [
     { path: '/', label: 'Dashboard', icon: LayoutDashboard },
     { path: '/bets', label: 'Best Bets', icon: TrendingUp },
+    { path: '/parlays', label: 'Parlays', icon: Layers },
     { path: '/college-basketball', label: 'College Basketball', icon: Trophy },
     { path: '/agents', label: 'Agents', icon: Bot },
     { path: '/analysis', label: 'Analysis', icon: BarChart3 },

@@ -42,7 +42,7 @@ class PlayerGameLog(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     # Relationships
-    player = relationship("Player")
-    game = relationship("Game")
-    team = relationship("Team", foreign_keys=[team_id])
-    opponent = relationship("Team", foreign_keys=[opponent_id])
+    player = relationship("Player", back_populates="game_logs")
+    game = relationship("Game", back_populates="player_game_logs")
+    team = relationship("Team", foreign_keys=[team_id], back_populates="home_game_logs")
+    opponent = relationship("Team", foreign_keys=[opponent_id], back_populates="away_game_logs")

@@ -14,6 +14,15 @@ from loguru import logger
 from app.services.sports_api import SportsAPIService
 
 try:
+    from app.services.stats_feature_engineering import StatsFeatureEngineer
+    from app.services.elo_service import EloService
+
+    STATS_FEATURES_AVAILABLE = True
+except ImportError:
+    STATS_FEATURES_AVAILABLE = False
+    logger.warning("StatsFeatureEngineer not available - using legacy features")
+
+try:
     from nba_api.stats.endpoints import leaguedashteamstats
     from nba_api.stats.static import teams
 
@@ -43,6 +52,14 @@ class NBAMLPredictor:
         self.nba_teams = []
         if NBA_API_AVAILABLE:
             self.nba_teams = teams.get_teams()
+
+        if STATS_FEATURES_AVAILABLE:
+            self.stats_engineer = StatsFeatureEngineer(sport="nba")
+            self.elo_service = EloService(sport="nba")
+            logger.info("StatsFeatureEngineer initialized for stats-only predictions")
+        else:
+            self.stats_engineer = None
+            self.elo_service = None
 
     def _load_models(self):
         """Load trained ML models"""
@@ -149,6 +166,24 @@ class NBAMLPredictor:
                 else moneyline_pred.get("away_win_prob", 0.5),
             )
 
+            # Extract season win percentage values for the two teams, if available
+            # These values come from the features used to build the model input
+            # and/or from the moneyline prediction when available.
+            season_w_pct_home = None
+            season_w_pct_away = None
+            try:
+                # moneyline_pred may include the raw season W_PCT values if _predict_moneyline
+                # already populated them (new in this patch). Fall back to input features.
+                season_w_pct_home = moneyline_pred.get("home_season_w_pct")
+                season_w_pct_away = moneyline_pred.get("away_season_w_pct")
+            except Exception:
+                season_w_pct_home = None
+                season_w_pct_away = None
+
+            if season_w_pct_home is None or season_w_pct_away is None:
+                season_w_pct_home = features.get("home_win_pct", 0.5)  # type: ignore
+                season_w_pct_away = features.get("away_win_pct", 0.5)  # type: ignore
+
             return {
                 "home_team": home_team,
                 "away_team": away_team,
@@ -157,13 +192,12 @@ class NBAMLPredictor:
                 "expected_value": ev,
                 "kelly_criterion": kelly,
                 "confidence": moneyline_pred.get("confidence", 0.5),
+                # Expose season win percentage data for downstream exports (e.g., Google Sheets)
+                "season_w_pct_home": season_w_pct_home,
+                "season_w_pct_away": season_w_pct_away,
                 "method": "ml_xgboost"
                 if XGBOOST_AVAILABLE and "moneyline" in self.models
                 else "placeholder",
-                "spread": {},
-                "total": {},
-                "book": "",
-                "features": features,
             }
 
         except Exception as e:
@@ -172,12 +206,22 @@ class NBAMLPredictor:
 
     def _prepare_features(self, features: Dict[str, Any]) -> pd.DataFrame:
         """Prepare features for ML model input"""
-        # Convert recent form list to a win rate scalar to avoid XGBoost object error
-        h_form = features.get("home_recent_form", [1, 1, 1, 0, 1])
-        a_form = features.get("away_recent_form", [1, 1, 0, 1, 0])
 
-        h_win_rate = sum(h_form) / len(h_form) if h_form else 0.5
-        a_win_rate = sum(a_form) / len(a_form) if a_form else 0.5
+        if STATS_FEATURES_AVAILABLE and self.stats_engineer is not None:
+            home_team = features.get("home_team") or features.get("home_team_name")
+            away_team = features.get("away_team") or features.get("away_team_name")
+
+            if home_team and away_team:
+                try:
+                    stats_features = self.stats_engineer.prepare_features(
+                        home_team, away_team
+                    )
+                    logger.debug(
+                        f"Using stats-only features for {home_team} vs {away_team}"
+                    )
+                    return stats_features
+                except Exception as e:
+                    logger.warning(f"Stats feature engineering failed: {e}")
 
         feature_dict = {
             "home_off_rating": features.get("home_off_rating", 110.0),
@@ -186,23 +230,13 @@ class NBAMLPredictor:
             "away_def_rating": features.get("away_def_rating", 110.0),
             "home_win_pct": features.get("home_win_pct", 0.5),
             "away_win_pct": features.get("away_win_pct", 0.5),
-            "home_win_rate_last_5": h_win_rate,
-            "away_win_rate_last_5": a_win_rate,
+            "home_recent_form": features.get("home_recent_form", [1, 1, 1, 0, 1]),
+            "away_recent_form": features.get("away_recent_form", [1, 1, 0, 1, 0]),
             "home_pace": features.get("home_pace", 100.0),
             "away_pace": features.get("away_pace", 100.0),
         }
 
-        # Select ONLY the columns the model was trained on
-        model_cols = [
-            "home_off_rating",
-            "home_def_rating",
-            "away_off_rating",
-            "away_def_rating",
-            "home_win_pct",
-            "away_win_pct",
-        ]
-        df = pd.DataFrame([feature_dict])
-        return df[model_cols]
+        return pd.DataFrame([feature_dict])
 
     def _predict_moneyline(self, features: pd.DataFrame) -> Dict[str, Any]:
         """Predict moneyline winner"""
@@ -211,13 +245,33 @@ class NBAMLPredictor:
             try:
                 # Get prediction
                 pred = model.predict_proba(features)[0]
-                winner_prob = float(pred[1])  # Assuming 1 is home win
+                winner_prob = pred[1]  # Assuming 1 is home win
+
+                # Determine season win percentages from input features if available
+                home_w_pct = 0.5
+                away_w_pct = 0.5
+                try:
+                    if (
+                        isinstance(features, pd.DataFrame)
+                        and "home_win_pct" in features.columns
+                    ):
+                        home_w_pct = float(features["home_win_pct"].iloc[0])
+                    if (
+                        isinstance(features, pd.DataFrame)
+                        and "away_win_pct" in features.columns
+                    ):
+                        away_w_pct = float(features["away_win_pct"].iloc[0])
+                except Exception:
+                    home_w_pct, away_w_pct = 0.5, 0.5
 
                 return {
                     "winner": "home" if winner_prob > 0.5 else "away",
                     "home_win_prob": winner_prob,
-                    "away_win_prob": 1.0 - winner_prob,
-                    "confidence": float(abs(winner_prob - 0.5) * 2),  # 0 to 1 scale
+                    "away_win_prob": 1 - winner_prob,
+                    "confidence": abs(winner_prob - 0.5) * 2,  # 0 to 1 scale
+                    # Expose season win percentage data for downstream exports (e.g., Google Sheets)
+                    "home_season_w_pct": home_w_pct,
+                    "away_season_w_pct": away_w_pct,
                 }
             except Exception as e:
                 logger.error(f"Moneyline prediction error: {e}")
@@ -266,13 +320,13 @@ class NBAMLPredictor:
             model = self.models["underover"]
             try:
                 pred = model.predict(features)[0]
-                total_proj = float(pred)
+                prob = model.predict_proba(features)[0]
 
                 return {
-                    "total_points": total_proj,
-                    "over_prob": 0.5,  # Placeholder since regressor has no prob
-                    "under_prob": 0.5,
-                    "recommendation": "neutral",
+                    "total_points": pred,
+                    "over_prob": prob[1] if len(prob) > 1 else 0.5,
+                    "under_prob": prob[0] if len(prob) > 1 else 0.5,
+                    "recommendation": "over" if prob[1] > 0.5 else "under",
                 }
             except Exception as e:
                 logger.error(f"Under/over prediction error: {e}")
@@ -333,10 +387,16 @@ class NBAMLPredictor:
             1 - moneyline_pred["away_win_prob"]
         )
 
+        best_bet: Optional[str] = None
+        if home_ev > away_ev and home_ev > 0:
+            best_bet = "home"
+        elif away_ev > home_ev and away_ev > 0:
+            best_bet = "away"
+
         return {
             "home_ev": home_ev,
             "away_ev": away_ev,
-            "best_bet": "home" if home_ev > away_ev else "away",
+            "best_bet": best_bet,
             "home_odds": home_odds,
             "away_odds": away_odds,
         }
@@ -370,7 +430,9 @@ class NBAMLPredictor:
         # Cap at global max bet percentage (5% by default)
         return max(0.0, min(kelly_stake, settings.MAX_BET_PERCENTAGE))
 
-    async def predict_today_games(self, sport: str = "nba") -> List[Dict[str, Any]]:
+    async def predict_today_games(
+        self, sport: str = "nba", prediction_only: bool = False
+    ) -> List[Dict[str, Any]]:
         """
         Get predictions for today's games using multi-source discovery + live odds.
 
@@ -396,60 +458,9 @@ class NBAMLPredictor:
                 f"NBA game discovery: {len(espn_games)} games via {discovery.source}"
             )
 
-        # 2. Fetch Live Odds for enrichment
-        odds_data = await self.sports_api.get_odds("basketball_nba")
-
-        if not odds_data:
-            logger.warning(
-                "NBA: Odds API returned no games. Attempting emergency discovery via Scrape..."
-            )
-            try:
-                from run_tomorrow_slate import scrape_action_network
-
-                scraped_games = await scrape_action_network("nba")
-                if scraped_games:
-                    # Transform scraped games to look like Odds API objects
-                    odds_data = []
-                    for sg in scraped_games:
-                        odds_data.append(
-                            {
-                                "id": f"SCRAPE_{sg['home']}_{sg['time']}",
-                                "home_team": sg["home"],
-                                "away_team": sg["away"],
-                                "commence_time": sg["time"],
-                                "bookmakers": [
-                                    {
-                                        "key": "action_consensus",
-                                        "title": "Action Consensus",
-                                        "markets": [
-                                            {
-                                                "key": "spreads",
-                                                "outcomes": [
-                                                    {
-                                                        "name": sg["home"],
-                                                        "point": sg["spread"] or 0,
-                                                    }
-                                                ],
-                                            },
-                                            {
-                                                "key": "totals",
-                                                "outcomes": [
-                                                    {
-                                                        "name": "Over",
-                                                        "point": sg["total"] or 0,
-                                                    }
-                                                ],
-                                            },
-                                        ],
-                                    }
-                                ],
-                            }
-                        )
-                    logger.info(
-                        f"Emergency discovery: {len(odds_data)} games via Action Network scrape"
-                    )
-            except Exception as e:
-                logger.error(f"Emergency discovery failed: {e}")
+        odds_data = []
+        if not prediction_only:
+            odds_data = await self.sports_api.get_odds("basketball_nba")
 
         games = []
 
@@ -527,10 +538,6 @@ class NBAMLPredictor:
                             best_book_used = b_data["key"]
                         break
 
-                # If we have real odds but no target book found, use a fallback indicator
-                if home_odds != -110 and not best_book_used:
-                    best_book_used = "oddsapi"
-
                 features = {"odds": {"home": home_odds, "away": away_odds}}
 
                 # Inject live stats if available
@@ -566,17 +573,23 @@ class NBAMLPredictor:
                 )
 
         elif espn_games:
-            # ESPN found games but no odds data — build games with default odds
-            logger.warning(
-                f"Odds API returned no NBA data. Using {len(espn_games)} ESPN games "
-                f"with default -110/-110 odds."
-            )
+            if prediction_only:
+                logger.info(
+                    f"Prediction-only mode: using {len(espn_games)} ESPN games without odds"
+                )
+            else:
+                logger.warning(
+                    f"Odds API returned no NBA data. Using {len(espn_games)} ESPN games "
+                    f"with default -110/-110 odds."
+                )
             for eg in espn_games:
                 games.append(
                     {
                         "home_team": eg.get("home_team", ""),
                         "away_team": eg.get("away_team", ""),
-                        "features": {"odds": {"home": -110, "away": -110}},
+                        "features": {"odds": {"home": -110, "away": -110}}
+                        if not prediction_only
+                        else {"odds": {}},
                     }
                 )
         else:

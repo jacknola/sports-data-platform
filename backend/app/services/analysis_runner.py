@@ -83,6 +83,7 @@ def capture_analysis() -> str:
 async def _run_orchestrator_for_sport(
     sport_key: str,
     teams: List[str],
+    prediction_only: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Run the OrchestratorAgent pipeline for a single sport.
 
@@ -97,7 +98,8 @@ async def _run_orchestrator_for_sport(
             {
                 "sport": sport_key,
                 "teams": teams,
-            }
+            },
+            prediction_only=prediction_only,
         )
         logger.info(
             f"Orchestrator completed for {sport_key}: "
@@ -109,7 +111,7 @@ async def _run_orchestrator_for_sport(
         return None
 
 
-def run_orchestrated_analysis() -> Dict[str, Any]:
+def run_orchestrated_analysis(prediction_only: bool = False) -> Dict[str, Any]:
     """Run the full analysis pipeline with orchestrator enrichment.
 
     Flow:
@@ -143,9 +145,9 @@ def run_orchestrated_analysis() -> Dict[str, Any]:
 
     try:
         with redirect_stdout(buf):
-            ncaab_data = run_ncaab()
+            ncaab_data = run_ncaab(prediction_only=prediction_only)
             print("\n\n" + "X" * 76 + "\n\n")
-            nba_data = asyncio.run(run_nba_analysis())
+            nba_data = asyncio.run(run_nba_analysis(prediction_only=prediction_only))
     except Exception as e:
         logger.error(f"Core analysis failed: {e}")
 
@@ -192,11 +194,19 @@ def run_orchestrated_analysis() -> Dict[str, Any]:
         try:
             if ncaab_teams:
                 orch_ncaab = loop.run_until_complete(
-                    _run_orchestrator_for_sport("basketball_ncaab", ncaab_teams[:10])
+                    _run_orchestrator_for_sport(
+                        "basketball_ncaab",
+                        ncaab_teams[:10],
+                        prediction_only=prediction_only,
+                    )
                 )
             if nba_teams:
                 orch_nba = loop.run_until_complete(
-                    _run_orchestrator_for_sport("basketball_nba", nba_teams[:10])
+                    _run_orchestrator_for_sport(
+                        "basketball_nba",
+                        nba_teams[:10],
+                        prediction_only=prediction_only,
+                    )
                 )
         finally:
             loop.close()
@@ -209,7 +219,7 @@ def run_orchestrated_analysis() -> Dict[str, Any]:
     all_picks: List[Dict[str, Any]] = []
 
     # NCAAB scored plays
-    if ncaab_data:
+    if ncaab_data and ncaab_data.get("scored_plays"):
         for play in ncaab_data.get("scored_plays", []):
             play["sport"] = "ncaab"
             # Attach orchestrator sentiment if available
@@ -217,13 +227,45 @@ def run_orchestrated_analysis() -> Dict[str, Any]:
                 _enrich_pick_with_orchestrator(play, orch_ncaab)
             all_picks.append(play)
 
+    if ncaab_data and not ncaab_data.get("scored_plays"):
+        for pred in ncaab_data.get("predictions", [])[:20]:
+            all_picks.append(
+                {
+                    "sport": "ncaab",
+                    "bet_on": pred.get("winner"),
+                    "matchup": f"{pred.get('away', '')} @ {pred.get('home', '')}",
+                    "score": pred.get("confidence", 0) * 100,
+                    "edge": pred.get("confidence", 0),
+                    "mode": "prediction_only",
+                }
+            )
+
     # NBA bets
-    if nba_data:
+    if nba_data and nba_data.get("bets"):
         for bet in nba_data.get("bets", []):
             bet["sport"] = "nba"
             if orch_nba:
                 _enrich_pick_with_orchestrator(bet, orch_nba)
             all_picks.append(bet)
+
+    if nba_data and not nba_data.get("bets"):
+        for pred in nba_data.get("predictions", [])[:20]:
+            best_team = (
+                pred.get("home_team")
+                if pred.get("home_win_prob", 0.5) >= 0.5
+                else pred.get("away_team")
+            )
+            confidence = abs(pred.get("home_win_prob", 0.5) - 0.5) * 2
+            all_picks.append(
+                {
+                    "sport": "nba",
+                    "bet_on": best_team,
+                    "matchup": f"{pred.get('away_team', '')} @ {pred.get('home_team', '')}",
+                    "score": confidence * 100,
+                    "edge": confidence,
+                    "mode": "prediction_only",
+                }
+            )
 
     # Sort by score (NCAAB) or edge (NBA) — unified ranking
     all_picks.sort(
@@ -323,9 +365,7 @@ def run_dvp_analysis_pipeline() -> Optional[Dict[str, Any]]:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            result = loop.run_until_complete(
-                agent.execute({"type": "full_analysis"})
-            )
+            result = loop.run_until_complete(agent.execute({"type": "full_analysis"}))
         finally:
             loop.close()
 
@@ -447,10 +487,13 @@ def run_sheets_export_pipeline(
         logger.info(f"Google Sheets export: {tabs_ok}/{len(result)} tabs written")
 
         qdrant_games = sum(
-            1 for ga in (ncaab_data or {}).get("game_analyses", [])
+            1
+            for ga in (ncaab_data or {}).get("game_analyses", [])
             if ga.get("qdrant_retrieved")
         )
-        logger.info(f"Sheets export complete — {qdrant_games} games enriched with Qdrant context")
+        logger.info(
+            f"Sheets export complete — {qdrant_games} games enriched with Qdrant context"
+        )
         return result
 
     except Exception as e:

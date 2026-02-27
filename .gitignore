@@ -88,3 +88,4 @@ mcp-servers/examples/
 
 # Large binaries
 toolbox
+backend/.venv_311/

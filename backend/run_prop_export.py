@@ -27,6 +27,9 @@ async def export_props_to_sheets():
     print("=" * 76)
 
     # 1. Run Analysis
+    import sys
+    logger.remove()
+    logger.add(sys.stderr, level="INFO")
     logger.info("Running full player prop analysis...")
     prop_data = await run_prop_analysis(sport="nba")
     
