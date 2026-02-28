@@ -33,55 +33,32 @@ logger.add(
     format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}",
 )
 
-BANKROLL = 25.0
-
-
 # ---------------------------------------------------------------------------
-# Pipelines (same as send_slack_report.py)
+# Pipelines
 # ---------------------------------------------------------------------------
 
 
 async def _run_nba() -> tuple:
-    """Run NBA ML analysis. Returns (predictions, bets)."""
-    from app.services.nba_ml_predictor import NBAMLPredictor
-    from datetime import datetime
+    """Run NBA ML analysis via run_nba_analysis(). Returns (predictions, bets)."""
+    import concurrent.futures
 
-    logger.info("Running NBA ML analysis...")
-    predictor = NBAMLPredictor()
-    predictions = await predictor.predict_today_games("nba")
+    def _sync_nba() -> Dict[str, Any]:
+        from run_nba_analysis import run_nba_analysis as _run
+        import asyncio as _aio
+        return _aio.run(_run())
 
-    if not predictions:
-        logger.warning("No NBA games found today")
+    try:
+        logger.info("Running NBA ML analysis...")
+        loop = asyncio.get_running_loop()
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            result = await loop.run_in_executor(pool, _sync_nba)
+        predictions = result.get("predictions", [])
+        bets = result.get("bets", [])
+        logger.info(f"NBA: {len(predictions)} games, {len(bets)} qualifying bets")
+        return predictions, bets
+    except Exception as e:
+        logger.error(f"NBA analysis failed: {e}")
         return [], []
-
-    bets: List[Dict[str, Any]] = []
-    for p in predictions:
-        if "error" in p:
-            continue
-
-        ev = p["expected_value"]
-        best_bet = ev["best_bet"]
-        home_edge = ev.get("home_ev", 0)
-        away_edge = ev.get("away_ev", 0)
-        kelly_fraction = p.get("kelly_criterion", 0)
-
-        best_side_team = p["home_team"] if best_bet == "home" else p["away_team"]
-        best_side_odds = ev["home_odds"] if best_bet == "home" else ev["away_odds"]
-        best_side_edge = home_edge if best_bet == "home" else away_edge
-
-        if kelly_fraction > 0.001 and best_side_edge > 0.025:
-            bets.append({
-                "game_id": f"NBA_{p['home_team']}_{p['away_team']}_{datetime.now().strftime('%Y%m%d')}".replace(" ", ""),
-                "sport": "nba",
-                "side": best_side_team,
-                "market": "moneyline",
-                "odds": best_side_odds,
-                "edge": best_side_edge,
-                "bet_size": kelly_fraction * BANKROLL,
-            })
-
-    logger.info(f"NBA: {len(predictions)} games, {len(bets)} qualifying bets")
-    return predictions, bets
 
 
 async def _run_ncaab() -> Optional[Dict[str, Any]]:
@@ -94,7 +71,7 @@ async def _run_ncaab() -> Optional[Dict[str, Any]]:
 
     try:
         logger.info("Running NCAAB analysis...")
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         with concurrent.futures.ThreadPoolExecutor() as pool:
             result = await loop.run_in_executor(pool, _sync_ncaab)
         logger.info(

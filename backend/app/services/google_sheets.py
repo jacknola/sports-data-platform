@@ -273,7 +273,8 @@ class GoogleSheetsService:
                 uo = p.get("underover_prediction", {})
                 home = p.get("home_team", "")
                 away = p.get("away_team", "")
-                home_prob = p.get("home_win_probability", 0.5)
+                moneyline_pred = p.get("moneyline_prediction", {})
+                home_prob = moneyline_pred.get("home_win_prob", 0.5)
                 away_prob = 1 - home_prob
 
                 # Spread data
