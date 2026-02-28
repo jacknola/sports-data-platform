@@ -19,7 +19,7 @@ class OrchestratorAgent:
     def __init__(self):
         self.odds_agent = OddsAgent()
         self.analysis_agent = AnalysisAgent()
-        self.twitter_agent = None
+        self.twitter_agent = TwitterAgent()
         self.expert_agent = ExpertAgent()
         self.dvp_agent = DvPAgent()
         self.ncaab_dvp_agent = NCAABDvPAgent()

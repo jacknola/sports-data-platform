@@ -124,6 +124,10 @@ pytest backend/tests/test_api_health.py::test_health_check
 
 ## Betting Logic Conventions (Strict)
 
+- **High Value Player Props**: The platform exports a dedicated "HighValueProps" dashboard to Google Sheets. This filters the raw prop data to only include bets with "Even Odds" (-110 to +110) OR a realistic "Edge %" (between 0.0% and 30.0%). This removes extreme longshots and negative EV bets, providing a clean, actionable sheet.
+- **Devigging:** Always derive true probability from Pinnacle/sharp books before calculating EV. `EV = (True Probability × Decimal Odds) - 1`.
+- **Odds format:** Internal calculations use Decimal odds or True Probabilities. Convert American odds via `american_to_decimal`.
+
 - **Devigging:** Always derive true probability from Pinnacle/sharp books before calculating EV. `EV = (True Probability × Decimal Odds) - 1`.
 - **Odds format:** Internal calculations use Decimal odds or True Probabilities. Convert American odds via `american_to_decimal`.
 - **Kelly sizing:** Always Fractional Kelly (Quarter or Half). Never Full Kelly. Cap single bet at 5% of bankroll.

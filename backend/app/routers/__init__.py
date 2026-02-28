@@ -3,8 +3,6 @@
 from app.routers import (
     bets,
     analyze,
-    odds,
-    sentiment,
     predictions,
     agents,
     google_sheets,
@@ -18,8 +16,6 @@ from app.routers import (
 __all__ = [
     'bets',
     'analyze',
-    'odds',
-    'sentiment',
     'predictions',
     'agents',
     'google_sheets',

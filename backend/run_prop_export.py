@@ -54,6 +54,24 @@ async def export_props_to_sheets():
     result = sheets_service.export_props(spreadsheet_id, prop_data)
     
     if "error" in result:
+        print(f"\n  Export (Raw) failed: {result['error']}")
+    else:
+        print(f"\n  ✅ Successfully exported {result['rows_written']} raw player props to 'Props' tab!")
+
+    # 3. Export High Value Dashboard
+    logger.info("Generating High Value Props Dashboard...")
+    high_value_result = sheets_service.export_high_value_props(spreadsheet_id, prop_data)
+    
+    if "error" in high_value_result:
+        print(f"\n  Export (High Value) failed: {high_value_result['error']}")
+    else:
+        print(f"  ✅ Successfully exported {high_value_result.get('rows_written', 0)} filtered props to 'HighValueProps' tab!")
+        info = sheets_service.get_spreadsheet_info(spreadsheet_id)
+        print(f"\n  View Dashboard here: {info.get('url')}")
+    
+    print("=" * 76 + "\n")
+    
+    if "error" in result:
         print(f"\n  Export failed: {result['error']}")
     else:
         print(f"\n  ✅ Successfully exported {result['rows_written']} player props to Google Sheets!")

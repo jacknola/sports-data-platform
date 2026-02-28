@@ -212,6 +212,208 @@ class GoogleSheetsService:
             )
             filtered_props = filtered_props[:max_rows]
 
+        self,
+        spreadsheet_id: str,
+        prop_data: Dict[str, Any],
+        tab_name: str = "HighValueProps",
+    ) -> Dict[str, Any]:
+        """Export high-value filtered props (Even Odds or Edge < 30%) to Google Sheets."""
+        if not self.client:
+            return {"error": "Google Sheets not configured"}
+
+        try:
+            sheet = self.client.open_by_key(spreadsheet_id)
+            ws = self._get_or_create_worksheet(sheet, tab_name)
+
+            headers = [
+                "Date",
+                "Player",
+                "Team",
+                "Opponent",
+                "Game",
+                "Stat",
+                "Line",
+                "Side",
+                "Odds",
+                "Projected",
+                "Edge %",
+                "Bayesian P",
+                "EV Class",
+                "Confidence",
+                "Kelly %",
+                "Sharp Signals",
+                "Situational Context",
+                "Best Book",
+                "Books #",
+                "Over Odds",
+                "Under Odds",
+            ]
+
+            all_props = prop_data.get("props", [])
+            max_rows = int((prop_data or {}).get("export_max_rows", 120) or 120)
+
+            filtered_props: List[Dict[str, Any]] = []
+            for p in all_props:
+                edge = float(p.get("bayesian_edge", 0) or 0)
+                kelly = float(p.get("kelly_fraction", 0) or 0)
+                ev_class = (p.get("ev_classification", "") or "").lower()
+                
+                # Exclude purely bad bets first
+                if ev_class == "pass" and kelly <= 0:
+                    continue
+                if edge <= 0 and kelly <= 0:
+                    continue
+
+                best_side = p.get("best_side", "over").upper()
+                odds_val = p.get("over_odds", -110) if best_side == "OVER" else p.get("under_odds", -110)
+                
+                try:
+                    odds_int = int(odds_val)
+                except (ValueError, TypeError):
+                    odds_int = -110
+
+                # High Value Logic: Edge < 30% OR "Even Odds" (-110 to +110)
+                is_low_edge = (edge > 0.0) and (edge < 0.30)
+                is_even_odds = -110 <= odds_int <= 110
+
+                if is_low_edge or is_even_odds:
+                    filtered_props.append(p)
+
+            filtered_props.sort(
+                key=lambda x: (
+                    float(x.get("kelly_fraction", 0) or 0),
+                    float(x.get("bayesian_edge", 0) or 0),
+                ),
+                reverse=True,
+            )
+            filtered_props = filtered_props[:max_rows]
+
+            today = datetime.now().strftime("%Y-%m-%d")
+            rows: List[List[Any]] = []
+
+            for p in filtered_props:
+                stat_type = p.get("stat_type", "")
+                stat_label = _STAT_DISPLAY.get(stat_type, stat_type.upper())
+                best_side = p.get("best_side", "over").upper()
+                odds = (
+                    p.get("over_odds", -110)
+                    if best_side == "OVER"
+                    else p.get("under_odds", -110)
+                )
+                edge = p.get("bayesian_edge", 0)
+                ev_class = p.get("ev_classification", "")
+                best_book = (
+                    p.get("best_over_book", "")
+                    if best_side == "OVER"
+                    else p.get("best_under_book", "")
+                )
+                home = p.get("home_team", "")
+                away = p.get("away_team", "")
+                game = f"{away} @ {home}" if home and away else ""
+                signals = ", ".join(p.get("sharp_signals", []))
+
+                situational_context = p.get(
+                    "situational_context", "No historical analogs found."
+                )
+
+                rows.append(
+                    [
+                        today,
+                        p.get("player_name", ""),
+                        p.get("team", ""),
+                        p.get("opponent", ""),
+                        game,
+                        stat_label,
+                        p.get("line", 0),
+                        best_side,
+                        _fmt_odds(int(odds)),
+                        round(p.get("projected_mean", 0), 1),
+                        round(edge * 100, 2),
+                        round(p.get("posterior_p", 0), 4),
+                        ev_class.replace("_", " ").title() if ev_class else "",
+                        _confidence_label(edge, ev_class),
+                        round(p.get("kelly_fraction", 0) * 100, 2),
+                        signals,
+                        situational_context,
+                        best_book,
+                        p.get("books_offering", 0),
+                        _fmt_odds(int(p.get("over_odds", -110))),
+                        _fmt_odds(int(p.get("under_odds", -110))),
+                    ]
+                )
+
+            written = self._batch_write(ws, headers, rows)
+            
+            # --- Advanced Formatting ---
+            try:
+                # Format headers
+                ws.format("A1:U1", {
+                    "backgroundColor": {
+                        "red": 0.2,
+                        "green": 0.2,
+                        "blue": 0.2
+                    },
+                    "textFormat": {
+                        "foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0},
+                        "bold": True,
+                        "fontSize": 11
+                    }
+                })
+
+                # Conditional formatting rules using raw API via batch_update
+                # High edge (>= 5%)
+                rule_edge_high = {
+                    "addConditionalFormatRule": {
+                        "rule": {
+                            "ranges": [{"sheetId": ws.id, "startRowIndex": 1, "startColumnIndex": 10, "endColumnIndex": 11}],
+                            "booleanRule": {
+                                "condition": {"type": "NUMBER_GREATER_THAN_EQ", "values": [{"userEnteredValue": "5"}]},
+                                "format": {"backgroundColor": {"red": 0.85, "green": 0.93, "blue": 0.83}, "textFormat": {"bold": True, "foregroundColor": {"red": 0.1, "green": 0.4, "blue": 0.1}}}
+                            }
+                        }, "index": 0
+                    }
+                }
+                
+                # Medium edge (3% to 4.99%)
+                rule_edge_med = {
+                    "addConditionalFormatRule": {
+                        "rule": {
+                            "ranges": [{"sheetId": ws.id, "startRowIndex": 1, "startColumnIndex": 10, "endColumnIndex": 11}],
+                            "booleanRule": {
+                                "condition": {"type": "NUMBER_BETWEEN", "values": [{"userEnteredValue": "3"}, {"userEnteredValue": "4.99"}]},
+                                "format": {"backgroundColor": {"red": 1.0, "green": 0.95, "blue": 0.8}, "textFormat": {"bold": True, "foregroundColor": {"red": 0.5, "green": 0.4, "blue": 0.0}}}
+                            }
+                        }, "index": 1
+                    }
+                }
+
+                # Confidence = HIGH
+                rule_conf_high = {
+                    "addConditionalFormatRule": {
+                        "rule": {
+                            "ranges": [{"sheetId": ws.id, "startRowIndex": 1, "startColumnIndex": 13, "endColumnIndex": 14}],
+                            "booleanRule": {
+                                "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "HIGH"}]},
+                                "format": {"backgroundColor": {"red": 0.85, "green": 0.93, "blue": 0.83}, "textFormat": {"bold": True}}
+                            }
+                        }, "index": 2
+                    }
+                }
+
+                sheet.batch_update({"requests": [rule_edge_high, rule_edge_med, rule_conf_high]})
+                logger.info("Applied conditional formatting to HighValueProps")
+                
+            except Exception as fmt_err:
+                logger.warning(f"Failed to apply formatting to HighValueProps: {fmt_err}")
+
+            logger.info(f"Exported {written} props to Google Sheets tab '{tab_name}'")
+            return {"status": "success", "tab": tab_name, "rows_written": written}
+
+        except Exception as e:
+            logger.error(f"High-value props export failed: {e}")
+            return {"error": str(e)}
+
+
             today = datetime.now().strftime("%Y-%m-%d")
             rows: List[List[Any]] = []
 
@@ -273,6 +475,210 @@ class GoogleSheetsService:
         except Exception as e:
             logger.error(f"Props export failed: {e}")
             return {"error": str(e)}
+
+    # ───────────────────────────────────────────────────────────────
+    # High-Value Props export
+    # ───────────────────────────────────────────────────────────────
+
+    def export_high_value_props(
+        self,
+        spreadsheet_id: str,
+        prop_data: Dict[str, Any],
+        tab_name: str = "HighValueProps",
+    ) -> Dict[str, Any]:
+        """Export high-value filtered props (Even Odds or Edge < 30%) to Google Sheets."""
+        if not self.client:
+            return {"error": "Google Sheets not configured"}
+
+        try:
+            sheet = self.client.open_by_key(spreadsheet_id)
+            ws = self._get_or_create_worksheet(sheet, tab_name)
+
+            headers = [
+                "Date",
+                "Player",
+                "Team",
+                "Opponent",
+                "Game",
+                "Stat",
+                "Line",
+                "Side",
+                "Odds",
+                "Projected",
+                "Edge %",
+                "Bayesian P",
+                "EV Class",
+                "Confidence",
+                "Kelly %",
+                "Sharp Signals",
+                "Situational Context",
+                "Best Book",
+                "Books #",
+                "Over Odds",
+                "Under Odds",
+            ]
+
+            all_props = prop_data.get("props", [])
+            max_rows = int((prop_data or {}).get("export_max_rows", 120) or 120)
+
+            filtered_props: List[Dict[str, Any]] = []
+            for p in all_props:
+                edge = float(p.get("bayesian_edge", 0) or 0)
+                kelly = float(p.get("kelly_fraction", 0) or 0)
+                ev_class = (p.get("ev_classification", "") or "").lower()
+                
+                # Exclude purely bad bets first
+                if ev_class == "pass" and kelly <= 0:
+                    continue
+                if edge <= 0 and kelly <= 0:
+                    continue
+
+                best_side = p.get("best_side", "over").upper()
+                odds_val = p.get("over_odds", -110) if best_side == "OVER" else p.get("under_odds", -110)
+                
+                try:
+                    odds_int = int(odds_val)
+                except (ValueError, TypeError):
+                    odds_int = -110
+
+                # High Value Logic: Edge < 30% OR "Even Odds" (-110 to +110)
+                is_low_edge = (edge > 0.0) and (edge < 0.30)
+                is_even_odds = -110 <= odds_int <= 110
+
+                if is_low_edge or is_even_odds:
+                    filtered_props.append(p)
+
+            filtered_props.sort(
+                key=lambda x: (
+                    float(x.get("kelly_fraction", 0) or 0),
+                    float(x.get("bayesian_edge", 0) or 0),
+                ),
+                reverse=True,
+            )
+            filtered_props = filtered_props[:max_rows]
+
+            today = datetime.now().strftime("%Y-%m-%d")
+            rows: List[List[Any]] = []
+
+            for p in filtered_props:
+                stat_type = p.get("stat_type", "")
+                stat_label = _STAT_DISPLAY.get(stat_type, stat_type.upper())
+                best_side = p.get("best_side", "over").upper()
+                odds = (
+                    p.get("over_odds", -110)
+                    if best_side == "OVER"
+                    else p.get("under_odds", -110)
+                )
+                edge = p.get("bayesian_edge", 0)
+                ev_class = p.get("ev_classification", "")
+                best_book = (
+                    p.get("best_over_book", "")
+                    if best_side == "OVER"
+                    else p.get("best_under_book", "")
+                )
+                home = p.get("home_team", "")
+                away = p.get("away_team", "")
+                game = f"{away} @ {home}" if home and away else ""
+                signals = ", ".join(p.get("sharp_signals", []))
+
+                situational_context = p.get(
+                    "situational_context", "No historical analogs found."
+                )
+
+                rows.append(
+                    [
+                        today,
+                        p.get("player_name", ""),
+                        p.get("team", ""),
+                        p.get("opponent", ""),
+                        game,
+                        stat_label,
+                        p.get("line", 0),
+                        best_side,
+                        _fmt_odds(int(odds)),
+                        round(p.get("projected_mean", 0), 1),
+                        round(edge * 100, 2),
+                        round(p.get("posterior_p", 0), 4),
+                        ev_class.replace("_", " ").title() if ev_class else "",
+                        _confidence_label(edge, ev_class),
+                        round(p.get("kelly_fraction", 0) * 100, 2),
+                        signals,
+                        situational_context,
+                        best_book,
+                        p.get("books_offering", 0),
+                        _fmt_odds(int(p.get("over_odds", -110))),
+                        _fmt_odds(int(p.get("under_odds", -110))),
+                    ]
+                )
+
+            written = self._batch_write(ws, headers, rows)
+            
+            # --- Advanced Formatting ---
+            try:
+                # Format headers
+                ws.format("A1:U1", {
+                    "backgroundColor": {
+                        "red": 0.2,
+                        "green": 0.2,
+                        "blue": 0.2
+                    },
+                    "textFormat": {
+                        "foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0},
+                        "bold": True,
+                        "fontSize": 11
+                    }
+                })
+
+                # Conditional formatting rules using raw API via batch_update
+                rule_edge_high = {
+                    "addConditionalFormatRule": {
+                        "rule": {
+                            "ranges": [{"sheetId": ws.id, "startRowIndex": 1, "startColumnIndex": 10, "endColumnIndex": 11}],
+                            "booleanRule": {
+                                "condition": {"type": "NUMBER_GREATER_THAN_EQ", "values": [{"userEnteredValue": "5"}]},
+                                "format": {"backgroundColor": {"red": 0.85, "green": 0.93, "blue": 0.83}, "textFormat": {"bold": True, "foregroundColor": {"red": 0.1, "green": 0.4, "blue": 0.1}}}
+                            }
+                        }, "index": 0
+                    }
+                }
+                
+                rule_edge_med = {
+                    "addConditionalFormatRule": {
+                        "rule": {
+                            "ranges": [{"sheetId": ws.id, "startRowIndex": 1, "startColumnIndex": 10, "endColumnIndex": 11}],
+                            "booleanRule": {
+                                "condition": {"type": "NUMBER_BETWEEN", "values": [{"userEnteredValue": "3"}, {"userEnteredValue": "4.99"}]},
+                                "format": {"backgroundColor": {"red": 1.0, "green": 0.95, "blue": 0.8}, "textFormat": {"bold": True, "foregroundColor": {"red": 0.5, "green": 0.4, "blue": 0.0}}}
+                            }
+                        }, "index": 1
+                    }
+                }
+
+                rule_conf_high = {
+                    "addConditionalFormatRule": {
+                        "rule": {
+                            "ranges": [{"sheetId": ws.id, "startRowIndex": 1, "startColumnIndex": 13, "endColumnIndex": 14}],
+                            "booleanRule": {
+                                "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "HIGH"}]},
+                                "format": {"backgroundColor": {"red": 0.85, "green": 0.93, "blue": 0.83}, "textFormat": {"bold": True}}
+                            }
+                        }, "index": 2
+                    }
+                }
+
+                sheet.batch_update({"requests": [rule_edge_high, rule_edge_med, rule_conf_high]})
+                logger.info("Applied conditional formatting to HighValueProps")
+                
+            except Exception as fmt_err:
+                logger.warning(f"Failed to apply formatting to HighValueProps: {fmt_err}")
+
+            logger.info(f"Exported {written} props to Google Sheets tab '{tab_name}'")
+            return {"status": "success", "tab": tab_name, "rows_written": written}
+
+        except Exception as e:
+            logger.error(f"High-value props export failed: {e}")
+            return {"error": str(e)}
+
 
     # ───────────────────────────────────────────────────────────────
     # NBA export
@@ -937,206 +1343,4 @@ class GoogleSheetsService:
             }
         except Exception as e:
             logger.error(f"Error getting spreadsheet info: {e}")
-            return {"error": str(e)}
-    # ───────────────────────────────────────────────────────────────
-    # High-Value Props export
-    # ───────────────────────────────────────────────────────────────
-
-    def export_high_value_props(
-        self,
-        spreadsheet_id: str,
-        prop_data: Dict[str, Any],
-        tab_name: str = "HighValueProps",
-    ) -> Dict[str, Any]:
-        """Export high-value filtered props (Even Odds or Edge < 30%) to Google Sheets."""
-        if not self.client:
-            return {"error": "Google Sheets not configured"}
-
-        try:
-            sheet = self.client.open_by_key(spreadsheet_id)
-            ws = self._get_or_create_worksheet(sheet, tab_name)
-
-            headers = [
-                "Date",
-                "Player",
-                "Team",
-                "Opponent",
-                "Game",
-                "Stat",
-                "Line",
-                "Side",
-                "Odds",
-                "Projected",
-                "Edge %",
-                "Bayesian P",
-                "EV Class",
-                "Confidence",
-                "Kelly %",
-                "Sharp Signals",
-                "Situational Context",
-                "Best Book",
-                "Books #",
-                "Over Odds",
-                "Under Odds",
-            ]
-
-            all_props = prop_data.get("props", [])
-            max_rows = int((prop_data or {}).get("export_max_rows", 120) or 120)
-
-            filtered_props: List[Dict[str, Any]] = []
-            for p in all_props:
-                edge = float(p.get("bayesian_edge", 0) or 0)
-                kelly = float(p.get("kelly_fraction", 0) or 0)
-                ev_class = (p.get("ev_classification", "") or "").lower()
-                
-                # Exclude purely bad bets first
-                if ev_class == "pass" and kelly <= 0:
-                    continue
-                if edge <= 0 and kelly <= 0:
-                    continue
-
-                best_side = p.get("best_side", "over").upper()
-                odds_val = p.get("over_odds", -110) if best_side == "OVER" else p.get("under_odds", -110)
-                
-                try:
-                    odds_int = int(odds_val)
-                except (ValueError, TypeError):
-                    odds_int = -110
-
-                # High Value Logic: Edge < 30% OR "Even Odds" (-110 to +110)
-                is_low_edge = (edge > 0.0) and (edge < 0.30)
-                is_even_odds = -110 <= odds_int <= 110
-
-                if is_low_edge or is_even_odds:
-                    filtered_props.append(p)
-
-            filtered_props.sort(
-                key=lambda x: (
-                    float(x.get("kelly_fraction", 0) or 0),
-                    float(x.get("bayesian_edge", 0) or 0),
-                ),
-                reverse=True,
-            )
-            filtered_props = filtered_props[:max_rows]
-
-            today = datetime.now().strftime("%Y-%m-%d")
-            rows: List[List[Any]] = []
-
-            for p in filtered_props:
-                stat_type = p.get("stat_type", "")
-                stat_label = _STAT_DISPLAY.get(stat_type, stat_type.upper())
-                best_side = p.get("best_side", "over").upper()
-                odds = (
-                    p.get("over_odds", -110)
-                    if best_side == "OVER"
-                    else p.get("under_odds", -110)
-                )
-                edge = p.get("bayesian_edge", 0)
-                ev_class = p.get("ev_classification", "")
-                best_book = (
-                    p.get("best_over_book", "")
-                    if best_side == "OVER"
-                    else p.get("best_under_book", "")
-                )
-                home = p.get("home_team", "")
-                away = p.get("away_team", "")
-                game = f"{away} @ {home}" if home and away else ""
-                signals = ", ".join(p.get("sharp_signals", []))
-
-                situational_context = p.get(
-                    "situational_context", "No historical analogs found."
-                )
-
-                rows.append(
-                    [
-                        today,
-                        p.get("player_name", ""),
-                        p.get("team", ""),
-                        p.get("opponent", ""),
-                        game,
-                        stat_label,
-                        p.get("line", 0),
-                        best_side,
-                        _fmt_odds(int(odds)),
-                        round(p.get("projected_mean", 0), 1),
-                        round(edge * 100, 2),
-                        round(p.get("posterior_p", 0), 4),
-                        ev_class.replace("_", " ").title() if ev_class else "",
-                        _confidence_label(edge, ev_class),
-                        round(p.get("kelly_fraction", 0) * 100, 2),
-                        signals,
-                        situational_context,
-                        best_book,
-                        p.get("books_offering", 0),
-                        _fmt_odds(int(p.get("over_odds", -110))),
-                        _fmt_odds(int(p.get("under_odds", -110))),
-                    ]
-                )
-
-            written = self._batch_write(ws, headers, rows)
-            
-            # --- Advanced Formatting ---
-            try:
-                # Format headers
-                ws.format("A1:U1", {
-                    "backgroundColor": {
-                        "red": 0.2,
-                        "green": 0.2,
-                        "blue": 0.2
-                    },
-                    "textFormat": {
-                        "foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0},
-                        "bold": True,
-                        "fontSize": 11
-                    }
-                })
-
-                # Conditional formatting rules using raw API via batch_update
-                rule_edge_high = {
-                    "addConditionalFormatRule": {
-                        "rule": {
-                            "ranges": [{"sheetId": ws.id, "startRowIndex": 1, "startColumnIndex": 10, "endColumnIndex": 11}],
-                            "booleanRule": {
-                                "condition": {"type": "NUMBER_GREATER_THAN_EQ", "values": [{"userEnteredValue": "5"}]},
-                                "format": {"backgroundColor": {"red": 0.85, "green": 0.93, "blue": 0.83}, "textFormat": {"bold": True, "foregroundColor": {"red": 0.1, "green": 0.4, "blue": 0.1}}}
-                            }
-                        }, "index": 0
-                    }
-                }
-                
-                rule_edge_med = {
-                    "addConditionalFormatRule": {
-                        "rule": {
-                            "ranges": [{"sheetId": ws.id, "startRowIndex": 1, "startColumnIndex": 10, "endColumnIndex": 11}],
-                            "booleanRule": {
-                                "condition": {"type": "NUMBER_BETWEEN", "values": [{"userEnteredValue": "3"}, {"userEnteredValue": "4.99"}]},
-                                "format": {"backgroundColor": {"red": 1.0, "green": 0.95, "blue": 0.8}, "textFormat": {"bold": True, "foregroundColor": {"red": 0.5, "green": 0.4, "blue": 0.0}}}
-                            }
-                        }, "index": 1
-                    }
-                }
-
-                rule_conf_high = {
-                    "addConditionalFormatRule": {
-                        "rule": {
-                            "ranges": [{"sheetId": ws.id, "startRowIndex": 1, "startColumnIndex": 13, "endColumnIndex": 14}],
-                            "booleanRule": {
-                                "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "HIGH"}]},
-                                "format": {"backgroundColor": {"red": 0.85, "green": 0.93, "blue": 0.83}, "textFormat": {"bold": True}}
-                            }
-                        }, "index": 2
-                    }
-                }
-
-                sheet.batch_update({"requests": [rule_edge_high, rule_edge_med, rule_conf_high]})
-                logger.info("Applied conditional formatting to HighValueProps")
-                
-            except Exception as fmt_err:
-                logger.warning(f"Failed to apply formatting to HighValueProps: {fmt_err}")
-
-            logger.info(f"Exported {written} props to Google Sheets tab '{tab_name}'")
-            return {"status": "success", "tab": tab_name, "rows_written": written}
-
-        except Exception as e:
-            logger.error(f"High-value props export failed: {e}")
             return {"error": str(e)}

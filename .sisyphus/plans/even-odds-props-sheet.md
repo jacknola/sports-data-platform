@@ -1,40 +1,34 @@
-# Work Plan: Even Odds & Low Edge Player Props Sheet
+# Work Plan: High Value Player Props Dashboard
 
-This plan outlines the steps to create a fully automated Google Sheet that imports player prop data, filters for specific criteria ("even odds" or "edge < 30%"), and presents it in a clean, user-friendly format.
+This plan outlines the steps to upgrade the existing Google Sheets export functionality to create a beautifully formatted, filtered dashboard for player props, specifically targeting "even odds" or "edge < 30%".
 
-## Phase 1: Setup & Data Ingestion
+## Phase 1: Backend Logic Update
 
-- [ ] **Task 1: Create Google Apps Script for Data Fetching.**
-  - Create a new Google Apps Script file associated with the target Google Sheet.
-  - Write a function to read API credentials from the `backend/.env` file, ignoring the duplicate `THE_ODDS_API_KEY`.
-  - Implement a function using `UrlFetchApp` to call the specified sports data API.
-  - Add robust error handling to log any API connection or data parsing failures.
+- [ ] **Task 1: Implement Filtering Logic in Python.**
+  - Modify `backend/app/services/google_sheets.py` (specifically the `export_props` method or create a new method `export_high_value_props`).
+  - Add logic to filter the `prop_data` for:
+    - Even odds (e.g., American odds between -110 and +110).
+    - OR Edge < 30% (0.30).
+  - Ensure the data is sorted logically (e.g., by Edge descending).
 
-- [ ] **Task 2: Implement Data Parsing and Sheet Writing.**
-  - In the Apps Script, parse the raw data from the API (assuming JSON or CSV).
-  - Clear the `RawData` sheet of any existing content.
-  - Write the new, complete dataset to the `RawData` sheet.
+## Phase 2: Sheet Formatting & Presentation
 
-- [ ] **Task 3: Set Up Automated Trigger.**
-  - Configure a time-driven trigger in the Google Apps Script project to run the data import function once every 24 hours.
+- [ ] **Task 2: Enhance gspread Formatting.**
+  - Update the Python code to apply advanced formatting to the new sheet using `gspread`'s `format` method or batch update API.
+  - Set appropriate column widths for readability.
+  - Apply a clean color scheme to the header row (e.g., dark background, white text).
+  - Format percentage columns (Edge %, Kelly %) as actual percentages.
 
-## Phase 2: Data Filtering & Presentation
+- [ ] **Task 3: Apply Conditional Formatting.**
+  - Use the Google Sheets API (via `gspread`) to add conditional formatting rules to the sheet.
+  - Highlight the "Edge %" column (e.g., green for higher edges).
+  - Highlight the "Confidence" column based on text value (High = Green, Medium = Yellow, etc.).
 
-- [ ] **Task 4: Create Filtered View with QUERY.**
-  - In the `HighValueProps` sheet, create a `QUERY` formula in cell A1.
-  - The query should reference the `RawData` sheet.
-  - It must filter for rows that meet the criteria: "even odds" (e.g., American odds between -110 and +110) OR "Edge %" < 0.30.
-  - The query should select and arrange the most important columns for display.
+## Phase 3: Integration & Testing
 
-- [ ] **Task 5: Apply Conditional Formatting.**
-  - Apply conditional formatting rules to the `Edge %` and `Odds` columns in the `HighValueProps` sheet to visually highlight the most promising bets.
+- [ ] **Task 4: Update Export Runner.**
+  - Ensure the main export script (`backend/run_prop_export.py` or similar) calls the new/updated export method.
+  - Run the export script to verify the new sheet is created and formatted correctly.
 
-- [ ] **Task 6: Protect Sheets.**
-  - Protect the `RawData` and `HighValueProps` sheets to prevent accidental manual edits, ensuring data integrity.
-
-## Phase 3: Documentation
-
-- [ ] **Task 7: Update AGENTS.md.**
-  - Review the existing `AGENTS.md` file.
-  - Add a new section describing the purpose and function of the new "Even Odds" sheet.
-  - Clarify any instructions for agents related to data exports or analysis to prevent future confusion.
+- [ ] **Task 5: Update AGENTS.md.**
+  - Document the new sheet structure and filtering logic in `AGENTS.md` for future reference.
