@@ -66,6 +66,8 @@ def _inject_stubs():
         "app.routers.live_props",
         "app.routers.cbb_sharp",
         "app.routers.parlays",
+        "app.routers.historical",
+
     ]
     for rname in router_names:
         r = types.ModuleType(rname)

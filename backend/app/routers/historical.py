@@ -15,7 +15,7 @@ from app.database import get_db
 from app.models.historical_game_line import HistoricalGameLine
 from app.models.historical_player_prop import HistoricalPlayerProp
 
-router = APIRouter(prefix="/api/historical", tags=["historical"])
+router = APIRouter(tags=["historical"])
 
 
 @router.get("/games")

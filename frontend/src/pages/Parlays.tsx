@@ -17,17 +17,17 @@ export default function Parlays() {
   // Fetch parlays list
   const { data: parlays, isLoading: parlaysLoading } = useQuery<Parlay[]>({
     queryKey: ['parlays', selectedSport, selectedStatus],
-    queryFn: () => api.get('/parlays', { params: { sport: selectedSport || undefined, status: selectedStatus || undefined } }),
+    queryFn: () => api.get('/api/v1/parlays', { params: { sport: selectedSport || undefined, status: selectedStatus || undefined } }),
   });
   // Fetch performance stats
   const { data: stats } = useQuery<ParlayStats>({
     queryKey: ['parlays', 'stats'],
-    queryFn: () => api.get('/parlays/stats/performance'),
+    queryFn: () => api.get('/api/v1/parlays/stats/performance'),
   });
 
   // Search mutation
   const searchMutation = useMutation<Parlay[], Error, string>({
-    mutationFn: (query) => api.post('/parlays/search', { query }),
+    mutationFn: (query) => api.post('/api/v1/parlays/search', { query }),
     onSuccess: (results, query) => {
       queryClient.setQueryData(['parlays', 'search', query], results);
     },
@@ -36,7 +36,7 @@ export default function Parlays() {
   // Update result mutation
   const updateMutation = useMutation({
     mutationFn: ({ parlayId, data }: { parlayId: string; data: { status: string; result?: Record<string, unknown>; actual_return?: number } }) =>
-      api.post(`/parlays/${parlayId}/update`, data),
+      api.post(`/api/v1/parlays/${parlayId}/update`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['parlays'] });
       queryClient.invalidateQueries({ queryKey: ['parlays', 'stats'] });
@@ -46,7 +46,7 @@ export default function Parlays() {
   // Twitter post mutation
   const tweetMutation = useMutation({
     mutationFn: ({ parlayId, asThread }: { parlayId: string; asThread: boolean }) =>
-      api.post(`/parlays/${parlayId}/post-twitter`, { as_thread: asThread }),
+      api.post(`/api/v1/parlays/${parlayId}/post-twitter`, { as_thread: asThread }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['parlays'] });
     },
@@ -55,7 +55,7 @@ export default function Parlays() {
   // Fetch insights for selected parlay
   const { data: insights } = useQuery<ParlayInsights>({
     queryKey: ['parlays', selectedParlay?.parlay_id, 'insights'],
-    queryFn: () => api.get(`/parlays/${selectedParlay?.parlay_id}/insights`),
+    queryFn: () => api.get(`/api/v1/parlays/${selectedParlay?.parlay_id}/insights`),
     enabled: !!selectedParlay,
   });
   // Handle search
@@ -93,7 +93,7 @@ export default function Parlays() {
         <div className="text-sm text-gray-400">
           {stats && (
             <span>
-              Win Rate: <span className={stats.win_rate > 0.5 ? 'text-green-400' : 'text-red-400'}>{(stats.win_rate * 100).toFixed(1)}%</span>
+              Win Rate: <span className={stats.win_rate > 50 ? 'text-green-400' : 'text-red-400'}>{stats.win_rate.toFixed(1)}%</span>
             </span>
           )}
         </div>
@@ -108,7 +108,7 @@ export default function Parlays() {
           </div>
           <div className="rounded-lg bg-gray-800 p-4">
             <div className="text-sm text-gray-400">Pending</div>
-            <div className="text-2xl font-bold text-blue-400">{stats.pending}</div>
+            <div className="text-2xl font-bold text-blue-400">{stats.pending || 0}</div>
           </div>
           <div className="rounded-lg bg-gray-800 p-4">
             <div className="text-sm text-gray-400">Won</div>
@@ -120,8 +120,8 @@ export default function Parlays() {
           </div>
           <div className="rounded-lg bg-gray-800 p-4">
             <div className="text-sm text-gray-400">ROI</div>
-            <div className={`text-2xl font-bold ${stats.total_roi > 0 ? 'text-green-400' : 'text-red-400'}`}>
-              {stats.total_roi > 0 ? '+' : ''}{stats.total_roi.toFixed(1)}%
+            <div className={`text-2xl font-bold ${stats.overall_roi > 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {stats.overall_roi > 0 ? '+' : ''}{stats.overall_roi.toFixed(1)}%
             </div>
           </div>
         </div>

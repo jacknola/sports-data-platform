@@ -85,12 +85,12 @@ export interface ParlayInsights {
 
 export interface ParlayStats {
   total_parlays: number
-  pending: number
+  pending?: number
   won: number
   lost: number
-  partial: number
+  partial?: number
   win_rate: number
-  total_roi: number
-  total_profit_loss: number
-  avg_confidence: number
+  overall_roi: number
+  net_profit: number
+  avg_confidence?: number
 }
