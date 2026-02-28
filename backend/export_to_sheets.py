@@ -33,70 +33,32 @@ logger.add(
     format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}",
 )
 
-BANKROLL = 100.0
-
-
 # ---------------------------------------------------------------------------
-# Pipelines (same as send_slack_report.py)
+# Pipelines
 # ---------------------------------------------------------------------------
 
 
 async def _run_nba() -> tuple:
-    """Run NBA ML analysis. Returns (predictions, bets)."""
-    from app.services.nba_ml_predictor import NBAMLPredictor
-    from datetime import datetime
+    """Run NBA ML analysis via run_nba_analysis(). Returns (predictions, bets)."""
+    import concurrent.futures
 
-    logger.info("Running NBA ML analysis...")
-    predictor = NBAMLPredictor()
-    predictions = await predictor.predict_today_games("nba")
+    def _sync_nba() -> Dict[str, Any]:
+        from run_nba_analysis import run_nba_analysis as _run
+        import asyncio as _aio
+        return _aio.run(_run())
 
-    if not predictions:
-        logger.warning("No NBA games found today")
-        return [], []
-
-    bets: List[Dict[str, Any]] = []
-    for p in predictions:
-        if "error" in p:
-            continue
-
-        ev = p["expected_value"]
-        best_bet = ev["best_bet"]
-        home_edge = ev.get("home_ev", 0)
-        away_edge = ev.get("away_ev", 0)
-        kelly_fraction = p.get("kelly_criterion", 0)
-
-        best_side_team = p["home_team"] if best_bet == "home" else p["away_team"]
-        best_side_odds = ev["home_odds"] if best_bet == "home" else ev["away_odds"]
-        best_side_edge = home_edge if best_bet == "home" else away_edge
-
-        if kelly_fraction > 0.001 and best_side_edge > 0.025:
-            bets.append({
-                "game_id": f"NBA_{p['home_team']}_{p['away_team']}_{datetime.now().strftime('%Y%m%d')}".replace(" ", ""),
-                "sport": "nba",
-                "side": best_side_team,
-                "market": "moneyline",
-                "odds": best_side_odds,
-                "edge": best_side_edge,
-                "bet_size": kelly_fraction * BANKROLL,
-            })
-
-    logger.info(f"NBA: {len(predictions)} games, {len(bets)} qualifying bets")
-    return predictions, bets
-
-
-async def _run_ncaab_ml() -> List[Dict[str, Any]]:
-    """Run NCAAB ML predictor (Pythagorean / XGBoost). Returns list of predictions."""
     try:
-        from app.services.ncaab_ml_predictor import NCAABMLPredictor
-
-        logger.info("Running NCAAB ML predictions...")
-        predictor = NCAABMLPredictor()
-        predictions = await predictor.predict_today_games()
-        logger.info(f"NCAAB ML: {len(predictions)} predictions")
-        return predictions
+        logger.info("Running NBA ML analysis...")
+        loop = asyncio.get_running_loop()
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            result = await loop.run_in_executor(pool, _sync_nba)
+        predictions = result.get("predictions", [])
+        bets = result.get("bets", [])
+        logger.info(f"NBA: {len(predictions)} games, {len(bets)} qualifying bets")
+        return predictions, bets
     except Exception as e:
-        logger.error(f"NCAAB ML predictor failed: {e}")
-        return []
+        logger.error(f"NBA analysis failed: {e}")
+        return [], []
 
 
 async def _run_ncaab() -> Optional[Dict[str, Any]]:
@@ -109,7 +71,7 @@ async def _run_ncaab() -> Optional[Dict[str, Any]]:
 
     try:
         logger.info("Running NCAAB analysis...")
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         with concurrent.futures.ThreadPoolExecutor() as pool:
             result = await loop.run_in_executor(pool, _sync_ncaab)
         logger.info(
@@ -164,7 +126,6 @@ async def run_and_export(
         return False
 
     ncaab_data: Optional[Dict[str, Any]] = None
-    ncaab_ml_predictions: List[Dict[str, Any]] = []
     nba_predictions: List[Dict[str, Any]] = []
     nba_bets: List[Dict[str, Any]] = []
     prop_data: Optional[Dict[str, Any]] = None
@@ -172,7 +133,6 @@ async def run_and_export(
     # Run pipelines
     if include_ncaab:
         ncaab_data = await _run_ncaab()
-        ncaab_ml_predictions = await _run_ncaab_ml()
 
     if include_nba:
         nba_predictions, nba_bets = await _run_nba()
@@ -182,15 +142,14 @@ async def run_and_export(
 
     # Check if we have anything
     has_ncaab = ncaab_data and ncaab_data.get("game_analyses")
-    has_ncaab_ml = bool(ncaab_ml_predictions)
     has_nba = bool(nba_predictions)
     has_props = prop_data and prop_data.get("props")
 
-    if not has_ncaab and not has_ncaab_ml and not has_nba and not has_props:
+    if not has_ncaab and not has_nba and not has_props:
         logger.warning("No data from any pipeline — nothing to export")
         return False
 
-    # Export core tabs via export_daily_picks (NBA odds, NBA ML Predictions, NCAAB sharp, Props, Summary)
+    # Export
     results = sheets.export_daily_picks(
         spreadsheet_id=spreadsheet_id,
         ncaab_data=ncaab_data if has_ncaab else None,
@@ -198,15 +157,6 @@ async def run_and_export(
         nba_bets=nba_bets,
         prop_data=prop_data if has_props else None,
     )
-
-    # Export NCAAB ML predictions to its own tab
-    if has_ncaab_ml:
-        results["ncaab_ml"] = sheets.export_ml_predictions(
-            spreadsheet_id=spreadsheet_id,
-            predictions=ncaab_ml_predictions,
-            sport="NCAAB",
-            tab_name="NCAAB ML",
-        )
 
     # Report
     errors = [k for k, v in results.items() if isinstance(v, dict) and v.get("error")]
