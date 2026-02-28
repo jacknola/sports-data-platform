@@ -114,10 +114,10 @@ async def _get_live_props(sport: str) -> List[Dict]:
     #   - Cap at MAX_ENRICHED to avoid 200+ NBA.com calls
     MIN_DEVIG_EDGE = 0.01  # Very permissive — let model decide, not devig
     MAX_PER_STAT = (
-        8  # Max props per stat type (increased from 5 to capture long-odds edge)
+        20  # Max props per stat type (increased to capture long-odds edge)
     )
     MAX_ENRICHED = (
-        70  # Hard cap total (increased from 40 to 8+ markets × 8, captures longer odds)
+        250  # Hard cap total (increased to allow up to 100 final best props)
     )
 
     # Score and bucket by stat type
@@ -711,23 +711,39 @@ async def run_prop_analysis(sport: str = "nba") -> Dict[str, Any]:
         )
     )
 
+    # ── Dynamic Limits ──
+    # Calculate the number of unique teams playing on the slate
+    unique_teams = {p.get("team") for p in raw_props if p.get("team")}
+    num_unique_teams = len(unique_teams) if unique_teams else 1
+    
+    # Allow up to 100 total high-value props, distributed dynamically per team
+    limit_per_team = max(1, 100 // num_unique_teams)
+    
+    import collections
+    team_counts = collections.defaultdict(int)
+    dynamically_balanced_best = []
+    
+    for prop in best:
+        team = prop.get("team")
+        if team_counts[team] < limit_per_team:
+            dynamically_balanced_best.append(prop)
+            team_counts[team] += 1
+        
+        if len(dynamically_balanced_best) >= 100:
+            break
+
     return {
         "sport": sport.upper(),
         "date": datetime.now().strftime("%Y-%m-%d"),
         "total_props": len(analyzed),
-        "positive_ev_count": len(best),
+        "positive_ev_count": len(dynamically_balanced_best),
         "props": analyzed,
-        "best_props": best[
-            :30
-        ],  # Increased from 20 to capture more edge (especially long-odds props)
+        "best_props": dynamically_balanced_best,
     }
-
 
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
-
-
 @router.get("/props/{sport}")
 async def get_props(sport: str) -> Dict[str, Any]:
     """
@@ -753,7 +769,7 @@ async def get_best_props(
     min_edge: float = Query(
         default=0.03, description="Minimum Bayesian edge threshold"
     ),
-    limit: int = Query(default=10, description="Maximum props to return"),
+    limit: int = Query(default=100, description="Maximum props to return"),
     require_sharp: bool = Query(
         default=False,
         description="Only return props with sharp signals",
