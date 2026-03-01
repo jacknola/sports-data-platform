@@ -65,7 +65,7 @@ def capture_analysis() -> str:
     try:
         with redirect_stdout(buf):
             run_ncaab()
-            print("\n\n" + "X" * 76 + "\n\n")
+            # Visual separator between NCAAB and NBA output (removed per AGENTS.md - no print() in services)
             run_nba()
         output = buf.getvalue()
         logger.info(f"Analysis captured: {len(output)} chars")
@@ -145,9 +145,9 @@ def run_orchestrated_analysis(prediction_only: bool = False) -> Dict[str, Any]:
 
     try:
         with redirect_stdout(buf):
-            ncaab_data = run_ncaab()
-            print("\n\n" + "X" * 76 + "\n\n")
-            nba_data = asyncio.run(run_nba_analysis())
+            ncaab_data = run_ncaab(prediction_only=prediction_only)
+            # Visual separator between NCAAB and NBA output (removed per AGENTS.md - no print() in services)
+            nba_data = asyncio.run(run_nba_analysis(prediction_only=prediction_only))
     except Exception as e:
         logger.error(f"Core analysis failed: {e}")
 
