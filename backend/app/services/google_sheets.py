@@ -36,6 +36,20 @@ def _fmt_odds(odds: int) -> str:
     return f"+{odds}" if odds > 0 else str(odds)
 
 
+def _american_to_implied_prob(odds: int) -> float:
+    """Convert American moneyline odds to raw (vigged) implied probability."""
+    if not odds:
+        return 0.5
+    if odds > 0:
+        return 100.0 / (odds + 100.0)
+    return abs(odds) / (abs(odds) + 100.0)
+
+
+def _delta_pct(model: float, market: float) -> float:
+    """Return (model − market) in percentage points, rounded to 1 decimal."""
+    return round((model - market) * 100, 1)
+
+
 def _confidence_label(edge: float, ev_class: str) -> str:
     if ev_class == "strong_play" or edge >= 0.08:
         return "HIGH"
@@ -257,6 +271,7 @@ class GoogleSheetsService:
                 "Spread", "Spread Odds",
                 "Total", "Over Odds", "Under Odds",
                 "Home Win %", "Away Win %",
+                "Market Home %", "Δ Model−Market",
                 "Proj Spread", "Proj Total", "O/U Rec",
                 "Best Bet", "Edge %", "Kelly %", "Bet Size",
             ]
@@ -299,6 +314,17 @@ class GoogleSheetsService:
                     else ""
                 )
 
+                # Market-implied probability from moneyline odds (raw, vigged)
+                home_ml_odds = ev.get("home_odds", 0)
+                market_home_pct = (
+                    round(_american_to_implied_prob(home_ml_odds) * 100, 1)
+                    if home_ml_odds else ""
+                )
+                delta_model_market = (
+                    _delta_pct(home_prob, _american_to_implied_prob(home_ml_odds))
+                    if home_ml_odds else ""
+                )
+
                 # Implied spread from probability
                 proj_spread = round(
                     (home_prob - 0.5) * -26, 1
@@ -333,6 +359,8 @@ class GoogleSheetsService:
                     under_odds,
                     round(home_prob * 100, 1),
                     round(away_prob * 100, 1),
+                    market_home_pct,
+                    delta_model_market,
                     proj_spread,
                     uo.get("total_points", "") if uo else "",
                     uo.get("recommendation", "").upper() if uo else "",
@@ -375,6 +403,7 @@ class GoogleSheetsService:
                 "Retail Home", "Retail Away",
                 "True Home %", "True Away %",
                 "Blend Home %", "Blend Away %",
+                "Δ Home (Model−Market)", "Δ Away (Model−Market)",
                 "Home Edge %", "Away Edge %",
                 "Sharp Side", "Signals", "Signal Conf %",
                 "Home AdjOE", "Home AdjDE",
@@ -417,6 +446,11 @@ class GoogleSheetsService:
                     s.get("game", "")[:60] for s in a.get("historical_context", [])[:2]
                 )
 
+                true_hp = a.get("true_home_prob", 0)
+                true_ap = a.get("true_away_prob", 0)
+                blend_hp = a.get("blended_home_prob", 0)
+                blend_ap = a.get("blended_away_prob", 0)
+
                 rows.append([
                     today,
                     home,
@@ -428,10 +462,12 @@ class GoogleSheetsService:
                     _fmt_odds(game.get("pinnacle_away_odds", 0)),
                     _fmt_odds(game.get("retail_home_odds", 0)),
                     _fmt_odds(game.get("retail_away_odds", 0)),
-                    round(a.get("true_home_prob", 0) * 100, 1),
-                    round(a.get("true_away_prob", 0) * 100, 1),
-                    round(a.get("blended_home_prob", 0) * 100, 1),
-                    round(a.get("blended_away_prob", 0) * 100, 1),
+                    round(true_hp * 100, 1),
+                    round(true_ap * 100, 1),
+                    round(blend_hp * 100, 1),
+                    round(blend_ap * 100, 1),
+                    _delta_pct(blend_hp, true_hp),
+                    _delta_pct(blend_ap, true_ap),
                     round(he * 100, 2),
                     round(ae * 100, 2),
                     a.get("sharp_side", ""),
@@ -456,6 +492,178 @@ class GoogleSheetsService:
 
         except Exception as e:
             logger.error(f"NCAAB export failed: {e}")
+            return {"error": str(e)}
+
+    # ───────────────────────────────────────────────────────────────
+    # Predictions comparison tab
+    # ───────────────────────────────────────────────────────────────
+
+    def export_predictions_comparison(
+        self,
+        spreadsheet_id: str,
+        ncaab_data: Optional[Dict[str, Any]] = None,
+        nba_predictions: Optional[List[Dict[str, Any]]] = None,
+        tab_name: str = "Predictions",
+    ) -> Dict[str, Any]:
+        """Export a unified model-vs-market comparison across all sports.
+
+        Each row represents one game side with three probability columns:
+
+        * Market %   — what the sharp market implies (devigged Pinnacle for NCAAB;
+                       raw implied from moneyline odds for NBA)
+        * Model %    — our model's estimate (KenPom blend for NCAAB; XGBoost for NBA)
+        * Δ          — Model % − Market %  (positive = model more bullish than market)
+
+        This lets you instantly see where the model and market most disagree.
+        """
+        if not self.client:
+            return {"error": "Google Sheets not configured"}
+
+        try:
+            sheet = self.client.open_by_key(spreadsheet_id)
+            ws = self._get_or_create_worksheet(sheet, tab_name, rows=300, cols=14)
+
+            headers = [
+                "Date", "Sport", "Home", "Away",
+                "Side",           # "Home" or "Away"
+                "Market %",       # Sharp-market implied probability for that side
+                "Model %",        # Our model's probability for that side
+                "Δ (Model−Mkt)",  # Difference in percentage points
+                "Edge %",         # Edge vs retail / best available line
+                "Best Bet",       # Which side the model recommends
+                "Confidence",     # HIGH / MEDIUM / LOW / SPECULATIVE
+                "Signals",        # Sharp signals (NCAAB) or model confidence (NBA)
+                "Kelly %",        # Fractional Kelly sizing
+                "Notes",
+            ]
+
+            today = datetime.now().strftime("%Y-%m-%d")
+            rows: List[List[Any]] = []
+
+            # ── NCAAB ───────────────────────────────────────────────────────
+            for a in (ncaab_data or {}).get("game_analyses", []):
+                game = a.get("game", {})
+                home = game.get("home", "")
+                away = game.get("away", "")
+                signals_str = ", ".join(a.get("sharp_signals", []))
+                confidence = a.get("confidence_level", "SPECULATIVE")
+
+                # Bets lookup for Kelly sizing
+                bets = (ncaab_data or {}).get("bets", [])
+                gid = game.get("game_id", "")
+                bet = next(
+                    (b for b in bets if b.get("game_id", "") == gid), {}
+                )
+                kelly_pct = round(bet.get("portfolio_fraction_pct", 0), 2) if bet else ""
+
+                true_hp = a.get("true_home_prob", 0)
+                true_ap = a.get("true_away_prob", 0)
+                blend_hp = a.get("blended_home_prob", 0)
+                blend_ap = a.get("blended_away_prob", 0)
+                he = a.get("home_edge", 0)
+                ae = a.get("away_edge", 0)
+                sharp_side = a.get("sharp_side", "") or ""
+
+                best_bet = (
+                    home if he >= ae else away
+                ) if (he or ae) else ""
+
+                # Home side row
+                rows.append([
+                    today, "NCAAB", home, away,
+                    "Home",
+                    round(true_hp * 100, 1),
+                    round(blend_hp * 100, 1),
+                    _delta_pct(blend_hp, true_hp),
+                    round(he * 100, 2),
+                    best_bet,
+                    confidence,
+                    signals_str,
+                    kelly_pct,
+                    f"Sharp: {sharp_side}" if sharp_side else "",
+                ])
+                # Away side row
+                rows.append([
+                    today, "NCAAB", home, away,
+                    "Away",
+                    round(true_ap * 100, 1),
+                    round(blend_ap * 100, 1),
+                    _delta_pct(blend_ap, true_ap),
+                    round(ae * 100, 2),
+                    best_bet,
+                    confidence,
+                    signals_str,
+                    kelly_pct,
+                    f"Sharp: {sharp_side}" if sharp_side else "",
+                ])
+
+            # ── NBA ─────────────────────────────────────────────────────────
+            for p in (nba_predictions or []):
+                if "error" in p:
+                    continue
+
+                ev = p.get("expected_value", {})
+                home = p.get("home_team", "")
+                away = p.get("away_team", "")
+                home_prob = p.get("home_win_probability", 0.5)
+                away_prob = 1.0 - home_prob
+                home_ml = ev.get("home_odds", 0)
+                away_ml = ev.get("away_odds", 0)
+                market_hp = _american_to_implied_prob(home_ml) if home_ml else 0.5
+                market_ap = 1.0 - market_hp
+                best_bet = ev.get("best_bet", "")
+                best_side = home if best_bet == "home" else away
+                home_ev = ev.get("home_ev", 0)
+                away_ev = ev.get("away_ev", 0)
+                kelly = p.get("kelly_criterion", 0)
+                kelly_pct = round(kelly * 100, 2) if kelly else ""
+                conf_val = p.get("confidence", 0)
+                confidence = (
+                    "HIGH" if conf_val >= 0.7
+                    else "MEDIUM" if conf_val >= 0.5
+                    else "LOW"
+                )
+
+                # Home side row
+                rows.append([
+                    today, "NBA", home, away,
+                    "Home",
+                    round(market_hp * 100, 1),
+                    round(home_prob * 100, 1),
+                    _delta_pct(home_prob, market_hp),
+                    round(home_ev * 100, 2) if home_ev else "",
+                    best_side,
+                    confidence,
+                    f"XGBoost conf={conf_val:.2f}" if conf_val else "XGBoost",
+                    kelly_pct,
+                    "",
+                ])
+                # Away side row
+                rows.append([
+                    today, "NBA", home, away,
+                    "Away",
+                    round(market_ap * 100, 1),
+                    round(away_prob * 100, 1),
+                    _delta_pct(away_prob, market_ap),
+                    round(away_ev * 100, 2) if away_ev else "",
+                    best_side,
+                    confidence,
+                    f"XGBoost conf={conf_val:.2f}" if conf_val else "XGBoost",
+                    kelly_pct,
+                    "",
+                ])
+
+            # Sort by absolute delta descending so biggest divergences appear first
+            rows.sort(key=lambda r: abs(r[7]) if isinstance(r[7], (int, float)) else 0, reverse=True)
+
+            written = self._batch_write(ws, headers, rows)
+            logger.info(
+                f"Exported {written} prediction rows to Google Sheets tab '{tab_name}'"
+            )
+            return {"status": "success", "tab": tab_name, "rows_written": written}
+
+        except Exception as e:
+            logger.error(f"Predictions comparison export failed: {e}")
             return {"error": str(e)}
 
     # ───────────────────────────────────────────────────────────────
@@ -564,6 +772,14 @@ class GoogleSheetsService:
             if qdrant_used:
                 logger.info("Qdrant context present — including historical context in Sheets export")
             results["ncaab"] = self.export_ncaab(spreadsheet_id, ncaab_data)
+
+        # Unified model-vs-market comparison tab (any sport with data)
+        if ncaab_data or nba_predictions:
+            results["predictions"] = self.export_predictions_comparison(
+                spreadsheet_id,
+                ncaab_data=ncaab_data,
+                nba_predictions=nba_predictions,
+            )
 
         results["summary"] = self.export_summary(
             spreadsheet_id,

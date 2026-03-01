@@ -2,14 +2,19 @@
 Export Daily Picks to Google Sheets
 
 Runs NCAAB, NBA, and Player Prop analysis, then writes results to
-Google Sheets with separate tabs: Props, NBA, NCAAB, Summary.
+Google Sheets with separate tabs: Props, NBA, NCAAB, Predictions, Summary.
+
+The 'Predictions' tab is a unified model-vs-market comparison across
+all sports — showing Market %, Model %, and Δ (Model−Market) for every
+game side, sorted by the largest model/market divergence.
 
 Usage:
-    python backend/export_to_sheets.py              # Full export
-    python backend/export_to_sheets.py --props-only # Props tab only
-    python backend/export_to_sheets.py --nba-only   # NBA tab only
-    python backend/export_to_sheets.py --ncaab-only # NCAAB tab only
-    python backend/export_to_sheets.py --test       # Test connection
+    python backend/export_to_sheets.py                   # Full export
+    python backend/export_to_sheets.py --props-only      # Props tab only
+    python backend/export_to_sheets.py --nba-only        # NBA tab only
+    python backend/export_to_sheets.py --ncaab-only      # NCAAB tab only
+    python backend/export_to_sheets.py --predictions-only# Predictions tab only
+    python backend/export_to_sheets.py --test            # Test connection
 """
 
 import sys
@@ -133,6 +138,7 @@ async def run_and_export(
     include_ncaab: bool = True,
     include_nba: bool = True,
     include_props: bool = True,
+    predictions_only: bool = False,
 ) -> bool:
     """Run all pipelines and export to Google Sheets."""
     spreadsheet_id = (
@@ -152,6 +158,11 @@ async def run_and_export(
     nba_predictions: List[Dict[str, Any]] = []
     nba_bets: List[Dict[str, Any]] = []
     prop_data: Optional[Dict[str, Any]] = None
+
+    # Predictions-only: run NCAAB + NBA (no props needed), export just that tab
+    if predictions_only:
+        include_ncaab = include_nba = True
+        include_props = False
 
     # Run pipelines
     if include_ncaab:
@@ -173,13 +184,22 @@ async def run_and_export(
         return False
 
     # Export
-    results = sheets.export_daily_picks(
-        spreadsheet_id=spreadsheet_id,
-        ncaab_data=ncaab_data if has_ncaab else None,
-        nba_predictions=nba_predictions if has_nba else None,
-        nba_bets=nba_bets,
-        prop_data=prop_data if has_props else None,
-    )
+    if predictions_only:
+        results = {
+            "predictions": sheets.export_predictions_comparison(
+                spreadsheet_id=spreadsheet_id,
+                ncaab_data=ncaab_data if has_ncaab else None,
+                nba_predictions=nba_predictions if has_nba else None,
+            )
+        }
+    else:
+        results = sheets.export_daily_picks(
+            spreadsheet_id=spreadsheet_id,
+            ncaab_data=ncaab_data if has_ncaab else None,
+            nba_predictions=nba_predictions if has_nba else None,
+            nba_bets=nba_bets,
+            prop_data=prop_data if has_props else None,
+        )
 
     # Report
     errors = [k for k, v in results.items() if isinstance(v, dict) and v.get("error")]
@@ -202,6 +222,11 @@ def main():
     parser.add_argument("--props-only", action="store_true", help="Props tab only")
     parser.add_argument("--nba-only", action="store_true", help="NBA tab only")
     parser.add_argument("--ncaab-only", action="store_true", help="NCAAB tab only")
+    parser.add_argument(
+        "--predictions-only",
+        action="store_true",
+        help="Predictions comparison tab only (model vs market, all sports)",
+    )
     args = parser.parse_args()
 
     if args.test:
@@ -223,7 +248,10 @@ def main():
         print(f"   Tabs: {', '.join(info['worksheets'])}")
         sys.exit(0)
 
-    if args.props_only:
+    predictions_only = args.predictions_only
+    if predictions_only:
+        include_ncaab, include_nba, include_props = True, True, False
+    elif args.props_only:
         include_ncaab, include_nba, include_props = False, False, True
     elif args.nba_only:
         include_ncaab, include_nba, include_props = False, True, False
@@ -236,6 +264,7 @@ def main():
         include_ncaab=include_ncaab,
         include_nba=include_nba,
         include_props=include_props,
+        predictions_only=predictions_only,
     ))
     sys.exit(0 if ok else 1)
 
