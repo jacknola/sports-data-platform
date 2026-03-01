@@ -27,8 +27,12 @@ def test_export_props_with_rag_context():
     mock_client.open_by_key.return_value = mock_sheet
     mock_sheet.worksheet.return_value = mock_ws
     
-    with patch("app.services.google_sheets.Credentials.from_service_account_file"), \
-         patch("app.services.google_sheets.gspread.authorize", return_value=mock_client):
+    mock_creds = MagicMock()
+    mock_gspread = MagicMock()
+    mock_gspread.authorize.return_value = mock_client
+    mock_gspread.WorksheetNotFound = Exception
+    with patch("app.services.google_sheets.Credentials", mock_creds), \
+         patch("app.services.google_sheets.gspread", mock_gspread):
         
         service = GoogleSheetsService(credentials_path="mock_creds.json")
         service.export_props("mock_id", prop_data)

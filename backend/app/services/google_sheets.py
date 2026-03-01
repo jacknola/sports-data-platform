@@ -10,13 +10,22 @@ Tabs:
   - NCAAB        — NCAAB sharp money picks
   - Summary      — Daily overview (auto-generated)
 """
+from __future__ import annotations
 
 import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-import gspread
-from google.oauth2.service_account import Credentials
+try:
+    import gspread
+    from google.oauth2.service_account import Credentials
+    _SHEETS_AVAILABLE = True
+    _WorksheetNotFound = gspread.WorksheetNotFound
+except ImportError:
+    gspread = None  # type: ignore[assignment]
+    Credentials = None  # type: ignore[assignment,misc]
+    _SHEETS_AVAILABLE = False
+    _WorksheetNotFound = Exception  # fallback so except clause still parses
 from loguru import logger
 
 
@@ -116,7 +125,7 @@ class GoogleSheetsService:
             ws = spreadsheet.worksheet(name)
             ws.clear()
             return ws
-        except gspread.WorksheetNotFound:
+        except _WorksheetNotFound:
             return spreadsheet.add_worksheet(title=name, rows=rows, cols=cols)
 
     def _batch_write(

@@ -19,7 +19,7 @@ def test_backfill_player_logs(db_session):
     mock_gamelog.get_data_frames.return_value = [
         MagicMock(iterrows=lambda: iter([
             (0, {
-                "GAME_ID": "9999999",
+                "Game_ID": "9999999",
                 "GAME_DATE": "OCT 24, 2023",
                 "MATCHUP": "LAL @ GSW",
                 "PTS": 21,
@@ -34,7 +34,9 @@ def test_backfill_player_logs(db_session):
         ]))
     ]
     
-    with patch("app.services.player_backfill.playergamelog.PlayerGameLog", return_value=mock_gamelog):
+    mock_module = MagicMock()
+    mock_module.PlayerGameLog = MagicMock(return_value=mock_gamelog)
+    with patch("app.services.player_backfill.playergamelog", mock_module):
         service = NBAPlayerBackfillService(db_session)
         count = service.backfill_player(player.id, "2023-24")
         
