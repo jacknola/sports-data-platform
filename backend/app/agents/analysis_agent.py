@@ -13,11 +13,17 @@ from app.memory.agent_memory import AgentMemory
 class AnalysisAgent(BaseAgent):
     """Agent responsible for running comprehensive analysis"""
     
-    def __init__(self):
+    def __init__(self, memory: AgentMemory):
         super().__init__("AnalysisAgent")
         self.bayesian = BayesianAnalyzer()
         self.ml_service = MLService()
-        self.memory = AgentMemory()
+        self.memory = memory
+
+    @classmethod
+    async def create(cls) -> 'AnalysisAgent':
+        """Creates and initializes an AnalysisAgent instance."""
+        memory = await AgentMemory.create()
+        return cls(memory)
     
     async def execute(self, task: Dict[str, Any]) -> Dict[str, Any]:
         """Run comprehensive analysis on a betting selection"""

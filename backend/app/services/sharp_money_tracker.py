@@ -36,6 +36,8 @@ import numpy as np
 from loguru import logger
 
 from app.config import settings
+from app.models.sharp_signals import DataQuality, DataSource, SignalMetadata
+from app.services.sharp_signal_metrics import SharpSignalMetrics
 from app.services.cbb_edge_calculator import (
     NCAAB_SPORT_KEY,
     SHARP_BOOKS,
@@ -92,6 +94,7 @@ class SharpSignal:
         signal_types: List[str],
         score: int,
         details: Dict[str, Any],
+        metadata: Optional[SignalMetadata] = None,
     ) -> None:
         self.game_id = game_id
         self.home_team = home_team
@@ -103,6 +106,11 @@ class SharpSignal:
         self.score_label = _score_label(score)
         self.details = details
         self.created_at = datetime.now(timezone.utc).isoformat()
+        # Add metadata for data quality tracking
+        self.metadata = metadata or SignalMetadata(
+            quality=DataQuality.MOCK,
+            source=DataSource.SIMULATED,
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -116,6 +124,9 @@ class SharpSignal:
             "score_label": self.score_label,
             "details": self.details,
             "created_at": self.created_at,
+            "metadata": self.metadata.to_dict(),
+            "data_quality": self.metadata.quality.value,
+            "data_source": self.metadata.source.value,
         }
 
 
@@ -128,7 +139,7 @@ class SharpMoneyTracker:
     Detects sharp money signals in NCAAB betting markets.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, strict_mode: bool = False) -> None:
         self.api_key: Optional[str] = (
             getattr(settings, "THE_ODDS_API_KEY", None)
             or getattr(settings, "ODDSAPI_API_KEY", None)
@@ -138,6 +149,15 @@ class SharpMoneyTracker:
         self._sports_api = SportsAPIService()
         # In-memory line snapshot cache: game_id -> snapshot at fetch time
         self._line_snapshots: Dict[str, Dict] = {}
+        # Strict mode: return None instead of mock data
+        self.strict_mode = strict_mode
+        # Data quality metrics tracking
+        self._data_quality_log: List[Dict[str, Any]] = []
+        # Metrics collector
+        self.metrics = SharpSignalMetrics()
+        self.strict_mode = strict_mode
+        # Data quality metrics tracking
+        self._data_quality_log: List[Dict[str, Any]] = []
 
     # ------------------------------------------------------------------
     # Public interface
@@ -290,6 +310,48 @@ class SharpMoneyTracker:
 
         # 3. Public fading opportunity (mock public % since we don't have real data)
         public_info = game.get("_mock_public", {})
+        if not public_info:
+            if self.strict_mode:
+                logger.warning(f"No public data available for game {game.get('id')} - strict mode enabled, skipping RLM detection")
+            else:
+                public_info = {}  # Use empty dict to skip RLM
+        if public_info:
+            home_public_pct = public_info.get("home_bet_pct", 0.5)
+            # Use sharp implied prob if available, else fall back to all
+            sharp_prob = (
+                float(np.mean(sharp_h2h.get(home, [])))
+                if sharp_h2h.get(home)
+                else float(np.mean(all_h2h.get(home, [0.5])))
+            )
+            rlm = self._detect_rlm(
+                home_public_pct, sharp_prob, movement_signal
+            )
+            if rlm:
+                signal_types.append("reverse_line_movement")
+                score += 1
+                details["rlm"] = rlm
+        public_info = game.get("_mock_public", {})
+        if public_info:
+            home_public_pct = public_info.get("home_bet_pct", 0.5)
+        public_info = game.get("_mock_public", {})
+        if not public_info:
+            if self.strict_mode:
+                logger.warning(f"No public data available for game {game.get('id')} - strict mode enabled, skipping RLM detection")
+            else:
+                public_info = {}  # Use empty dict to skip RLM
+        if public_info:
+            home_public_pct = public_info.get("home_bet_pct", 0.5)
+        if not public_info:
+            if self.strict_mode:
+                logger.warning(f"No public data available for game {game.get('id')} - strict mode enabled, skipping RLM detection")
+            else:
+                public_info = {}  # Use empty dict to skip RLM
+        if public_info:
+            home_public_pct = public_info.get("home_bet_pct", 0.5)
+            else:
+                public_info = {}  # Use empty dict to skip RLM
+        if public_info:
+        public_info = game.get("_mock_public", {})
         if public_info:
             home_public_pct = public_info.get("home_bet_pct", 0.5)
             # Use sharp implied prob if available, else fall back to all
@@ -323,6 +385,11 @@ class SharpMoneyTracker:
             signal_types=signal_types,
             score=score,
             details=details,
+            metadata=SignalMetadata(
+                quality=DataQuality.INFERRED,
+                source=DataSource.ODDS_API,
+                inference_method="book_divergence_analysis",
+            ),
         )
 
     def _detect_spread_sharp(
@@ -370,7 +437,7 @@ class SharpMoneyTracker:
 
         sharp_favors = details.get("sharp_favors", home)
 
-        return SharpSignal(
+        signal = SharpSignal(
             game_id=game_id,
             home_team=home,
             away_team=away,
@@ -379,7 +446,23 @@ class SharpMoneyTracker:
             signal_types=signal_types,
             score=score,
             details=details,
+            metadata=SignalMetadata(
+                quality=DataQuality.INFERRED,
+                source=DataSource.ODDS_API,
+                inference_method="spread_discrepancy_analysis",
+            ),
         )
+        
+        # Record metrics for this signal
+        self.metrics.record_signal(
+            signal_type=",".join(signal_types) if signal_types else "spread_analysis",
+            quality=DataQuality.INFERRED,
+            source=DataSource.ODDS_API,
+            confidence=score / 5.0,
+            game_id=game_id,
+        )
+        
+        return signal
 
     # ------------------------------------------------------------------
     # RLM detection
@@ -464,7 +547,14 @@ class SharpMoneyTracker:
             movement["direction"] = "new_snapshot"
 
         # Also include mock movement data if present
+        # Also include mock movement data if present
         mock_mv = game.get("_mock_movement", {})
+        if not mock_mv:
+            if self.strict_mode:
+                logger.warning(f"No movement data available for game {game.get('id')} - strict mode enabled, skipping movement detection")
+            else:
+                mock_mv = {}  # Use empty dict to skip movement
+        if mock_mv:
         if mock_mv:
             movement.update(mock_mv)
 
@@ -838,3 +928,22 @@ class SharpMoneyTracker:
                 },
             },
         ]
+
+    def get_data_quality_stats(self) -> Dict[str, Any]:
+        """Get statistics on data quality for generated signals."""
+        return {
+            "strict_mode": self.strict_mode,
+            "total_signals_logged": len(self._data_quality_log),
+            "logs": self._data_quality_log[-100:] if self._data_quality_log else [],
+        }
+    
+    def log_signal_quality(self, signal: SharpSignal) -> None:
+        """Log the data quality of a generated signal."""
+        self._data_quality_log.append({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "game_id": signal.game_id,
+            "signal_type": signal.signal_types,
+            "quality": signal.metadata.quality.value,
+            "source": signal.metadata.source.value,
+            "confidence": signal.confidence,
+        })

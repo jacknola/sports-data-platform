@@ -93,7 +93,7 @@ async def _run_orchestrator_for_sport(
     try:
         from app.agents.orchestrator import OrchestratorAgent
 
-        orchestrator = OrchestratorAgent()
+        orchestrator = await OrchestratorAgent.create()
         result = await orchestrator.execute_full_analysis(
             {
                 "sport": sport_key,
@@ -145,9 +145,9 @@ def run_orchestrated_analysis(prediction_only: bool = False) -> Dict[str, Any]:
 
     try:
         with redirect_stdout(buf):
-            ncaab_data = run_ncaab(prediction_only=prediction_only)
+            ncaab_data = run_ncaab()
             print("\n\n" + "X" * 76 + "\n\n")
-            nba_data = asyncio.run(run_nba_analysis(prediction_only=prediction_only))
+            nba_data = asyncio.run(run_nba_analysis())
     except Exception as e:
         logger.error(f"Core analysis failed: {e}")
 
@@ -197,7 +197,7 @@ def run_orchestrated_analysis(prediction_only: bool = False) -> Dict[str, Any]:
                     _run_orchestrator_for_sport(
                         "basketball_ncaab",
                         ncaab_teams[:10],
-                        prediction_only=prediction_only,
+
                     )
                 )
             if nba_teams:
@@ -205,7 +205,7 @@ def run_orchestrated_analysis(prediction_only: bool = False) -> Dict[str, Any]:
                     _run_orchestrator_for_sport(
                         "basketball_nba",
                         nba_teams[:10],
-                        prediction_only=prediction_only,
+
                     )
                 )
         finally:

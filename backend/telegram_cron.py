@@ -43,7 +43,10 @@ from app.services.analysis_runner import (
     run_dvp_analysis_pipeline,
     run_sheets_export_pipeline,
     run_slack_report_pipeline,
+    run_nba_analysis,  # Import the analysis runners
+    run_ncaab_analysis,
 )
+
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +77,34 @@ def _label_for_hour(hour: int) -> str:
     if hour < 17:
         return "AFTERNOON"
     return "EVENING"
+
+
+# ---------------------------------------------------------------------------
+# Daily Sheet Generation
+# ---------------------------------------------------------------------------
+
+
+def generate_daily_sheets():
+    """Run NBA and NCAAB analysis to generate daily CSV sheets."""
+    logger.info("Starting daily sheet generation...")
+    try:
+        # Run NBA analysis which now saves to CSV
+        run_nba_analysis()
+        logger.info("Successfully ran NBA analysis for daily sheet.")
+    except Exception as e:
+        logger.error(f"Error during NBA analysis for daily sheet: {e}")
+
+    try:
+        # Run NCAAB analysis which now saves to CSV
+        run_ncaab_analysis()
+        logger.info("Successfully ran NCAAB analysis for daily sheet.")
+    except Exception as e:
+        logger.error(f"Error during NCAAB analysis for daily sheet: {e}")
+
+    logger.info("Daily sheet generation complete.")
+    return True
+
+
 
 
 def send_report(picks_only: bool = False, prediction_only: bool = False) -> bool:
@@ -283,6 +314,7 @@ def run_daemon(picks_only: bool = False, prediction_only: bool = False) -> None:
     # Parse schedule times from .env
     schedule_times = []
     for label, cron_expr in [
+        ("SHEETS", "0 5 * * *"),  # 5:00 AM for daily sheets
         ("MORNING", settings.TELEGRAM_CRON_MORNING),
         ("AFTERNOON", settings.TELEGRAM_CRON_AFTERNOON),
         ("EVENING", settings.TELEGRAM_CRON_EVENING),
@@ -300,14 +332,18 @@ def run_daemon(picks_only: bool = False, prediction_only: bool = False) -> None:
         sys.exit(1)
 
     for label, time_str in schedule_times:
+    if label == "SHEETS":
+        schedule.every().day.at(time_str).do(generate_daily_sheets)
+    else:
         schedule.every().day.at(time_str).do(
             send_report,
             picks_only=picks_only,
             prediction_only=prediction_only,
         )
-        logger.info(
-            f"Scheduled {label} report at {time_str} {settings.TELEGRAM_TIMEZONE}"
-        )
+
+    logger.info(
+        f"Scheduled {label} report at {time_str} {settings.TELEGRAM_TIMEZONE}"
+    )
 
     # Graceful shutdown
     _running = [True]
@@ -359,7 +395,7 @@ def main():
         "--prediction-only",
         action="store_true",
         help="Run model predictions without odds-dependent report formatting",
-    )
+
 
     args = parser.parse_args()
 
@@ -367,6 +403,11 @@ def main():
         telegram = TelegramService()
         ok = telegram.test_connection()
         sys.exit(0 if ok else 1)
+
+    if args.sheets_only:
+        ok = generate_daily_sheets()
+        sys.exit(0 if ok else 1)
+
 
     if args.send_now:
         ok = send_report(

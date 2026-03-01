@@ -11,6 +11,7 @@ import asyncio
 import argparse
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -44,9 +45,8 @@ async def run_nba_analysis(prediction_only: bool = False) -> Dict[str, Any]:
     print(f"  Methodology: {method}")
     print("=" * 76)
 
-    predictions = await predictor.predict_today_games(
-        "nba", prediction_only=prediction_only
-    )
+    predictions = await predictor.predict_today_games("nba")
+
 
     if not predictions:
         print("\n  No NBA games found today.")
@@ -108,7 +108,7 @@ async def run_nba_analysis(prediction_only: bool = False) -> Dict[str, Any]:
             home_edge if best_bet == "home" else away_edge if best_bet == "away" else 0
         )
 
-        if (not prediction_only) and kelly_fraction > 0.001 and best_side_edge > 0.025:
+        if kelly_fraction > 0.001 and best_side_edge > 0.025:
             print(
                 f"  ★ ML BET: {best_side_team} {best_side_odds:+d} → ${bet_size:.0f} ({kelly_fraction * 100:.2f}% of bankroll)"
             )
@@ -220,6 +220,7 @@ async def run_nba_analysis(prediction_only: bool = False) -> Dict[str, Any]:
     else:
         print("\n  Prediction-only mode: no bet sizing or bet persistence executed.")
 
+    # Save predictions to a local CSV file', '    if predictions:', '        try:', '            df = pd.DataFrame(predictions)', '            df.to_csv("sheets/nba_predictions.csv", index=False)', '            logger.info("NBA predictions saved to sheets/nba_predictions.csv")', '        except Exception as e:', '            logger.error(f"Failed to save NBA predictions to CSV: {e}")', '
     # Export predictions to Google Sheets if configured
     try:
         from app.services.google_sheets import GoogleSheetsService

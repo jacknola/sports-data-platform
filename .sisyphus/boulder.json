@@ -1,10 +1,9 @@
 {
-  "active_plan": "/Users/bb.jr/sports-data-platform/.sisyphus/plans/fix-ncaab-export.md",
-  "started_at": "2026-02-27T12:35:00Z",
+  "active_plan": "/Users/bb.jr/sports-data-platform/.sisyphus/plans/code-cleanup-backend.md",
+  "started_at": "2026-03-01T09:17:56.652Z",
   "session_ids": [
-    "ses_360f66af4ffenZPlBT22xp9IjZ",
-    "ses_35f128c99ffeaNh3wzt9UMgady"
+    "ses_3576159ffffebMTqC5bfjBWvr6"
   ],
-  "plan_name": "fix-ncaab-export",
-  "worktree_path": "/Users/bb.jr/sports-data-platform/.tmp/fix-ncaab-export"
+  "plan_name": "code-cleanup-backend",
+  "worktree_path": "/Users/bb.jr/sports-data-platform/.tmp/code-cleanup"
 }

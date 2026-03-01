@@ -76,6 +76,10 @@ service-account.json
 # Session dumps (from AI coding tools)
 session-*.md
 
+# Local git worktrees
+.worktrees/
+worktrees/
+
 # gemini-cli settings
 .gemini/
 

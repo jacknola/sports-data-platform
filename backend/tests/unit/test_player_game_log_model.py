@@ -15,7 +15,6 @@ def test_create_player_game_log(db_session):
         pra=40
     )
     db_session.add(log)
-    db_session.commit()
     
     saved = db_session.query(PlayerGameLog).filter_by(external_log_id="NBA_LOG_MODEL_TEST").first()
     assert saved is not None

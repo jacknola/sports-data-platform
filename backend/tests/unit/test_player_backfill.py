@@ -12,7 +12,6 @@ def test_backfill_player_logs(db_session):
     # Setup test player
     player = Player(external_player_id="2544", name="LeBron James", sport="nba")
     db_session.add(player)
-    db_session.commit()
     
     # Mock nba_api playergamelog
     mock_gamelog = MagicMock()

@@ -13,7 +13,15 @@ from app.database import SessionLocal
 from app.models.parlay import Parlay, ParlayLeg
 
 router = APIRouter()
-rag_pipeline = RAGPipeline()
+rag_pipeline: "RAGPipeline" = None
+
+@router.on_event("startup")
+async def startup_event():
+    """Initialize the RAGPipeline on application startup."""
+    global rag_pipeline
+    logger.info("Initializing RAGPipeline...")
+    rag_pipeline = await RAGPipeline.create()
+    logger.info("RAGPipeline initialized successfully.")
 
 
 # Pydantic models for request/response

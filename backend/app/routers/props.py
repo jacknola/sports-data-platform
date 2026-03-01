@@ -188,6 +188,31 @@ async def _get_live_props(sport: str) -> List[Dict]:
     except Exception as e:
         logger.debug(f"All-team stats pre-fetch failed (non-fatal): {e}")
 
+    # ── Pre-fetch team rotations for "Next Man Up" detection ──
+    team_rotations: Dict[str, List[Dict[str, Any]]] = {}
+    unique_team_abbrevs = set()
+    for r in filtered:
+        # Try to get team abbreviation
+        t_abbr = r.get("team_abbreviation")
+        if not t_abbr:
+            # Fallback: game title "LAL @ DEN"
+            title = r.get("game_title") or r.get("event_description") or ""
+            matches = re.findall(r"\b[A-Z]{2,3}\b", title)
+            if matches:
+                for m in matches:
+                    unique_team_abbrevs.add(m.upper())
+        else:
+            unique_team_abbrevs.add(t_abbr.upper())
+
+    # Fetch rotations in parallel
+    rotation_tasks = [
+        _nba_stats.get_team_rotation(abbr) for abbr in unique_team_abbrevs
+    ]
+    rotation_results = await asyncio.gather(*rotation_tasks)
+    team_rotations = {
+        abbr: rot for abbr, rot in zip(unique_team_abbrevs, rotation_results) if rot
+    }
+
     # ── Step 3: Enrich with player stats (concurrent with semaphore) ──
     enriched: List[Dict] = []
     research_cache: Dict[str, Dict[str, Any]] = {}  # player:stat → research
@@ -246,6 +271,10 @@ async def _get_live_props(sport: str) -> List[Dict]:
         usage_rate = 0.25
         usage_trend = 0.0
         injury_status = "ACTIVE"
+        is_injury_replacement = False
+        replacement_note = ""
+        rest_days = 2
+
         rest_days = 2
         team_pace = 100.0
         opp_pace = 100.0
@@ -289,14 +318,46 @@ async def _get_live_props(sport: str) -> List[Dict]:
                             injury_status = status
                         break
 
+            # Extract player team for Next Man Up detection + pace resolution
+            player_info = research.get("player", {})
+            player_team_abbrev = player_info.get("team_abbreviation")
+
+            # ── Next Man Up Detection (NBA only) ──
+            if sport.lower() == "nba" and player_team_abbrev:
+                rotation = team_rotations.get(player_team_abbrev.upper(), [])
+                team_injuries = research.get("team_injuries", [])
+                
+                # Top players (Top 6 by minutes) who are OUT or QUESTIONABLE
+                injured_stars = []
+                for p in rotation[:6]:
+                    p_name = p['name']
+                    for inj in team_injuries:
+                        # Be careful with player name matching
+                        if p_name.lower() in str(inj).lower():
+                            status = (
+                                inj.get("status", "ACTIVE").upper()
+                                if isinstance(inj, dict)
+                                else "ACTIVE"
+                            )
+                            if status in ("OUT", "DOUBTFUL", "QUESTIONABLE"):
+                                injured_stars.append(p_name)
+                                break
+                
+                if injured_stars:
+                    # Current player's rank in rotation (Minutes proxy)
+                    p_rank = next((i for i, p in enumerate(rotation) if p['name'].lower() == player_name.lower()), 99)
+                    # If this player is rank 6-10 (Primary bench) and there's a star out, they get the bump
+                    if 5 <= p_rank <= 10 and injury_status == "ACTIVE":
+                        is_injury_replacement = True
+                        replacement_note = f"Usage bump due to injuries to: {', '.join(injured_stars)}"
+
             matchup = research.get("matchup_data", {})
+
             if matchup:
                 opp_def_rating = float(matchup.get("def_rating", 113.5))
                 opp_pace = float(matchup.get("pace", 100.0))
 
-            # Fix: resolve player's own team pace from pre-fetched all-team stats
-            player_info = research.get("player", {})
-            player_team_abbrev = player_info.get("team_abbreviation")
+            # Resolve player's own team pace from pre-fetched all-team stats
             if player_team_abbrev and all_team_stats:
                 own_stats = all_team_stats.get(player_team_abbrev.upper(), {})
                 if own_stats:
@@ -432,6 +493,9 @@ async def _get_live_props(sport: str) -> List[Dict]:
                 "usage_rate": usage_rate,
                 "usage_trend": usage_trend,
                 "injury_status": injury_status,
+                "is_injury_replacement": is_injury_replacement,
+                "replacement_note": replacement_note,
+
                 "rest_days": rest_days,
                 "is_home": is_home,
                 "team_pace": team_pace,
@@ -626,7 +690,10 @@ def _build_prop_analysis(prop: Dict) -> Dict:
         "best_under_book": prop.get("best_under_book", ""),
         "devigged_over_prob": prop.get("devigged_over_prob", 0.5),
         "devigged_under_prob": prop.get("devigged_under_prob", 0.5),
+        "is_injury_replacement": prop.get("is_injury_replacement", False),
+        "replacement_note": prop.get("replacement_note", ""),
     }
+
 
 
 # ---------------------------------------------------------------------------

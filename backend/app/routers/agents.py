@@ -8,7 +8,15 @@ from loguru import logger
 from app.agents.orchestrator import OrchestratorAgent
 
 router = APIRouter()
-orchestrator = OrchestratorAgent()
+orchestrator: "OrchestratorAgent" = None
+
+@router.on_event("startup")
+async def startup_event():
+    """Initialize the OrchestratorAgent on application startup."""
+    global orchestrator
+    logger.info("Initializing OrchestratorAgent...")
+    orchestrator = await OrchestratorAgent.create()
+    logger.info("OrchestratorAgent initialized successfully.")
 
 
 @router.post("/agents/analyze")

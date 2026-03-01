@@ -93,7 +93,21 @@ class Settings(BaseSettings):
     EDGE_THRESHOLD_HIGH: float = 0.07
     EDGE_THRESHOLD_MAX: float = 0.10
     ENABLE_SHARP_SIGNALS: bool = False
+    BETTING_BANKROLL: float = 1000.0
+    KELLY_FRACTION_QUARTER: float = 0.25
+    KELLY_FRACTION_HALF: float = 0.5
+    MAX_BET_PERCENTAGE: float = 0.05
+    EDGE_THRESHOLD_LOW: float = 0.03
+    EDGE_THRESHOLD_MEDIUM: float = 0.05
+    EDGE_THRESHOLD_HIGH: float = 0.07
+    EDGE_THRESHOLD_MAX: float = 0.10
+    ENABLE_SHARP_SIGNALS: bool = False
 
+    # Sharp Signals Data Quality
+    SHARP_SIGNALS_MODE: str = "development"  # "production" or "development"
+    SHARP_SIGNALS_ALLOW_MOCK: bool = True  # Allow mock data in dev, False in production
+    SHARP_SIGNALS_MIN_DATA_QUALITY: str = "inferred"  # "live", "inferred", "mock", "unavailable"
+    SHARP_SIGNALS_LOG_QUALITY_METRICS: bool = True
     # Google Sheets
     GOOGLE_SERVICE_ACCOUNT_PATH: Optional[str] = None
     GOOGLE_SPREADSHEET_ID: Optional[str] = None

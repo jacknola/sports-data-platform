@@ -9,4 +9,5 @@ from app.models.parlay import Parlay, ParlayLeg
 from app.models.api_cache import APICache
 from app.models.player_game_log import PlayerGameLog
 
-__all__ = ['Base', 'Bet', 'Game', 'Player', 'Team', 'Parlay', 'ParlayLeg', 'APICache', 'PlayerGameLog']
+from app.models.historical_game_line import HistoricalGameLine
+__all__ = ['Base', 'Bet', 'Game', 'Player', 'Team', 'Parlay', 'ParlayLeg', 'APICache', 'PlayerGameLog', 'HistoricalGameLine']

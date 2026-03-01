@@ -28,6 +28,7 @@ import numpy as np
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple
 from loguru import logger
+import pandas as pd
 
 # Import our services
 from app.services.sharp_money_detector import SharpMoneyDetector
@@ -1082,6 +1083,7 @@ def run_analysis() -> Dict[str, Any]:
     print(f"  Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 76 + "\n")
 
+    # Save detailed analysis with advanced metrics to a local CSV file', '    if game_analyses:', '        try:', '            df = pd.DataFrame(game_analyses)', '            # Flatten nested dicts for better CSV readability', '            for col in ["game", "home_eff", "away_eff", "home_opp", "away_opp"]:', '                if col in df.columns:', '                    df = pd.concat([df.drop([col], axis=1), df[col].apply(pd.Series).add_prefix(f"{col}_")], axis=1)', '            df.to_csv("sheets/ncaab_predictions.csv", index=False)', '            logger.info("NCAAB analysis with advanced metrics saved to sheets/ncaab_predictions.csv")', '        except Exception as e:', '            logger.error(f"Failed to save NCAAB analysis to CSV: {e}")', '
     return {
         "sport": "ncaab",
         "game_count": len(games_to_analyze),

@@ -26,6 +26,7 @@ from app.database import SessionLocal
 from app.models.historical_game_line import HistoricalGameLine
 from app.models.historical_player_prop import HistoricalPlayerProp
 
+from app.skills import firecrawl
 # Vector store imports
 try:
     from qdrant_client import QdrantClient
@@ -84,6 +85,21 @@ class HistoricalVectorizer:
                     ),
                 )
 
+
+    async def get_web_context_for_game(self, team1: str, team2: str) -> str:
+        """Get web context for a game using Firecrawl."""
+        if not team1 or not team2:
+            return ""
+        try:
+            query = f"{team1} vs {team2} news and analysis"
+            logger.info(f"Firecrawling for: {query}")
+            # Note: Assuming firecrawl skill is available and returns a dict with 'summary'
+            result = await firecrawl.scrape_and_summarize(query=query)
+            return result.get("summary", "")
+        except Exception as e:
+            logger.error(f"Error getting web context with Firecrawl: {e}")
+            return ""
+
     def generate_game_description(self, game: HistoricalGameLine) -> str:
         """Generate semantic description for a game."""
         parts = []
@@ -122,6 +138,12 @@ class HistoricalVectorizer:
             parts.append(f"CLV spread: {game.clv_spread:.2f}")
         if game.clv_total:
             parts.append(f"CLV total: {game.clv_total:.2f}")
+
+
+        # Get real-time web context
+        web_context = asyncio.run(self.get_web_context_for_game(game.home_team, game.away_team))
+        if web_context:
+            parts.append(f"Context: {web_context}")
 
         return ". ".join(parts)
 

@@ -24,7 +24,13 @@ class RAGPipeline:
         self.ml_service = MLService()
         self.redis = None
         self.embedding_dim = 768  # BERT embedding dimension
-        self._init_storage()
+
+    @classmethod
+    async def create(cls) -> "RAGPipeline":
+        """Creates and initializes a RAGPipeline instance."""
+        pipeline = cls()
+        await pipeline._init_storage()
+        return pipeline
     
     async def _init_storage(self):
         """Initialize storage backends"""

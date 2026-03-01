@@ -1111,6 +1111,67 @@ class NBAStatsService:
             logger.error(f"Error fetching injury report: {exc}")
             return []
 
+    async def get_team_rotation(self, team_abbr: str) -> List[Dict[str, Any]]:
+        """Fetch team rotation (players ordered by minutes) to find backups.
+
+        Uses stats.nba.com teamplayerdashboard as a reliable proxy for depth/starters.
+        """
+        from nba_api.stats.static import teams as nba_static_teams
+        
+        team = nba_static_teams.find_team_by_abbreviation(team_abbr)
+        if not team:
+            return []
+            
+        team_id = team['id']
+        url = (
+            f"https://stats.nba.com/stats/teamplayerdashboard?"
+            f"DateFrom=&DateTo=&GameSegment=&LastNGames=0&LeagueID=00&Location=&"
+            f"MeasureType=Base&Month=0&OpponentTeamID=0&Outcome=&PORound=0&"
+            f"PaceAdjust=N&PerMode=PerGame&Period=0&PlusMinus=N&Rank=N&"
+            f"Season=2024-25&SeasonSegment=&SeasonType=Regular+Season&"
+            f"TeamID={team_id}&VsConference=&VsDivision="
+        )
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Referer': 'https://www.nba.com/',
+            'x-nba-stats-origin': 'stats',
+            'x-nba-stats-token': 'true'
+        }
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, headers=headers, timeout=15.0)
+                if resp.status_code != 200:
+                    return []
+                data = resp.json()
+                
+                # resultSets[1] contains the PlayerStats
+                results = data.get('resultSets', [])
+                if len(results) < 2:
+                    return []
+                
+                headers_list = results[1].get('headers', [])
+                rows = results[1].get('rowSet', [])
+                
+                col_idx = {h: i for i, h in enumerate(headers_list)}
+                
+                players = []
+                for row in rows:
+                    players.append({
+                        'name': row[col_idx['PLAYER_NAME']],
+                        'gp': row[col_idx['GP']],
+                        'min': row[col_idx['MIN']],
+                    })
+                
+                # Sort by minutes played per game descending
+                players.sort(key=lambda x: x['min'], reverse=True)
+                return players
+                
+        except Exception as e:
+            logger.debug(f"Error fetching team rotation for {team_abbr}: {e}")
+            return []
     # ------------------------------------------------------------------
     # Prop-relevant aggregate helper
     # ------------------------------------------------------------------

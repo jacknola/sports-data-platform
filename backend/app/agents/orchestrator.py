@@ -16,14 +16,47 @@ from app.memory.agent_memory import AgentMemory
 class OrchestratorAgent:
     """Orchestrates multiple agents to accomplish complex tasks"""
 
-    def __init__(self):
-        self.odds_agent = OddsAgent()
-        self.analysis_agent = AnalysisAgent()
-        self.twitter_agent = None
-        self.expert_agent = ExpertAgent()
-        self.dvp_agent = DvPAgent()
-        self.ncaab_dvp_agent = NCAABDvPAgent()
-        self.memory = AgentMemory()
+    def __init__(self, odds_agent, analysis_agent, expert_agent, dvp_agent, ncaab_dvp_agent, memory, twitter_agent):
+        self.odds_agent = odds_agent
+        self.analysis_agent = analysis_agent
+        self.expert_agent = expert_agent
+        self.dvp_agent = dvp_agent
+        self.ncaab_dvp_agent = ncaab_dvp_agent
+        self.memory = memory
+        self.twitter_agent = twitter_agent
+
+    @classmethod
+    async def create(cls) -> "OrchestratorAgent":
+        """Creates and initializes an OrchestratorAgent instance with all sub-agents."""
+        logger.info("Initializing OrchestratorAgent and sub-agents...")
+        
+        # Initialize async agents
+        analysis_agent = await AnalysisAgent.create()
+        memory = await AgentMemory.create()
+
+        # Initialize sync agents
+        odds_agent = OddsAgent()
+        expert_agent = ExpertAgent()
+        dvp_agent = DvPAgent()
+        ncaab_dvp_agent = NCAABDvPAgent()
+        
+        twitter_agent = None
+        try:
+            from app.agents.twitter_agent import TwitterAgent
+            twitter_agent = TwitterAgent()
+            logger.info("TwitterAgent initialized.")
+        except ImportError:
+            logger.warning("TwitterAgent not found or could not be initialized.")
+
+        return cls(
+            odds_agent=odds_agent,
+            analysis_agent=analysis_agent,
+            expert_agent=expert_agent,
+            dvp_agent=dvp_agent,
+            ncaab_dvp_agent=ncaab_dvp_agent,
+            memory=memory,
+            twitter_agent=twitter_agent,
+        )
 
     async def execute_prop_analysis(self, task: Dict[str, Any]) -> Dict[str, Any]:
         """

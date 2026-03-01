@@ -58,7 +58,6 @@ def _make_game(session, suffix="001", spread=None):
         game_date=datetime.datetime(2026, 2, 22, 20, 0),
     )
     session.add(game)
-    session.commit()
     return game
 
 
@@ -86,6 +85,7 @@ class TestGameModel:
 
     def test_created_at_auto_populated(self, session):
         game = _make_game(session, "G04")
+        session.flush()
         assert game.created_at is not None
         assert isinstance(game.created_at, datetime.datetime)
 
@@ -99,20 +99,19 @@ class TestGameModel:
         game = _make_game(session, "G06")
         game.home_score = 112
         game.away_score = 108
-        session.commit()
         fetched = session.query(Game).filter_by(external_game_id="NBA_20260222_G06").first()
         assert fetched.home_score == 112
         assert fetched.away_score == 108
 
     def test_primary_key_auto_assigned(self, session):
         game = _make_game(session, "G07")
+        session.flush()
         assert game.id is not None
         assert isinstance(game.id, int)
 
     def test_external_game_id_unique(self, session):
         from sqlalchemy.exc import IntegrityError
         _make_game(session, "G08")
-        session.rollback()  # clear state so session is usable
 
         game2 = Game(
             external_game_id="NBA_20260222_G08",
@@ -123,7 +122,8 @@ class TestGameModel:
         )
         session.add(game2)
         with pytest.raises(IntegrityError):
-            session.commit()
+            session.flush()
+        session.rollback()
         session.rollback()
 
 
@@ -134,7 +134,9 @@ class TestGameModel:
 class TestBetModel:
     @pytest.fixture
     def game(self, session):
-        return _make_game(session, suffix="BET_BASE")
+        g = _make_game(session, suffix="BET_BASE")
+        session.flush()
+        return g
 
     def test_create_and_retrieve(self, session, game):
         bet = Bet(
@@ -152,7 +154,6 @@ class TestBetModel:
             kelly_fraction=0.08,
         )
         session.add(bet)
-        session.commit()
         fetched = session.query(Bet).filter_by(selection_id="SEL_001").first()
         assert fetched is not None
         assert fetched.market == "moneyline"
@@ -177,7 +178,6 @@ class TestBetModel:
             features=features,
         )
         session.add(bet)
-        session.commit()
         fetched = session.query(Bet).filter_by(selection_id="SEL_002").first()
         assert fetched.features["injury_status"] == "ACTIVE"
         assert fetched.features["is_home"] is True
@@ -197,7 +197,6 @@ class TestBetModel:
             confidence_interval=ci,
         )
         session.add(bet)
-        session.commit()
         fetched = session.query(Bet).filter_by(selection_id="SEL_003").first()
         assert fetched.confidence_interval["p05"] == pytest.approx(0.51)
         assert fetched.confidence_interval["p95"] == pytest.approx(0.73)
@@ -213,7 +212,7 @@ class TestBetModel:
             implied_prob=0.60,
         )
         session.add(bet)
-        session.commit()
+        session.flush()
         assert bet.created_at is not None
         assert isinstance(bet.created_at, datetime.datetime)
 
@@ -228,7 +227,6 @@ class TestBetModel:
             implied_prob=0.524,
         )
         session.add(bet)
-        session.commit()
         fetched = session.query(Bet).filter_by(selection_id="SEL_005").first()
         # Fields not set should be None
         assert fetched.posterior_prob is None
@@ -248,7 +246,6 @@ class TestBetModel:
             implied_prob=0.60,
         )
         session.add(bet1)
-        session.commit()
 
         bet2 = Bet(
             selection_id="SEL_DUP",
@@ -261,7 +258,7 @@ class TestBetModel:
         )
         session.add(bet2)
         with pytest.raises(IntegrityError):
-            session.commit()
+            session.flush()
         session.rollback()
 
     def test_game_relationship_accessible(self, session, game):
@@ -275,7 +272,6 @@ class TestBetModel:
             implied_prob=0.60,
         )
         session.add(bet)
-        session.commit()
         fetched = session.query(Bet).filter_by(selection_id="SEL_REL").first()
         assert fetched.game is not None
         assert fetched.game.sport == "NBA"
@@ -292,7 +288,6 @@ class TestBetModel:
                 implied_prob=0.524,
             )
             session.add(bet)
-        session.commit()
 
         fetched_game = session.get(Game, game.id)
         assert len(fetched_game.bets) >= 3

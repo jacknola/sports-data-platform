@@ -157,6 +157,9 @@ class BetTracker:
             logger.error(f"PostgreSQL save failed: {e}")
 
     def _save_sqlite(self, record: Dict[str, Any]):
+        self._init_sqlite()
+        with sqlite3.connect(LOCAL_DB_PATH) as conn:
+            cursor = conn.cursor()
         with sqlite3.connect(LOCAL_DB_PATH) as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -202,6 +205,9 @@ class BetTracker:
             return self._get_pending_sqlite(sport)
 
     def _get_pending_sqlite(self, sport: str) -> List[Dict]:
+        self._init_sqlite()
+        with sqlite3.connect(LOCAL_DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
         with sqlite3.connect(LOCAL_DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -230,6 +236,9 @@ class BetTracker:
             self._update_sqlite(bet_id, status, clv, now)
 
     def _update_sqlite(self, bet_id: str, status: str, clv: float, now: str):
+        self._init_sqlite()
+        with sqlite3.connect(LOCAL_DB_PATH) as conn:
+            cursor = conn.cursor()
         with sqlite3.connect(LOCAL_DB_PATH) as conn:
             cursor = conn.cursor()
             if clv is not None:
@@ -265,6 +274,9 @@ class BetTracker:
         return self._calculate_metrics(resolved)
 
     def _get_resolved_sqlite(self) -> List[Dict]:
+        self._init_sqlite()
+        with sqlite3.connect(LOCAL_DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
         with sqlite3.connect(LOCAL_DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()

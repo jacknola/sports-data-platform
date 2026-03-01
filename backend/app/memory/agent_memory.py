@@ -15,7 +15,13 @@ class AgentMemory:
     
     def __init__(self):
         self.redis = None
-        self._init_storage()
+
+    @classmethod
+    async def create(cls) -> 'AgentMemory':
+        """Creates and initializes an AgentMemory instance."""
+        memory = cls()
+        await memory._init_storage()
+        return memory
     
     async def _init_storage(self):
         """Initialize storage backends"""

@@ -19,7 +19,6 @@ def test_fetch_historical_data(db_session):
         away_score=105
     )
     db_session.add(game1)
-    db_session.commit()
     
     bet1 = Bet(
         selection_id="bet_1",
@@ -34,7 +33,6 @@ def test_fetch_historical_data(db_session):
         edge=0.04
     )
     db_session.add(bet1)
-    db_session.commit()
     
     # Initialize extractor with test session
     extractor = DataExtractor(db_session)

@@ -430,9 +430,7 @@ class NBAMLPredictor:
         # Cap at global max bet percentage (5% by default)
         return max(0.0, min(kelly_stake, settings.MAX_BET_PERCENTAGE))
 
-    async def predict_today_games(
-        self, sport: str = "nba", prediction_only: bool = False
-    ) -> List[Dict[str, Any]]:
+    async def predict_today_games(self, sport: str = "nba", prediction_only: bool = False) -> List[Dict[str, Any]]:
         """
         Get predictions for today's games using multi-source discovery + live odds.
 
@@ -458,11 +456,7 @@ class NBAMLPredictor:
                 f"NBA game discovery: {len(espn_games)} games via {discovery.source}"
             )
 
-        odds_data = []
-        if not prediction_only:
-            odds_data = await self.sports_api.get_odds("basketball_nba")
-
-        games = []
+        odds_data = await self.sports_api.get_odds("basketball_nba")
 
         if odds_data:
             # 2. Fetch Live Stats
@@ -573,23 +567,16 @@ class NBAMLPredictor:
                 )
 
         elif espn_games:
-            if prediction_only:
-                logger.info(
-                    f"Prediction-only mode: using {len(espn_games)} ESPN games without odds"
-                )
-            else:
-                logger.warning(
-                    f"Odds API returned no NBA data. Using {len(espn_games)} ESPN games "
-                    f"with default -110/-110 odds."
-                )
+            logger.warning(
+                f"Odds API returned no NBA data. Using {len(espn_games)} ESPN games "
+                f"with default -110/-110 odds."
+            )
             for eg in espn_games:
                 games.append(
                     {
                         "home_team": eg.get("home_team", ""),
                         "away_team": eg.get("away_team", ""),
-                        "features": {"odds": {"home": -110, "away": -110}}
-                        if not prediction_only
-                        else {"odds": {}},
+                        "features": {"odds": {"home": -110, "away": -110}},
                     }
                 )
         else:
