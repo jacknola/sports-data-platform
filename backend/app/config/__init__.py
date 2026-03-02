@@ -98,6 +98,13 @@ class Settings(BaseSettings):
     EDGE_THRESHOLD_MAX: float = 0.10
     ENABLE_SHARP_SIGNALS: bool = False
 
+    # Primary retail sportsbook (the book you actually place bets at)
+    # Odds fetches, CLV tracking, and bet records will reference this book.
+    PRIMARY_BOOK: str = "fanduel"
+
+    # How often (in minutes) to auto-refresh odds from the primary book
+    ODDS_REFRESH_INTERVAL_MINUTES: int = 30
+
     # Sharp Signals Data Quality
     SHARP_SIGNALS_MODE: str = "development"  # "production" or "development"
     SHARP_SIGNALS_ALLOW_MOCK: bool = True  # Allow mock data in dev, False in production

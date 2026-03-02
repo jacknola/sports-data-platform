@@ -1,23 +1,22 @@
 """
-Unit tests for parlay helper functions in app/routers/parlays.py.
+Unit tests for parlay helper functions in app/services/parlay_utils.py.
 
 Covers:
 - calculate_parlay_odds: correct combined decimal and American odds
 - calculate_parlay_ev: vig-compounding, EV sign, true_combined_prob
-- _parlay_risk_summary: leg count and sport concentration warnings
+- parlay_risk_summary: leg count and sport concentration warnings
 
 All tests are pure-unit: no database, no network.
 """
 import pytest
 import math
 
-from app.routers.parlays import (
+from app.services.parlay_utils import (
+    american_to_decimal,
+    implied_prob,
     calculate_parlay_odds,
     calculate_parlay_ev,
-    _parlay_risk_summary,
-    _american_to_decimal,
-    _implied_prob,
-    ParlayLegCreate,
+    parlay_risk_summary,
 )
 
 
@@ -29,7 +28,7 @@ class TestCalculateParlayOdds:
     def test_single_leg_passthrough(self):
         """One leg: parlay odds == that leg's odds."""
         american, decimal_mult = calculate_parlay_odds([-110])
-        assert abs(decimal_mult - _american_to_decimal(-110)) < 0.001
+        assert abs(decimal_mult - american_to_decimal(-110)) < 0.001
 
     def test_two_leg_even_money(self):
         """Two +100 legs: 2.0 × 2.0 = 4.0 decimal → +300 American."""
@@ -59,7 +58,7 @@ class TestCalculateParlayOdds:
     def test_mixed_positive_negative_odds(self):
         """+150 leg × -110 leg = 2.50 × 1.909 ≈ 4.77 decimal."""
         american, decimal_mult = calculate_parlay_odds([150, -110])
-        assert abs(decimal_mult - 2.50 * _american_to_decimal(-110)) < 0.01
+        assert abs(decimal_mult - 2.50 * american_to_decimal(-110)) < 0.01
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +93,7 @@ class TestCalculateParlayEV:
         legs = [-110, -110]
         _, payout = calculate_parlay_odds(legs)
         result = calculate_parlay_ev(legs, payout)
-        expected = math.prod(_implied_prob(o) / 1.025 for o in legs)
+        expected = math.prod(implied_prob(o) / 1.025 for o in legs)
         assert abs(result["true_combined_prob"] - expected) < 1e-6
 
     def test_offered_payout_matches_calculate_parlay_odds(self):
@@ -117,12 +116,15 @@ class TestCalculateParlayEV:
         result = calculate_parlay_ev([-110, -110], payout)
         assert result["is_positive_ev"] is False
 
-    def test_five_leg_vig_cost_above_twenty_percent(self):
-        """5-leg parlay at -110 each surrenders > 20% of fair value to vig."""
+    def test_five_leg_vig_cost_above_ten_percent(self):
+        """
+        5-leg parlay at -110 each surrenders > 10% of fair devigged value to vig
+        (cost compounds with each additional leg — single leg ≈ 2.5%, five legs ≈ 12%).
+        """
         legs = [-110] * 5
         _, payout = calculate_parlay_odds(legs)
         result = calculate_parlay_ev(legs, payout)
-        assert result["vig_cost_pct"] > 20.0
+        assert result["vig_cost_pct"] > 10.0
 
 
 # ---------------------------------------------------------------------------
@@ -132,26 +134,27 @@ class TestCalculateParlayEV:
 class TestParlayRiskSummary:
     def _make_legs(self, n: int, odds: float = -110) -> list:
         return [
-            ParlayLegCreate(
-                game=f"Game {i}",
-                pick=f"Team {i}",
-                odds=odds,
-                reasoning="test",
-                team=f"Team {i}",
-                market="spread",
-            )
+            {
+                "game": f"Game {i}",
+                "pick": f"Team {i}",
+                "odds": odds,
+                "reasoning": "test",
+                "team": f"Team {i}",
+                "opponent": "",
+                "market": "spread",
+            }
             for i in range(n)
         ]
 
     def test_small_parlay_no_size_warning(self):
         """4-leg parlay should produce no PARLAY_SIZE warning."""
-        result = _parlay_risk_summary(self._make_legs(4), "NCAAB")
+        result = parlay_risk_summary(self._make_legs(4), "NCAAB")
         warning_types = [w["type"] for w in result.get("warnings", [])]
         assert "PARLAY_SIZE" not in warning_types
 
     def test_seven_leg_parlay_triggers_medium_warning(self):
         """7-leg parlay must trigger a MEDIUM PARLAY_SIZE warning."""
-        result = _parlay_risk_summary(self._make_legs(7), "NCAAB")
+        result = parlay_risk_summary(self._make_legs(7), "NCAAB")
         parlay_size_warnings = [
             w for w in result.get("warnings", []) if w["type"] == "PARLAY_SIZE"
         ]
@@ -160,7 +163,7 @@ class TestParlayRiskSummary:
 
     def test_nine_leg_parlay_triggers_high_warning(self):
         """9-leg parlay must trigger a HIGH PARLAY_SIZE warning."""
-        result = _parlay_risk_summary(self._make_legs(9), "NCAAB")
+        result = parlay_risk_summary(self._make_legs(9), "NCAAB")
         parlay_size_warnings = [
             w for w in result.get("warnings", []) if w["type"] == "PARLAY_SIZE"
         ]
@@ -169,17 +172,17 @@ class TestParlayRiskSummary:
 
     def test_result_contains_required_keys(self):
         """Risk summary must include the standard keys from assess_parlay_risk."""
-        result = _parlay_risk_summary(self._make_legs(3), "NBA")
+        result = parlay_risk_summary(self._make_legs(3), "NBA")
         for key in ("parlay_risk_score", "leg_count", "warnings", "recommendation"):
             assert key in result
 
     def test_risk_score_increases_with_leg_count(self):
         """Risk score for a 9-leg parlay must exceed risk score for a 4-leg parlay."""
-        r_small = _parlay_risk_summary(self._make_legs(4), "NBA")
-        r_large = _parlay_risk_summary(self._make_legs(9), "NBA")
+        r_small = parlay_risk_summary(self._make_legs(4), "NBA")
+        r_large = parlay_risk_summary(self._make_legs(9), "NBA")
         assert r_large["parlay_risk_score"] > r_small["parlay_risk_score"]
 
     def test_high_risk_recommendation_for_nine_legs(self):
         """9-leg parlay should produce HIGH_RISK recommendation."""
-        result = _parlay_risk_summary(self._make_legs(9), "NBA")
+        result = parlay_risk_summary(self._make_legs(9), "NBA")
         assert "HIGH_RISK" in result["recommendation"]

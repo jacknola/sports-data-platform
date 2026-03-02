@@ -13,6 +13,7 @@ Features (30 columns):
 """
 
 from typing import Dict, List, Optional, Tuple
+from datetime import date
 
 import numpy as np
 import pandas as pd
@@ -59,6 +60,10 @@ class StatsFeatureEngineer:
         self.elo_service = EloService(sport=self.sport)
         self.rolling_calc = RollingStatsCalculator()
 
+        # Schedule context service — provides real rest/travel features from DB
+        from app.services.schedule_context_service import ScheduleContextService
+        self._schedule_ctx = ScheduleContextService()
+
         # Team stats cache
         self._team_stats_cache: Dict[str, Dict] = {}
 
@@ -103,39 +108,27 @@ class StatsFeatureEngineer:
         win_pct = 1 / (1 + 10 ** ((1500 - rating) / 400))
         return win_pct
 
-    def _get_rest_days(self, team_name: str, days_back: int = 1) -> int:
+    def _get_rest_days(self, team_name: str, game_date: Optional[date] = None) -> int:
         """
-        Get rest days since last game.
+        Return rest days since last game from the database.
 
-        This is a simplified version - in production would
-        query actual game dates.
-
-        Args:
-            team_name: Team name.
-            days_back: Days to look back.
-
-        Returns:
-            Number of rest days (default 1 if unknown).
+        Falls back to 1 if no schedule context is available.
         """
-        # Simplified: assume 1 day rest if no data
-        # In production, query actual game dates from nba_api
-        return 1
+        from datetime import date as _date
+        gd = game_date or _date.today()
+        ctx = self._schedule_ctx.get_context(team_name, gd, self.sport)
+        return ctx.get("rest_days") if ctx.get("rest_days") is not None else 1
 
-    def _is_back_to_back(self, team_name: str) -> bool:
+    def _is_back_to_back(self, team_name: str, game_date: Optional[date] = None) -> bool:
         """
-        Check if team is playing back-to-back.
+        Check if the team is playing on back-to-back nights from the database.
 
-        Simplified version - would query actual schedule.
-
-        Args:
-            team_name: Team name.
-
-        Returns:
-            True if back-to-back game.
+        Falls back to False if no schedule context is available.
         """
-        # Simplified: default to False
-        # In production, check actual schedule
-        return False
+        from datetime import date as _date
+        gd = game_date or _date.today()
+        ctx = self._schedule_ctx.get_context(team_name, gd, self.sport)
+        return bool(ctx.get("is_back_to_back", False))
 
     def prepare_features(
         self, home_team: str, away_team: str, sport: Optional[str] = None
