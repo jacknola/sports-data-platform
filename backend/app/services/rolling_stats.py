@@ -130,7 +130,9 @@ class RollingStatsCalculator:
         if series.empty:
             return series
 
-        float_values = series.astype(float)  # ensure numeric even if upstream sends object dtype
+        # Upstream stat feeds occasionally arrive as object dtype from JSON parsing;
+        # coerce to float so the filter can operate deterministically.
+        float_values = series.astype(float)
         # Preserve temporal continuity: forward fill recent observations, backfill early gaps,
         # then fall back to the mean to avoid injecting zeros into percentage metrics.
         filled_values = float_values.ffill().bfill()
@@ -139,17 +141,15 @@ class RollingStatsCalculator:
             if np.isnan(mean_value):
                 mean_value = 0.0
             filled_values = filled_values.fillna(mean_value)
-        if filled_values.isna().any():
-            filled_values = filled_values.fillna(0.0)
         values = filled_values
         estimates = []
 
         # Initial guesses
-        x_hat = values.iloc[0]
+        x_hat = values.mean()
         # Initial covariance tuned for stat ranges that typically sit between 0-200
         # (e.g., efficiency, pace). Keeping this at 1.0 yields a large early Kalman gain
-        # with the default measurement variance, so the filter adapts quickly without
-        # exploding on typical basketball metrics.
+        # with the default measurement variance so the filter adapts quickly; tune per
+        # stat type if tighter convergence is needed (e.g., percentages vs. counts).
         p = 1.0
 
         for z in values:
