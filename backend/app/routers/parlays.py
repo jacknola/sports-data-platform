@@ -11,6 +11,13 @@ import uuid
 from app.services.rag_pipeline import RAGPipeline
 from app.database import SessionLocal
 from app.models.parlay import Parlay, ParlayLeg
+from app.services.parlay_utils import (
+    american_to_decimal as _american_to_decimal,
+    implied_prob as _implied_prob,
+    calculate_parlay_odds,
+    calculate_parlay_ev,
+    parlay_risk_summary as _parlay_risk_summary_fn,
+)
 
 router = APIRouter()
 rag_pipeline: "RAGPipeline" = None
@@ -76,6 +83,12 @@ async def create_parlay(parlay: ParlayCreate) -> Dict[str, Any]:
         
         # Calculate total odds and payout multiplier
         total_odds, payout_multiplier = calculate_parlay_odds([leg.odds for leg in parlay.legs])
+
+        # Parlay EV and vig-compounding analysis
+        ev_analysis = calculate_parlay_ev([leg.odds for leg in parlay.legs], payout_multiplier)
+
+        # Risk assessment: leg count, correlation, sport concentration
+        risk_summary = _parlay_risk_summary(parlay.legs, parlay.sport)
         
         # Prepare parlay data
         parlay_data = {
@@ -103,10 +116,18 @@ async def create_parlay(parlay: ParlayCreate) -> Dict[str, Any]:
         insights = await rag_pipeline.get_parlay_insights(parlay_id)
         
         logger.info(f"Created parlay {parlay_id}")
-        
+
+        if risk_summary.get("warnings"):
+            for w in risk_summary["warnings"]:
+                logger.warning(
+                    f"Parlay {parlay_id} risk [{w['type']}|{w['severity']}]: {w['message']}"
+                )
+
         return {
             'parlay_id': parlay_id,
             'parlay_data': parlay_data,
+            'ev_analysis': ev_analysis,
+            'risk_summary': risk_summary,
             'insights': insights,
             'message': 'Parlay created successfully'
         }
@@ -337,35 +358,132 @@ async def get_parlay_performance_stats() -> Dict[str, Any]:
         db.close()
 
 
+# ---------------------------------------------------------------------------
 # Helper functions
-def calculate_parlay_odds(leg_odds: List[float]) -> tuple[float, float]:
+# ---------------------------------------------------------------------------
+
+def _american_to_decimal(american_odds: float) -> float:
+    """Convert American odds to decimal odds."""
+    if american_odds > 0:
+        return 1.0 + american_odds / 100.0
+    else:
+        return 1.0 + 100.0 / abs(american_odds)
+
+
+def _implied_prob(american_odds: float) -> float:
+    """Raw (vig-inclusive) implied probability from American odds."""
+    d = _american_to_decimal(american_odds)
+    return 1.0 / d
+
+
+def calculate_parlay_odds(leg_odds: List[float]) -> tuple:
     """
-    Calculate total parlay odds and payout multiplier
-    
+    Calculate total parlay odds and payout multiplier.
+
     Args:
-        leg_odds: List of American odds for each leg
-        
+        leg_odds: List of American odds for each leg.
+
     Returns:
         (total_american_odds, payout_multiplier)
     """
-    # Convert American odds to decimal
-    decimal_odds = []
-    for odds in leg_odds:
-        if odds >= 0:
-            decimal = 1 + (odds / 100)
-        else:
-            decimal = 1 + (100 / abs(odds))
-        decimal_odds.append(decimal)
-    
-    # Calculate combined odds
+    decimal_odds = [_american_to_decimal(o) for o in leg_odds]
+
     combined_decimal = 1.0
-    for decimal in decimal_odds:
-        combined_decimal *= decimal
-    
-    # Convert back to American odds
+    for d in decimal_odds:
+        combined_decimal *= d
+
     if combined_decimal >= 2.0:
         total_american = (combined_decimal - 1) * 100
     else:
         total_american = -100 / (combined_decimal - 1)
-    
+
     return total_american, combined_decimal
+
+
+def calculate_parlay_ev(
+    leg_odds: List[float],
+    payout_multiplier: float,
+    pinnacle_vig: float = 0.025,
+) -> Dict[str, Any]:
+    """
+    Compute parlay expected value and vig-compounding analysis.
+
+    Uses single-sided multiplicative devig (true_prob = implied / (1 + vig))
+    to estimate each leg's true probability, then multiplies them together
+    to get the combined true probability assuming independent outcomes.
+
+    Args:
+        leg_odds:          American odds for each leg (as offered by the book).
+        payout_multiplier: Decimal payout for the full parlay (from calculate_parlay_odds).
+        pinnacle_vig:      Estimated per-side total overround for devigging (default 2.5%).
+
+    Returns:
+        Dict with:
+            true_combined_prob  – product of devigged per-leg probs
+            fair_payout         – 1 / true_combined_prob (break-even multiplier)
+            offered_payout      – the book's actual payout_multiplier
+            ev_per_unit         – EV per $1 wagered (positive = +EV)
+            vig_cost_pct        – percentage of fair value surrendered to vig
+            leg_count           – number of legs
+    """
+    n = len(leg_odds)
+    if n == 0:
+        return {}
+
+    true_combined_prob = 1.0
+    for odds in leg_odds:
+        raw_implied = _implied_prob(odds)
+        devigged = raw_implied / (1.0 + pinnacle_vig)
+        true_combined_prob *= devigged
+
+    fair_payout = 1.0 / true_combined_prob if true_combined_prob > 0 else float("inf")
+    ev_per_unit = true_combined_prob * payout_multiplier - 1.0
+    vig_cost_pct = round((1.0 - payout_multiplier / fair_payout) * 100, 2) if fair_payout > 0 else 0.0
+
+    return {
+        "leg_count": n,
+        "true_combined_prob": round(true_combined_prob, 6),
+        "fair_payout": round(fair_payout, 3),
+        "offered_payout": round(payout_multiplier, 3),
+        "ev_per_unit": round(ev_per_unit, 4),
+        "vig_cost_pct": vig_cost_pct,
+        "is_positive_ev": ev_per_unit > 0,
+    }
+
+
+def _parlay_risk_summary(legs: List["ParlayLegCreate"], sport: str) -> Dict[str, Any]:
+    """
+    Build a lightweight parlay risk summary without requiring sharp-signal data.
+
+    Delegates leg-count and sport-concentration checks to assess_parlay_risk
+    by constructing minimal BettingOpportunity proxies from the leg odds.
+
+    Args:
+        legs:  The submitted parlay legs.
+        sport: The parlay's sport string (e.g. "NBA", "NCAAB").
+
+    Returns:
+        assess_parlay_risk result dict.
+    """
+    from app.services.multivariate_kelly import BettingOpportunity, assess_parlay_risk
+
+    opportunities = []
+    for leg in legs:
+        dec = _american_to_decimal(leg.odds)
+        implied = 1.0 / dec
+        devigged = implied / 1.025
+        edge = devigged - implied  # always slightly negative (vig cost)
+        opp = BettingOpportunity(
+            game_id=leg.game or "unknown",
+            side=leg.pick or "",
+            market=leg.market or "moneyline",
+            true_prob=devigged,
+            decimal_odds=dec,
+            edge=edge,
+            sport=sport.lower(),
+            home_team=leg.team or "",
+            away_team=leg.opponent or "",
+        )
+        opportunities.append(opp)
+
+    return assess_parlay_risk(opportunities)
