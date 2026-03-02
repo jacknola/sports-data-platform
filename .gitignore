@@ -72,6 +72,7 @@ data/
 service-account.json
 *-credentials.json
 *-key.json
+backend/credentials/
 
 # Session dumps (from AI coding tools)
 session-*.md
