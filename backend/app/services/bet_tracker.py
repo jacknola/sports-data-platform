@@ -319,6 +319,10 @@ class BetTracker:
         win_rate = (wins / total_decisions) if total_decisions > 0 else 0.0
         roi = (units_won / total_staked) if total_staked > 0 else 0.0
 
+        # CLV average from settled bets that have actual_clv recorded
+        clv_values = [float(b["actual_clv"]) for b in bets if b.get("actual_clv") is not None]
+        avg_clv = round(sum(clv_values) / len(clv_values), 3) if clv_values else None
+
         return {
             "wins": wins,
             "losses": losses,
@@ -327,4 +331,6 @@ class BetTracker:
             "units": units_won,
             "roi": roi,
             "total_bets": len(bets),
+            "avg_clv": avg_clv,
+            "clv_sample_size": len(clv_values),
         }

@@ -14,6 +14,27 @@ from app.services.bet_tracker import BetTracker
 from app.services.sports_api import SportsAPIService
 
 
+def _calc_clv(bet_odds: int, closing_odds: int) -> float:
+    """Calculate CLV in probability percentage points.
+
+    Positive CLV = we got a better price than closing line (good).
+    CLV = (closing_implied_prob - bet_implied_prob) * 100
+    """
+    def _implied(american: int) -> float:
+        if american < 0:
+            return abs(american) / (abs(american) + 100)
+        return 100 / (american + 100)
+
+    if not bet_odds or not closing_odds:
+        return 0.0
+    try:
+        implied_bet = _implied(int(bet_odds))
+        implied_close = _implied(int(closing_odds))
+        return round((implied_close - implied_bet) * 100, 3)
+    except Exception:
+        return 0.0
+
+
 class BetSettlementEngine:
     def __init__(self):
         self.tracker = BetTracker()
@@ -49,7 +70,21 @@ class BetSettlementEngine:
                         import random
 
                         status = "won" if random.random() < 0.60 else "lost"
-                        self.tracker.update_bet_result(bet["id"], status, clv=1.5)
+                        # Calculate real CLV from open_line_cache if available
+                        clv = 0.0
+                        try:
+                            from app.services.open_line_cache import get_or_set_open_line
+                            market_key = bet.get("game_id", bet["id"])
+                            current_line = float(bet.get("line", 0) or 0)
+                            current_odds = int(bet.get("odds", -110) or -110)
+                            open_data = get_or_set_open_line(market_key, current_line, current_odds, None)
+                            open_odds = open_data.get("open_odds", 0)
+                            if open_odds and open_odds != current_odds:
+                                clv = _calc_clv(current_odds, open_odds)
+                        except Exception:
+                            pass
+
+                        self.tracker.update_bet_result(bet["id"], status, clv=clv if clv else None)
                         logger.info(
                             f"Mock settled bet {bet['id']} ({bet['side']}) as {status}"
                         )
