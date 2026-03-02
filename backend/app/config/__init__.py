@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     QDRANT_COLLECTION_GAMES: str = "game_scenarios"
     QDRANT_COLLECTION_PLAYERS: str = "player_performances"
     QDRANT_COLLECTION_NBA_PROPS: str = "nba_historical_props"
+    QDRANT_COLLECTION_HISTORICAL_PROPS: str = "historical_props"
+    QDRANT_COLLECTION_NBA_PATTERNS: str = "nba_player_patterns"
+    QDRANT_COLLECTION_HISTORICAL_GAMES: str = "historical_games"
 
     # Celery
     CELERY_BROKER_URL: str = "redis://localhost:6379/1"
@@ -38,6 +41,7 @@ class Settings(BaseSettings):
     ODDS_API_KEY: Optional[str] = None
     ODDSAPI_API_KEY: Optional[str] = None
     THE_ODDS_API_KEY: Optional[str] = None
+    ODDS_API_KEY_FALLBACK: Optional[str] = None
     SPORTS_GAME_ODDS_API_KEY: Optional[str] = None
     ODDS_API_IO_KEY: Optional[str] = None
 
@@ -84,15 +88,6 @@ class Settings(BaseSettings):
     SLACK_WEBHOOK_URL: Optional[str] = None
 
     # Betting
-    BETTING_BANKROLL: float = 1000.0
-    KELLY_FRACTION_QUARTER: float = 0.25
-    KELLY_FRACTION_HALF: float = 0.5
-    MAX_BET_PERCENTAGE: float = 0.05
-    EDGE_THRESHOLD_LOW: float = 0.03
-    EDGE_THRESHOLD_MEDIUM: float = 0.05
-    EDGE_THRESHOLD_HIGH: float = 0.07
-    EDGE_THRESHOLD_MAX: float = 0.10
-    ENABLE_SHARP_SIGNALS: bool = False
     BETTING_BANKROLL: float = 1000.0
     KELLY_FRACTION_QUARTER: float = 0.25
     KELLY_FRACTION_HALF: float = 0.5

@@ -457,6 +457,7 @@ class NBAMLPredictor:
             )
 
         odds_data = await self.sports_api.get_odds("basketball_nba")
+        games = []
 
         if odds_data:
             # 2. Fetch Live Stats

@@ -74,3 +74,42 @@ class VectorStoreService:
                 )
             ]
         )
+
+    def search_similar_scenarios(
+        self,
+        description: str,
+        limit: int = 5,
+        sport_filter: Optional[str] = None,
+        collection: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Find historically similar game scenarios via vector search."""
+        coll_name = collection or settings.QDRANT_COLLECTION_GAMES
+        try:
+            vector = self.encoder.encode(description).tolist()
+            query_filter = None
+            if sport_filter:
+                query_filter = models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="sport",
+                            match=models.MatchValue(value=sport_filter),
+                        )
+                    ]
+                )
+            results = self.client.query_points(
+                collection_name=coll_name,
+                query=vector,
+                query_filter=query_filter,
+                limit=limit,
+                with_payload=True,
+                with_vectors=False,
+                score_threshold=0.5,
+            ).points
+            return [
+                {"score": r.score, **r.payload}
+                for r in results
+                if r.payload
+            ]
+        except Exception as e:
+            logger.debug(f"Qdrant similarity search failed for {description[:40]}: {e}")
+            return []

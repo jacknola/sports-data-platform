@@ -331,27 +331,11 @@ class SharpMoneyTracker:
                 score += 1
                 details["rlm"] = rlm
         public_info = game.get("_mock_public", {})
-        if public_info:
-            home_public_pct = public_info.get("home_bet_pct", 0.5)
-        public_info = game.get("_mock_public", {})
         if not public_info:
             if self.strict_mode:
                 logger.warning(f"No public data available for game {game.get('id')} - strict mode enabled, skipping RLM detection")
             else:
                 public_info = {}  # Use empty dict to skip RLM
-        if public_info:
-            home_public_pct = public_info.get("home_bet_pct", 0.5)
-        if not public_info:
-            if self.strict_mode:
-                logger.warning(f"No public data available for game {game.get('id')} - strict mode enabled, skipping RLM detection")
-            else:
-                public_info = {}  # Use empty dict to skip RLM
-        if public_info:
-            home_public_pct = public_info.get("home_bet_pct", 0.5)
-            else:
-                public_info = {}  # Use empty dict to skip RLM
-        if public_info:
-        public_info = game.get("_mock_public", {})
         if public_info:
             home_public_pct = public_info.get("home_bet_pct", 0.5)
             # Use sharp implied prob if available, else fall back to all
@@ -554,7 +538,6 @@ class SharpMoneyTracker:
                 logger.warning(f"No movement data available for game {game.get('id')} - strict mode enabled, skipping movement detection")
             else:
                 mock_mv = {}  # Use empty dict to skip movement
-        if mock_mv:
         if mock_mv:
             movement.update(mock_mv)
 
