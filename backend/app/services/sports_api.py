@@ -14,7 +14,7 @@ with [LIVE], [CACHED], or [FALLBACK].
 
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -139,26 +139,31 @@ class PersistentCache:
             logger.warning(f"Persistent cache disabled: {e}")
 
     def get(self, key: str, ttl: Optional[int] = None) -> Optional[FetchResult]:
-        """Retrieve from database if not expired."""
+        """Retrieve from database if not expired — TTL check done in SQL."""
         if not self._enabled:
             return None
 
         session = self._Session()
         try:
-            entry = session.query(self._Model).filter_by(key=key).first()
+            effective_ttl = ttl or self._default_ttl
+            cutoff = datetime.utcnow() - timedelta(seconds=effective_ttl)
+
+            entry = (
+                session.query(self._Model)
+                .filter(
+                    self._Model.key == key,
+                    self._Model.timestamp >= cutoff,
+                )
+                .first()
+            )
             if not entry:
                 return None
 
-            age = (datetime.utcnow() - entry.timestamp).total_seconds()
-            if age > (ttl or self._default_ttl):
-                return None  # Expired
-
             import json
-
             return FetchResult(
                 data=json.loads(str(entry.data if not hasattr(entry.data, 'value') else entry.data.value)),
                 source="cached_db",
-                game_count=0,  # FetchResult __post_init__ handles this
+                game_count=0,
             )
         except Exception as e:
             logger.error(f"Persistent cache retrieval failed: {e}")
@@ -175,17 +180,21 @@ class PersistentCache:
         try:
             import json
 
+            now = datetime.utcnow()
+            expires = now + timedelta(seconds=self._default_ttl)
             entry = session.query(self._Model).filter_by(key=key).first()
             if entry:
                 setattr(entry, "data", json.dumps(data))
                 setattr(entry, "source", source)
-                setattr(entry, "timestamp", datetime.utcnow())
+                setattr(entry, "timestamp", now)
+                setattr(entry, "expires_at", expires)
             else:
                 new_entry = self._Model(
                     key=key,
                     data=json.dumps(data),
                     source=source,
-                    timestamp=datetime.utcnow(),
+                    timestamp=now,
+                    expires_at=expires,
                 )
                 session.add(new_entry)
             session.commit()
@@ -250,12 +259,14 @@ class SportsAPIService:
     """
 
     def __init__(self):
-        # Dual API key resolution (from sports-betting-edge-tool branch)
+        # Paid key is primary; starter-tier key is the quota-exhaustion fallback
         self.odds_api_key = (
             getattr(settings, "ODDS_API_KEY", None)
             or getattr(settings, "ODDSAPI_API_KEY", None)
             or getattr(settings, "THE_ODDS_API_KEY", None)
         )
+        self.odds_api_key_fallback = getattr(settings, "ODDS_API_KEY_FALLBACK", None)
+        self._using_fallback_key = False
         self.sportsradar_key = getattr(settings, "SPORTSRADAR_API_KEY", None)
         self.base_url = "https://api.the-odds-api.com/v4"
         self._last_quota_remaining: Optional[int] = None
@@ -644,23 +655,32 @@ class SportsAPIService:
         except httpx.HTTPStatusError as e:
             status = e.response.status_code
             body = e.response.text[:200]
-            if status in (401, 429):
-                label = "quota exhausted" if status == 401 else "rate-limited"
-                logger.error(f"Odds API {status} ({label}) for {sport}: {body}")
+            if status in (401, 422, 429):
+                label = "quota exhausted" if status in (401, 422) else "rate-limited"
+                logger.warning(f"Odds API {status} ({label}) for {sport}: {body}")
+
+                # Rotate to starter-tier fallback key before giving up
+                if not self._using_fallback_key and self.odds_api_key_fallback:
+                    logger.info("Rotating to starter-tier Odds API fallback key")
+                    self.odds_api_key = self.odds_api_key_fallback
+                    self._using_fallback_key = True
+                    # Retry immediately with the fallback key
+                    return await self.get_odds(sport, markets, bookmakers)
+
+                logger.error(f"Both Odds API keys exhausted for {sport}")
                 _odds_api_exhausted = True
                 _odds_api_exhausted_at = time.time()
-                # Try fallbacks immediately
+                # Try data-source fallbacks
                 oio_data = await self._try_odds_api_io_fallback(sport)
                 if oio_data: return oio_data
-                
+
                 sgo_data = await self._try_sportsgameodds_fallback(sport)
                 if sgo_data: return sgo_data
             else:
                 logger.error(f"Odds API HTTP {status} for {sport}: {body}")
-                # Try fallbacks for other HTTP errors too
                 oio_data = await self._try_odds_api_io_fallback(sport)
                 if oio_data: return oio_data
-                
+
                 sgo_data = await self._try_sportsgameodds_fallback(sport)
                 if sgo_data: return sgo_data
         except Exception as e:
@@ -1129,6 +1149,15 @@ class SportsAPIService:
             over_odds = best_over.get("over_odds", -110)
             under_odds = best_under.get("under_odds", -110)
             devig_over, devig_under = self._devig_american(over_odds, under_odds)
+
+            # Extract FanDuel-specific odds if FanDuel offers this line
+            fd_offering = next(
+                (o for o in offerings if o.get("book_key", "").lower() == "fanduel"),
+                None,
+            )
+            fanduel_over_odds = fd_offering.get("over_odds") if fd_offering else None
+            fanduel_under_odds = fd_offering.get("under_odds") if fd_offering else None
+
             enriched.append(
                 {
                     "player": first["player"],
@@ -1140,6 +1169,8 @@ class SportsAPIService:
                     "best_over_odds": over_odds,
                     "best_under_book": best_under.get("book", ""),
                     "best_under_odds": under_odds,
+                    "fanduel_over_odds": fanduel_over_odds,
+                    "fanduel_under_odds": fanduel_under_odds,
                     "devigged_over_prob": devig_over,
                     "devigged_under_prob": devig_under,
                     "books_offering": len(offerings),
