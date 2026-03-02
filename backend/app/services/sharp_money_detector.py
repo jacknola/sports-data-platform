@@ -409,14 +409,12 @@ class SharpMoneyDetector:
         # --- +EV Calculation ---
         # Infer the other side of Pinnacle odds for devigging.
         # Pinnacle spreads typically carry ~2.5% total overround.
-        # When we only have one side, estimate the other by mirroring
-        # the vig structure rather than assuming a fixed -108.
+        # When we only have one side, use the multiplicative devig formula:
+        #   true_prob = implied / (1 + overround)
+        # This correctly removes the vig baked into the single-sided implied prob.
         pinnacle_home_implied = SharpMoneyDetector._american_to_implied_static(pinnacle_home_odds)
         total_vig_estimate = 0.025  # Pinnacle typical ~2.5% total overround
-        pinnacle_home_implied_adj = pinnacle_home_implied + (total_vig_estimate / 2)
-        pinnacle_away_implied_adj = (1.0 - pinnacle_home_implied) + (total_vig_estimate / 2)
-        total_implied = pinnacle_home_implied_adj + pinnacle_away_implied_adj
-        devigged_home = pinnacle_home_implied_adj / total_implied
+        devigged_home = pinnacle_home_implied / (1.0 + total_vig_estimate)
 
         retail_implied = SharpMoneyDetector._american_to_implied_static(retail_home_odds)
 

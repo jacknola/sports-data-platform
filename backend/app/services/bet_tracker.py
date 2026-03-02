@@ -49,8 +49,7 @@ class BetTracker:
         """Initialize local SQLite database if Supabase is unavailable."""
         os.makedirs(os.path.dirname(LOCAL_DB_PATH), exist_ok=True)
         with sqlite3.connect(LOCAL_DB_PATH) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS bets (
                     id TEXT PRIMARY KEY,
                     created_at TEXT,
@@ -64,10 +63,16 @@ class BetTracker:
                     edge REAL,
                     bet_size REAL,
                     status TEXT,
+                    book TEXT,
                     actual_clv REAL,
                     settled_at TEXT
                 )
             """)
+            # Add book column to existing DBs that pre-date this field
+            try:
+                conn.execute("ALTER TABLE bets ADD COLUMN book TEXT")
+            except sqlite3.OperationalError:
+                pass  # column already exists
             conn.commit()
 
     def save_bet(self, bet_data: Dict[str, Any]) -> str:
@@ -92,6 +97,7 @@ class BetTracker:
             "edge": bet_data.get("edge", 0.0),
             "bet_size": bet_data.get("bet_size", 0.0),
             "status": "pending",
+            "book": bet_data.get("book", settings.PRIMARY_BOOK),
             "actual_clv": None,
             "settled_at": None,
         }
@@ -159,15 +165,12 @@ class BetTracker:
     def _save_sqlite(self, record: Dict[str, Any]):
         self._init_sqlite()
         with sqlite3.connect(LOCAL_DB_PATH) as conn:
-            cursor = conn.cursor()
-        with sqlite3.connect(LOCAL_DB_PATH) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
+            conn.execute(
                 """
-                INSERT INTO bets 
-                (id, created_at, date, game_id, sport, side, market, odds, line, edge, bet_size, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+                INSERT INTO bets
+                (id, created_at, date, game_id, sport, side, market, odds, line, edge, bet_size, status, book)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
                 (
                     record["id"],
                     record["created_at"],
@@ -181,6 +184,7 @@ class BetTracker:
                     record["edge"],
                     record["bet_size"],
                     record["status"],
+                    record.get("book", settings.PRIMARY_BOOK),
                 ),
             )
             conn.commit()
@@ -206,8 +210,6 @@ class BetTracker:
 
     def _get_pending_sqlite(self, sport: str) -> List[Dict]:
         self._init_sqlite()
-        with sqlite3.connect(LOCAL_DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row
         with sqlite3.connect(LOCAL_DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -238,16 +240,13 @@ class BetTracker:
     def _update_sqlite(self, bet_id: str, status: str, clv: float, now: str):
         self._init_sqlite()
         with sqlite3.connect(LOCAL_DB_PATH) as conn:
-            cursor = conn.cursor()
-        with sqlite3.connect(LOCAL_DB_PATH) as conn:
-            cursor = conn.cursor()
             if clv is not None:
-                cursor.execute(
+                conn.execute(
                     "UPDATE bets SET status = ?, actual_clv = ?, settled_at = ? WHERE id = ?",
                     (status, clv, now, bet_id),
                 )
             else:
-                cursor.execute(
+                conn.execute(
                     "UPDATE bets SET status = ?, settled_at = ? WHERE id = ?",
                     (status, now, bet_id),
                 )
@@ -275,8 +274,6 @@ class BetTracker:
 
     def _get_resolved_sqlite(self) -> List[Dict]:
         self._init_sqlite()
-        with sqlite3.connect(LOCAL_DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row
         with sqlite3.connect(LOCAL_DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()

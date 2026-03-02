@@ -16,6 +16,7 @@ app = Celery(
     include=[
         "app.tasks.nba",
         "app.tasks.betting",
+        "app.tasks.odds",
     ],
 )
 
@@ -28,6 +29,13 @@ app.conf.update(
 
 # Periodic tasks
 app.conf.beat_schedule = {
+    # FanDuel + Pinnacle odds refresh — every 4 hours (NBA + NCAAB)
+    "refresh-fanduel-odds-4h": {
+        "task": "app.tasks.odds.refresh_fanduel_odds",
+        "schedule": crontab(minute=0, hour="*/4"),
+        "options": {"queue": "data-updates"},
+    },
+    # Legacy NBA-only refresh kept for backward compat, now superseded above
     "refresh-nba-odds-daily": {
         "task": "app.tasks.nba.refresh_nba_odds",
         "schedule": crontab(hour=11, minute=5),
@@ -35,17 +43,17 @@ app.conf.beat_schedule = {
     },
     "place-bets-daily": {
         "task": "app.tasks.betting.place_bets_daily",
-        "schedule": crontab(hour=14, minute=0), # Run at 2 PM UTC daily
+        "schedule": crontab(hour=14, minute=0),
         "options": {"queue": "betting"},
     },
     "settle-bets-daily": {
         "task": "app.tasks.betting.settle_bets_daily",
-        "schedule": crontab(hour=10, minute=0), # Run at 10 AM UTC daily
+        "schedule": crontab(hour=10, minute=0),
         "options": {"queue": "betting"},
     },
     "export-sheets-daily": {
         "task": "app.tasks.betting.export_to_sheets_daily",
-        "schedule": crontab(hour=15, minute=0), # Run at 3 PM UTC daily
+        "schedule": crontab(hour=15, minute=0),
         "options": {"queue": "reports"},
     },
 }

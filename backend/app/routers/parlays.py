@@ -11,6 +11,13 @@ import uuid
 from app.services.rag_pipeline import RAGPipeline
 from app.database import SessionLocal
 from app.models.parlay import Parlay, ParlayLeg
+from app.services.parlay_utils import (
+    american_to_decimal as _american_to_decimal,
+    implied_prob as _implied_prob,
+    calculate_parlay_odds,
+    calculate_parlay_ev,
+    parlay_risk_summary as _parlay_risk_summary_fn,
+)
 
 router = APIRouter()
 rag_pipeline: "RAGPipeline" = None
@@ -76,6 +83,12 @@ async def create_parlay(parlay: ParlayCreate) -> Dict[str, Any]:
         
         # Calculate total odds and payout multiplier
         total_odds, payout_multiplier = calculate_parlay_odds([leg.odds for leg in parlay.legs])
+
+        # Parlay EV and vig-compounding analysis
+        ev_analysis = calculate_parlay_ev([leg.odds for leg in parlay.legs], payout_multiplier)
+
+        # Risk assessment: leg count, correlation, sport concentration
+        risk_summary = _parlay_risk_summary(parlay.legs, parlay.sport)
         
         # Prepare parlay data
         parlay_data = {
@@ -103,10 +116,18 @@ async def create_parlay(parlay: ParlayCreate) -> Dict[str, Any]:
         insights = await rag_pipeline.get_parlay_insights(parlay_id)
         
         logger.info(f"Created parlay {parlay_id}")
-        
+
+        if risk_summary.get("warnings"):
+            for w in risk_summary["warnings"]:
+                logger.warning(
+                    f"Parlay {parlay_id} risk [{w['type']}|{w['severity']}]: {w['message']}"
+                )
+
         return {
             'parlay_id': parlay_id,
             'parlay_data': parlay_data,
+            'ev_analysis': ev_analysis,
+            'risk_summary': risk_summary,
             'insights': insights,
             'message': 'Parlay created successfully'
         }
@@ -337,35 +358,27 @@ async def get_parlay_performance_stats() -> Dict[str, Any]:
         db.close()
 
 
-# Helper functions
-def calculate_parlay_odds(leg_odds: List[float]) -> tuple[float, float]:
+# ---------------------------------------------------------------------------
+# Helper functions — all implementations live in parlay_utils; re-exported
+# here so existing call-sites within this module keep working unchanged.
+# ---------------------------------------------------------------------------
+
+def _parlay_risk_summary(legs: List["ParlayLegCreate"], sport: str) -> Dict[str, Any]:
     """
-    Calculate total parlay odds and payout multiplier
-    
-    Args:
-        leg_odds: List of American odds for each leg
-        
-    Returns:
-        (total_american_odds, payout_multiplier)
+    Build a lightweight parlay risk summary without requiring sharp-signal data.
+
+    Converts ParlayLegCreate objects to the dict format expected by
+    parlay_utils.parlay_risk_summary and delegates the work there.
     """
-    # Convert American odds to decimal
-    decimal_odds = []
-    for odds in leg_odds:
-        if odds >= 0:
-            decimal = 1 + (odds / 100)
-        else:
-            decimal = 1 + (100 / abs(odds))
-        decimal_odds.append(decimal)
-    
-    # Calculate combined odds
-    combined_decimal = 1.0
-    for decimal in decimal_odds:
-        combined_decimal *= decimal
-    
-    # Convert back to American odds
-    if combined_decimal >= 2.0:
-        total_american = (combined_decimal - 1) * 100
-    else:
-        total_american = -100 / (combined_decimal - 1)
-    
-    return total_american, combined_decimal
+    leg_dicts = [
+        {
+            "game": leg.game or "unknown",
+            "pick": leg.pick or "",
+            "odds": leg.odds,
+            "market": leg.market or "moneyline",
+            "team": leg.team or "",
+            "opponent": leg.opponent or "",
+        }
+        for leg in legs
+    ]
+    return parlay_risk_summary(leg_dicts, sport)

@@ -105,7 +105,7 @@ def kelly_criterion(true_prob: float, decimal_odds: float, fraction: float = 0.2
         return 0.0
     q = 1 - true_prob
     full_kelly = (b * true_prob - q) / b
-    return max(0.0, min(full_kelly * fraction, 0.10))  # max 10% of bankroll
+    return max(0.0, min(full_kelly * fraction, 0.05))  # max 5% of bankroll (per platform policy)
 
 
 # ---------------------------------------------------------------------------
