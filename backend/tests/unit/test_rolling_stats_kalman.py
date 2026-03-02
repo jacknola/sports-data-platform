@@ -48,6 +48,6 @@ def test_kalman_filter_preserves_temporal_fill_order():
     smoothed = calc.apply_kalman_filter(series)
 
     assert smoothed.iloc[0] == pytest.approx(5.0, rel=0.1)
-    assert smoothed.iloc[-1] == pytest.approx(7.5, rel=0.25)
+    assert smoothed.iloc[-1] == pytest.approx(7.5, rel=0.1)
     assert smoothed.iloc[-1] > smoothed.iloc[0]
     assert smoothed.iloc[-1] <= 10.0

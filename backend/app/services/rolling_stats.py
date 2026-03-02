@@ -130,27 +130,15 @@ class RollingStatsCalculator:
         if series.empty:
             return series
 
-        # Upstream stat feeds occasionally arrive as object dtype from JSON parsing;
-        # coerce to float so the filter can operate deterministically.
-        float_values = series.astype(float)
-        # Preserve temporal continuity: forward fill recent observations, backfill early gaps,
-        # then fall back to the mean to avoid injecting zeros into percentage metrics.
-        filled_values = float_values.ffill().bfill()
-        if filled_values.isna().any():
-            mean_value = filled_values.mean()
-            if np.isnan(mean_value):
-                mean_value = 0.0
-            filled_values = filled_values.fillna(mean_value)
-        values = filled_values
+        values = self._prepare_series_for_kalman(series)
         estimates = []
 
         # Initial guesses
-        x_hat = values.mean()
-        # Initial covariance tuned for stat ranges that typically sit between 0-200
-        # (e.g., efficiency, pace). Keeping this at 1.0 yields a large early Kalman gain
-        # with the default measurement variance so the filter adapts quickly; tune per
-        # stat type if tighter convergence is needed (e.g., percentages vs. counts).
-        p = 1.0
+        x_hat = values.iloc[0]
+        # Initial covariance scales with observed variance (floor at 1.0) so the
+        # filter adapts quickly on high-variance metrics while avoiding instability
+        # on low-range percentages.
+        p = max(float(values.var(ddof=0)), 1.0)
 
         for z in values:
             # Predict
@@ -163,7 +151,13 @@ class RollingStatsCalculator:
             p = (1 - k) * p_minus
             estimates.append(x_hat)
 
-        return pd.Series(estimates, index=series.index)
+        smoothed = pd.Series(estimates, index=series.index)
+        target_mean = values.mean()
+        if not np.isnan(target_mean) and not np.isnan(smoothed.mean()):
+            mean_correction = target_mean - smoothed.mean()
+            smoothed += mean_correction * 0.3
+
+        return smoothed
 
     def calculate_four_factors(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate Four Factors metrics from game log data."""
@@ -292,6 +286,21 @@ class RollingStatsCalculator:
             df[f"{col}_rolling_{window}"] = rolling_mean
 
         return df
+
+    def _prepare_series_for_kalman(self, series: pd.Series) -> pd.Series:
+        """Sanitize input series before Kalman smoothing."""
+        # Upstream stat feeds occasionally arrive as object dtype from JSON parsing;
+        # coerce to float so the filter can operate deterministically.
+        float_values = series.astype(float)
+        # Preserve temporal continuity: forward fill recent observations, backfill early gaps,
+        # then fall back to the mean to avoid injecting zeros into percentage metrics.
+        filled_values = float_values.ffill().bfill()
+        if filled_values.isna().any():
+            mean_value = filled_values.mean()
+            if np.isnan(mean_value):
+                mean_value = 0.0
+            filled_values = filled_values.fillna(mean_value)
+        return filled_values.fillna(0.0)
 
     def get_team_season_stats(
         self, team_id: int, season: str = "2024-25"
