@@ -1,16 +1,18 @@
 """
 Google Sheets export endpoints
 
-Exports daily picks (Props, NBA, NCAAB, Summary) to Google Sheets.
-Uses the GoogleSheetsService which requires a service account JSON
-configured via GOOGLE_SERVICE_ACCOUNT_PATH.
+Exports daily picks (Props, NBA, NCAAB, Parlays, LiveProps, Summary) to
+Google Sheets. Uses the GoogleSheetsService which requires a service account
+JSON configured via GOOGLE_SERVICE_ACCOUNT_PATH.
 
 Endpoints:
-  POST /sheets/export-daily          — Full daily export (all tabs)
-  POST /sheets/{id}/export-props     — Props tab only
-  POST /sheets/{id}/export-nba       — NBA tab only
-  POST /sheets/{id}/export-ncaab     — NCAAB tab only
-  GET  /sheets/{id}/info             — Spreadsheet metadata
+  POST /sheets/export-daily                    — Full daily export (all tabs)
+  POST /sheets/{id}/export-props               — Props tab only
+  POST /sheets/{id}/export-nba                 — NBA tab only
+  POST /sheets/{id}/export-ncaab               — NCAAB tab only
+  POST /sheets/{id}/export-parlays             — Parlays tab only
+  POST /sheets/{id}/export-live-props          — Live Props tab only
+  GET  /sheets/{id}/info                       — Spreadsheet metadata
 """
 
 from fastapi import APIRouter, HTTPException, Query
@@ -117,6 +119,36 @@ async def export_ncaab(
         return _sheets.export_ncaab(spreadsheet_id, ncaab_data)
     except Exception as e:
         logger.error(f"NCAAB export failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sheets/{spreadsheet_id}/export-parlays")
+async def export_parlays(
+    spreadsheet_id: str,
+    parlays: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Export parlay picks with per-leg detail to the Parlays tab."""
+    if not _sheets.is_configured:
+        raise HTTPException(status_code=503, detail="Google Sheets not configured")
+    try:
+        return _sheets.export_parlays(spreadsheet_id, parlays)
+    except Exception as e:
+        logger.error(f"Parlays export failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sheets/{spreadsheet_id}/export-live-props")
+async def export_live_props(
+    spreadsheet_id: str,
+    projections: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Export live in-game prop projections to the LiveProps tab."""
+    if not _sheets.is_configured:
+        raise HTTPException(status_code=503, detail="Google Sheets not configured")
+    try:
+        return _sheets.export_live_props(spreadsheet_id, projections)
+    except Exception as e:
+        logger.error(f"Live props export failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

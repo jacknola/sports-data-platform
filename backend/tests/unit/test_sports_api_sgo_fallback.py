@@ -14,6 +14,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 # Module-level stubs so we can import sports_api without real dependencies
 # ---------------------------------------------------------------------------
 
+_STUBBED_MODULES = []  # track modules we inserted for cleanup
+
+
 def _stub_modules():
     """Inject lightweight stubs for heavy dependencies."""
     stubs = {}
@@ -43,12 +46,20 @@ def _stub_modules():
     stubs["app.database"] = db
 
     for name, mod in stubs.items():
-        sys.modules.setdefault(name, mod)
+        if name not in sys.modules:
+            _STUBBED_MODULES.append(name)
+            sys.modules[name] = mod
 
     return stubs
 
 
 _stub_modules()
+
+
+def teardown_module(module):
+    """Remove stubs we inserted so they don't leak to other test modules."""
+    for name in _STUBBED_MODULES:
+        sys.modules.pop(name, None)
 
 
 # Now import after stubs are in place

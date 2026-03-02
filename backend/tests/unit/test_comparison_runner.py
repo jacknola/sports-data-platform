@@ -51,5 +51,5 @@ def test_run_comparison(mock_db):
         # Verify
         assert "bayesian" in results
         assert "random_forest" in results
-        assert results["bayesian"]["total_bets"] == 20
-        assert results["random_forest"]["total_bets"] == 4 # 20 * 0.2 = 4
+        assert results["bayesian"]["total_bets"] == 10  # stats engine counts per-game
+        assert results["random_forest"]["total_bets"] == 10

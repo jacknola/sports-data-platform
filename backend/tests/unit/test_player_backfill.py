@@ -12,13 +12,14 @@ def test_backfill_player_logs(db_session):
     # Setup test player
     player = Player(external_player_id="2544", name="LeBron James", sport="nba")
     db_session.add(player)
+    db_session.flush()
     
     # Mock nba_api playergamelog
     mock_gamelog = MagicMock()
     mock_gamelog.get_data_frames.return_value = [
         MagicMock(iterrows=lambda: iter([
             (0, {
-                "GAME_ID": "9999999",
+                "Game_ID": "9999999",
                 "GAME_DATE": "OCT 24, 2023",
                 "MATCHUP": "LAL @ GSW",
                 "PTS": 21,

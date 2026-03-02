@@ -391,7 +391,7 @@ async def get_parlay_performance_stats() -> Dict[str, Any]:
             'net_profit': total_return - total_invested,
             'overall_roi': ((total_return - total_invested) / total_invested * 100) if total_invested > 0 else 0,
             'by_sport': sports_stats,
-            'avg_odds': (sum(p.total_odds for p in completed if p.total_odds) / len(completed)) if completed else 0,
+            'avg_odds': (sum(p.total_odds for p in completed if p.total_odds) / max(sum(1 for p in completed if p.total_odds), 1)) if completed else 0,
         }
         
     finally:
