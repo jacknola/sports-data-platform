@@ -130,19 +130,27 @@ class RollingStatsCalculator:
         if series.empty:
             return series
 
-        values = series.astype(float)
-        filled = values.ffill().bfill()
-        if filled.isna().any():
-            mean_value = filled.mean()
+        float_values = series.astype(float)  # ensure numeric even if upstream sends object dtype
+        # Preserve temporal continuity: forward fill recent observations, backfill early gaps,
+        # then fall back to the mean to avoid injecting zeros into percentage metrics.
+        filled_values = float_values.ffill().bfill()
+        if filled_values.isna().any():
+            mean_value = filled_values.mean()
             if np.isnan(mean_value):
                 mean_value = 0.0
-            filled = filled.fillna(mean_value)
-        values = filled
+            filled_values = filled_values.fillna(mean_value)
+        if filled_values.isna().any():
+            filled_values = filled_values.fillna(0.0)
+        values = filled_values
         estimates = []
 
         # Initial guesses
         x_hat = values.iloc[0]
-        p = 1.0  # moderate initial uncertainty to adapt quickly on early observations
+        # Initial covariance tuned for stat ranges that typically sit between 0-200
+        # (e.g., efficiency, pace). Keeping this at 1.0 yields a large early Kalman gain
+        # with the default measurement variance, so the filter adapts quickly without
+        # exploding on typical basketball metrics.
+        p = 1.0
 
         for z in values:
             # Predict
@@ -237,8 +245,14 @@ class RollingStatsCalculator:
     ) -> pd.DataFrame:
         """Calculate rolling advanced stats for a team.
 
-        When enabled, the Kalman filter acts as an alternative smoother
-        to the rolling mean to avoid double-smoothing the series.
+        When enabled, the Kalman filter post-processes the rolling averages
+        to reduce noise while keeping the window-based context.
+
+        Args:
+            team_id: NBA team id.
+            season: Season string (e.g., "2024-25").
+            window: Rolling window size for averages.
+            use_kalman_filter: Apply a Kalman smoother to the rolling averages.
         """
         # Fetch game logs
         df = self.fetch_team_game_logs(team_id, season)
@@ -272,13 +286,10 @@ class RollingStatsCalculator:
         rolling_cols = [c for c in numeric_cols if c in df.columns]
 
         for col in rolling_cols:
-            col_values = df[col]
+            rolling_mean = df[col].rolling(window=window, min_periods=1).mean()
             if use_kalman_filter:
-                # Kalman smoothing acts as a stand-in for the rolling mean
-                df[f"{col}_rolling_{window}"] = self.apply_kalman_filter(col_values)
-            else:
-                rolling_mean = col_values.rolling(window=window, min_periods=1).mean()
-                df[f"{col}_rolling_{window}"] = rolling_mean
+                rolling_mean = self.apply_kalman_filter(rolling_mean)
+            df[f"{col}_rolling_{window}"] = rolling_mean
 
         return df
 
