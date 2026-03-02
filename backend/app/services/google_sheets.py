@@ -648,6 +648,9 @@ class GoogleSheetsService:
             nba_bets=nba_bets,
         )
 
+        # BetTracker — full history with P&L, CLV, status for primary book
+        results["bet_tracker"] = self.export_bet_tracker(spreadsheet_id)
+
         # Log overall result
         tabs_ok = sum(
             1
@@ -1149,3 +1152,132 @@ class GoogleSheetsService:
         except Exception as e:
             logger.error(f"BetSlip export failed: {e}")
             return {"error": str(e)}
+
+    def export_bet_tracker(
+        self,
+        spreadsheet_id: str,
+        book: Optional[str] = None,
+        tab_name: str = "BetTracker",
+    ) -> Dict[str, Any]:
+        """
+        Export all tracked bets (pending + settled) from BetTracker to a
+        dedicated Google Sheets tab, showing P&L, CLV, and ROI per bet.
+
+        Args:
+            spreadsheet_id: Target Google Sheets ID.
+            book:           Filter to a specific book (e.g. "fanduel").
+                            Defaults to settings.PRIMARY_BOOK.
+            tab_name:       Worksheet tab name.
+
+        Columns:
+            Date | Sport | Game / Side | Market | Odds | Line | Edge% |
+            Kelly$ | Book | Status | CLV | P/L $ | Settled
+        """
+        if not self.client:
+            return {"error": "Google Sheets not configured"}
+
+        from app.services.bet_tracker import BetTracker
+        from app.config import settings
+
+        target_book = (book or settings.PRIMARY_BOOK).lower()
+
+        try:
+            tracker = BetTracker()
+            # Fetch all bets (pending + resolved)
+            if tracker.use_supabase:
+                try:
+                    res = tracker.supabase.client.table("bets").select("*").execute()
+                    all_bets = res.data or []
+                except Exception as exc:
+                    logger.error(f"Supabase bets fetch failed: {exc}")
+                    all_bets = []
+            else:
+                all_bets = tracker._get_resolved_sqlite() + tracker._get_pending_sqlite("nba") + tracker._get_pending_sqlite("ncaab")
+
+            # Filter to primary book
+            filtered = [b for b in all_bets if (b.get("book") or "").lower() == target_book]
+            if not filtered:
+                # If no book tag yet, show all (backward compat with old records)
+                filtered = all_bets
+
+            sheet = self.client.open_by_key(spreadsheet_id)
+            ws = self._get_or_create_worksheet(sheet, tab_name, rows=2000, cols=13)
+
+            headers = [
+                "Date", "Sport", "Side / Pick", "Market",
+                "Odds", "Line", "Edge %", "Kelly $",
+                "Book", "Status", "CLV", "P/L $", "Settled At",
+            ]
+
+            rows: List[List[Any]] = []
+            for b in sorted(filtered, key=lambda x: x.get("date", ""), reverse=True):
+                odds = int(b.get("odds") or -110)
+                size = float(b.get("bet_size") or 0)
+                status = b.get("status", "pending")
+                clv = b.get("actual_clv")
+
+                # Calculate P/L
+                pl = 0.0
+                if status == "won" and size > 0:
+                    if odds < 0:
+                        pl = round(size * 100.0 / abs(odds), 2)
+                    else:
+                        pl = round(size * odds / 100.0, 2)
+                elif status == "lost":
+                    pl = -size
+
+                rows.append([
+                    b.get("date", ""),
+                    (b.get("sport") or "").upper(),
+                    b.get("side", ""),
+                    b.get("market", ""),
+                    _fmt_odds(odds),
+                    b.get("line", ""),
+                    round(float(b.get("edge") or 0) * 100, 2),
+                    round(size, 2),
+                    b.get("book") or target_book,
+                    status,
+                    round(float(clv), 3) if clv is not None else "",
+                    pl,
+                    b.get("settled_at", ""),
+                ])
+
+            if not rows:
+                return {"status": "success", "tab": tab_name, "rows_written": 0}
+
+            written = self._batch_write(ws, headers, rows)
+
+            # Header formatting — dark navy for tracker tab
+            try:
+                ws.format(
+                    "A1:M1",
+                    {
+                        "backgroundColor": {"red": 0.1, "green": 0.15, "blue": 0.35},
+                        "textFormat": {
+                            "foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0},
+                            "bold": True,
+                            "fontSize": 11,
+                        },
+                    },
+                )
+                # Colour-code Status column (I = col 10)
+                for i, b in enumerate(filtered, start=2):
+                    status = b.get("status", "pending")
+                    colour = (
+                        {"red": 0.8, "green": 1.0, "blue": 0.8} if status == "won"
+                        else {"red": 1.0, "green": 0.8, "blue": 0.8} if status == "lost"
+                        else {"red": 1.0, "green": 0.95, "blue": 0.7}  # pending = yellow
+                    )
+                    ws.format(f"J{i}", {"backgroundColor": colour})
+            except Exception as fmt_err:
+                logger.debug(f"BetTracker formatting skipped: {fmt_err}")
+
+            logger.info(
+                f"Exported {written} bets to BetTracker tab "
+                f"(book={target_book})"
+            )
+            return {"status": "success", "tab": tab_name, "rows_written": written}
+
+        except Exception as exc:
+            logger.error(f"BetTracker export failed: {exc}")
+            return {"error": str(exc)}
