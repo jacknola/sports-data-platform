@@ -640,6 +640,14 @@ class GoogleSheetsService:
             prop_data=prop_data,
         )
 
+        # BetSlip — interactive tracker the user fills in
+        results["bet_slip"] = self.export_bet_slip(
+            spreadsheet_id,
+            prop_data=prop_data,
+            ncaab_data=ncaab_data,
+            nba_bets=nba_bets,
+        )
+
         # Log overall result
         tabs_ok = sum(
             1
@@ -948,4 +956,196 @@ class GoogleSheetsService:
 
         except Exception as e:
             logger.error(f"High-value props export failed: {e}")
+            return {"error": str(e)}
+
+    # ───────────────────────────────────────────────────────────────
+    # BetSlip export — interactive tracker the user fills in
+    # ───────────────────────────────────────────────────────────────
+
+    def export_bet_slip(
+        self,
+        spreadsheet_id: str,
+        prop_data: Optional[Dict[str, Any]] = None,
+        ncaab_data: Optional[Dict[str, Any]] = None,
+        nba_bets: Optional[List[Dict[str, Any]]] = None,
+        tab_name: str = "BetSlip",
+        game_date: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Export today's +EV recommendations as an interactive BetSlip.
+
+        The user fills in the '✓ Placed?' column with 'Y' for bets they took.
+        Run sync_betslip.py to register placed bets into the tracker DB.
+
+        Columns:
+            Date | Game | Player / Side | Stat | Line | Side | Odds | Book |
+            Edge% | Kelly$ | EV Class | ✓ Placed? | Bet ID | Status | P/L | Notes
+        """
+        if not self.client:
+            return {"error": "Google Sheets not configured"}
+
+        try:
+            sheet = self.client.open_by_key(spreadsheet_id)
+            ws = self._get_or_create_worksheet(sheet, tab_name, rows=500, cols=16)
+
+            headers = [
+                "Date",
+                "Game",
+                "Player / Side",
+                "Stat / Market",
+                "Line",
+                "Side",
+                "Odds",
+                "Book",
+                "Edge %",
+                "Kelly $",
+                "EV Class",
+                "✓ Placed?",   # User fills in Y/N here
+                "Bet ID",      # Auto-filled by sync_betslip.py
+                "Status",      # pending → won/lost/push
+                "P/L $",       # Auto-calculated on settlement
+                "Notes",
+            ]
+
+            today = game_date or datetime.now().strftime("%Y-%m-%d")
+            rows: List[List[Any]] = []
+
+            # ── Props (+EV bets from HighValueProps filter) ──
+            if prop_data and prop_data.get("best_props"):
+                for p in prop_data["best_props"]:
+                    edge = float(p.get("bayesian_edge", 0) or 0)
+                    kelly_frac = float(p.get("kelly_fraction", 0) or 0)
+                    kelly_dollars = round(kelly_frac * 100, 2)  # $100 bankroll
+                    best_side = (p.get("best_side", "over") or "over").upper()
+                    odds = (
+                        p.get("over_odds", -110)
+                        if best_side == "OVER"
+                        else p.get("under_odds", -110)
+                    )
+                    best_book = (
+                        p.get("best_over_book", "")
+                        if best_side == "OVER"
+                        else p.get("best_under_book", "")
+                    ) or p.get("best_book", "")
+                    home = p.get("home_team", "")
+                    away = p.get("away_team", "")
+                    game = f"{away} @ {home}" if home and away else p.get("opponent", "")
+                    stat_label = _STAT_DISPLAY.get(p.get("stat_type", ""), p.get("stat_type", "").upper())
+                    ev_class = (p.get("ev_classification", "") or "").replace("_", " ").title()
+
+                    rows.append([
+                        today,
+                        game,
+                        p.get("player_name", ""),
+                        f"Player Prop – {stat_label}",
+                        p.get("line", 0),
+                        best_side,
+                        _fmt_odds(odds),
+                        best_book,
+                        round(edge * 100, 2),
+                        kelly_dollars,
+                        ev_class,
+                        "",   # ✓ Placed? — user fills in Y
+                        "",   # Bet ID — filled by sync_betslip.py
+                        "pending",
+                        "",   # P/L
+                        "",   # Notes
+                    ])
+
+            # ── NBA game bets ──
+            if nba_bets:
+                for b in nba_bets:
+                    home = b.get("home_team", "")
+                    away = b.get("away_team", "")
+                    game = f"{away} @ {home}" if home and away else b.get("game_id", "")
+                    pick = b.get("pick", b.get("side", ""))
+                    market = b.get("market", "spread")
+                    odds = b.get("odds", -110)
+                    edge = float(b.get("edge", 0) or 0)
+                    kelly_dollars = round(float(b.get("bet_size", 0) or 0), 2)
+
+                    rows.append([
+                        today,
+                        game,
+                        pick,
+                        f"NBA – {market.title()}",
+                        b.get("line", ""),
+                        pick,
+                        _fmt_odds(odds),
+                        "",
+                        round(edge * 100, 2),
+                        kelly_dollars,
+                        "Game Bet",
+                        "",
+                        "",
+                        "pending",
+                        "",
+                        "",
+                    ])
+
+            # ── NCAAB game bets ──
+            if ncaab_data and ncaab_data.get("qualifying_bets"):
+                for b in ncaab_data["qualifying_bets"]:
+                    home = b.get("home_team", b.get("home", ""))
+                    away = b.get("away_team", b.get("away", ""))
+                    game = f"{away} @ {home}" if home and away else ""
+                    pick = b.get("pick", b.get("side", ""))
+                    market = b.get("market", "spread")
+                    odds = b.get("odds", -110)
+                    edge = float(b.get("edge", 0) or 0)
+                    kelly_dollars = round(float(b.get("bet_size", 0) or 0), 2)
+
+                    rows.append([
+                        today,
+                        game,
+                        pick,
+                        f"NCAAB – {market.title()}",
+                        b.get("line", ""),
+                        pick,
+                        _fmt_odds(odds),
+                        "",
+                        round(edge * 100, 2),
+                        kelly_dollars,
+                        "Game Bet",
+                        "",
+                        "",
+                        "pending",
+                        "",
+                        "",
+                    ])
+
+            if not rows:
+                logger.info("BetSlip: no qualifying bets to export")
+                return {"status": "success", "tab": tab_name, "rows_written": 0}
+
+            written = self._batch_write(ws, headers, rows)
+
+            # Format header bar (dark green for BetSlip)
+            try:
+                ws.format(
+                    "A1:P1",
+                    {
+                        "backgroundColor": {"red": 0.1, "green": 0.35, "blue": 0.1},
+                        "textFormat": {
+                            "foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0},
+                            "bold": True,
+                            "fontSize": 11,
+                        },
+                    },
+                )
+                # Highlight the "✓ Placed?" column (L = col 12) in yellow
+                ws.format(
+                    f"L2:L{written + 1}",
+                    {
+                        "backgroundColor": {"red": 1.0, "green": 0.95, "blue": 0.6},
+                        "textFormat": {"bold": True},
+                    },
+                )
+            except Exception as fmt_err:
+                logger.debug(f"BetSlip formatting skipped: {fmt_err}")
+
+            logger.info(f"Exported {written} bets to BetSlip tab (fill '✓ Placed?' with Y to track)")
+            return {"status": "success", "tab": tab_name, "rows_written": written}
+
+        except Exception as e:
+            logger.error(f"BetSlip export failed: {e}")
             return {"error": str(e)}
