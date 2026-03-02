@@ -42,7 +42,7 @@ services:
       - default
     environment:
       POSTGRES_USER: sports_app
-      POSTGRES_PASSWORD: sports_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sports_password}
       POSTGRES_DB: sports_data
     ports:
       - "5433:5432"
@@ -92,15 +92,19 @@ services:
     container_name: sports-backend
     ports:
       - "8000:8000"
+    env_file:
+      - ./backend/.env
     environment:
-      - DATABASE_URL=postgresql://sports_app:sports_password@postgres:5432/sports_data
+      # Override DB/Redis URLs to use Docker service names
+      - DATABASE_URL=postgresql://sports_app:${POSTGRES_PASSWORD:-sports_password}@postgres:5432/sports_data
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
-      - ODDSAPI_API_KEY=${ODDSAPI_API_KEY}
-      - BALLDONTLIE_API_KEY=${BALLDONTLIE_API_KEY:-}
+      - QDRANT_HOST=qdrant
+      - GOOGLE_SERVICE_ACCOUNT_PATH=/app/credentials/service-account.json
     volumes:
       - ./backend:/app
+      - ./backend/credentials:/app/credentials:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -115,15 +119,18 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: sports-celery
+    env_file:
+      - ./backend/.env
     environment:
-      - DATABASE_URL=postgresql://sports_app:sports_password@postgres:5432/sports_data
+      - DATABASE_URL=postgresql://sports_app:${POSTGRES_PASSWORD:-sports_password}@postgres:5432/sports_data
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
-      - ODDSAPI_API_KEY=${ODDSAPI_API_KEY}
-      - BALLDONTLIE_API_KEY=${BALLDONTLIE_API_KEY:-}
+      - QDRANT_HOST=qdrant
+      - GOOGLE_SERVICE_ACCOUNT_PATH=/app/credentials/service-account.json
     volumes:
       - ./backend:/app
+      - ./backend/credentials:/app/credentials:ro
     depends_on:
       - postgres
       - redis
@@ -134,14 +141,17 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: sports-celery-beat
+    env_file:
+      - ./backend/.env
     environment:
-      - DATABASE_URL=postgresql://sports_app:sports_password@postgres:5432/sports_data
+      - DATABASE_URL=postgresql://sports_app:${POSTGRES_PASSWORD:-sports_password}@postgres:5432/sports_data
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
-      - ODDSAPI_API_KEY=${ODDSAPI_API_KEY}
-      - BALLDONTLIE_API_KEY=${BALLDONTLIE_API_KEY:-}
+      - QDRANT_HOST=qdrant
+      - GOOGLE_SERVICE_ACCOUNT_PATH=/app/credentials/service-account.json
     volumes:
       - ./backend:/app
+      - ./backend/credentials:/app/credentials:ro
     depends_on:
       - postgres
       - redis

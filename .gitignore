@@ -27,6 +27,8 @@ yarn.lock
 .env
 .env.local
 .env.*.local
+backend/.env
+frontend/.env
 
 # Claude local overrides (personal, not shared)
 .claude.local.md
@@ -72,6 +74,9 @@ data/
 service-account.json
 *-credentials.json
 *-key.json
+*service_account*.json
+backend/credentials/
+credentials/
 
 # Session dumps (from AI coding tools)
 session-*.md

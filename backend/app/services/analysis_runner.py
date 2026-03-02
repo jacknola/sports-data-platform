@@ -1,6 +1,5 @@
 import asyncio
 import io
-import math
 import os
 import sys
 from contextlib import redirect_stdout
@@ -58,14 +57,14 @@ def capture_analysis() -> str:
     Returns:
         Raw text output from run_ncaab_analysis and run_nba_analysis
     """
-    from run_ncaab_analysis import run_analysis as run_ncaab
     from run_nba_analysis import main as run_nba
+    from run_ncaab_analysis import run_analysis as run_ncaab
 
     buf = io.StringIO()
     try:
         with redirect_stdout(buf):
             run_ncaab()
-            print("\n\n" + "X" * 76 + "\n\n")
+            # Visual separator between NCAAB and NBA output (removed per AGENTS.md - no print() in services)
             run_nba()
         output = buf.getvalue()
         logger.info(f"Analysis captured: {len(output)} chars")
@@ -133,8 +132,8 @@ def run_orchestrated_analysis(prediction_only: bool = False) -> Dict[str, Any]:
             "picks": List[dict],          # final merged & trimmed pick list
         }
     """
-    from run_ncaab_analysis import run_analysis as run_ncaab
     from run_nba_analysis import run_nba_analysis
+    from run_ncaab_analysis import run_analysis as run_ncaab
 
     # ------------------------------------------------------------------
     # 1. Run the core analysis scripts (capture stdout + structured data)
@@ -145,9 +144,9 @@ def run_orchestrated_analysis(prediction_only: bool = False) -> Dict[str, Any]:
 
     try:
         with redirect_stdout(buf):
-            ncaab_data = run_ncaab()
-            print("\n\n" + "X" * 76 + "\n\n")
-            nba_data = asyncio.run(run_nba_analysis())
+            ncaab_data = run_ncaab(prediction_only=prediction_only)
+            # Visual separator between NCAAB and NBA output (removed per AGENTS.md - no print() in services)
+            nba_data = asyncio.run(run_nba_analysis(prediction_only=prediction_only))
     except Exception as e:
         logger.error(f"Core analysis failed: {e}")
 
@@ -522,8 +521,8 @@ def run_slack_report_pipeline(
         True if sent successfully.
     """
     try:
-        from app.services.slack_service import SlackService
         from app.services.slack_formatter import format_unified_slack_report
+        from app.services.slack_service import SlackService
 
         nba_predictions = (nba_data or {}).get("predictions", [])
         nba_bets = (nba_data or {}).get("bets", [])
