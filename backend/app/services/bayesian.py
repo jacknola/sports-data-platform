@@ -116,7 +116,7 @@ class BayesianAnalyzer:
 
         return result
 
-    def _compute_adjustments(self, features: Dict[str, Any]) -> Dict[str, float]:
+    def _compute_adjustments(self, features: Dict[str, Any], base_prob: float = 0.5) -> Dict[str, float]:
         """Compute adjustments based on feature values"""
         adjustments = {}
 

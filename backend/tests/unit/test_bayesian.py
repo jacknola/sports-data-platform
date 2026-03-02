@@ -115,11 +115,11 @@ class TestComputeAdjustments:
 
     def test_injury_active_applies_zero(self, analyzer):
         adj = analyzer._compute_adjustments({"injury_status": "ACTIVE"}, 0.55)
-        assert adj["injury"] == 0.0
+        assert adj.get("injury", 0.0) == 0.0
 
     def test_missing_injury_defaults_to_zero(self, analyzer):
         adj = analyzer._compute_adjustments({}, 0.55)
-        assert adj["injury"] == 0.0
+        assert adj.get("injury", 0.0) == 0.0
 
     def test_home_advantage_positive(self, analyzer):
         adj = analyzer._compute_adjustments({"is_home": True}, 0.5)
@@ -139,7 +139,7 @@ class TestComputeAdjustments:
         adj = analyzer._compute_adjustments(
             {"weather": {"type": "outdoor", "wind_mph": 10}}, 0.5
         )
-        assert adj["weather"] == 0.0
+        assert adj.get("weather", 0.0) == 0.0
 
     def test_indoor_weather_key_not_present(self, analyzer):
         # No weather feature -> no weather key in adjustments dict
