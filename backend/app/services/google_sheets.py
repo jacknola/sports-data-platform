@@ -902,6 +902,7 @@ class GoogleSheetsService:
         nba_predictions: Optional[List[Dict[str, Any]]] = None,
         nba_bets: Optional[List[Dict[str, Any]]] = None,
         prop_data: Optional[Dict[str, Any]] = None,
+        parlay_suggestions: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Export all daily picks to Google Sheets (Props + NBA + NCAAB + Summary).
 
@@ -930,6 +931,12 @@ class GoogleSheetsService:
             ncaab_data=ncaab_data,
             nba_predictions=nba_predictions,
             nba_bets=nba_bets,
+        )
+
+        # 3. Parlays — generated suggestions (or empty-state message if none)
+        results["parlays"] = self.export_parlays(
+            spreadsheet_id,
+            parlay_suggestions=parlay_suggestions,
         )
 
         if prop_data and prop_data.get("props"):
@@ -1027,16 +1034,18 @@ class GoogleSheetsService:
                 "Stat",
                 "Line",
                 "Side",
-                "Odds",
+                "Best Odds",      # best across all books
+                "FD Odds",        # FanDuel-specific (— if not offered)
+                "Best Book",
                 "Projected",
                 "Edge %",
                 "Bayesian P",
                 "EV Class",
                 "Confidence",
                 "Kelly %",
+                "Best Line?",     # ✓ = highest-edge line for player+stat
                 "Sharp Signals",
                 "Situational Context",
-                "Best Book",
                 "Books #",
                 "Over Odds",
                 "Under Odds",
@@ -1097,6 +1106,14 @@ class GoogleSheetsService:
                     if best_side == "OVER"
                     else p.get("under_odds", -110)
                 )
+                # FanDuel-specific odds — show "—" when FD doesn't offer this line
+                fd_raw = (
+                    p.get("fanduel_over_odds")
+                    if best_side == "OVER"
+                    else p.get("fanduel_under_odds")
+                )
+                fd_odds_str = _fmt_odds(int(fd_raw)) if fd_raw is not None else "—"
+
                 edge = p.get("bayesian_edge", 0)
                 ev_class = p.get("ev_classification", "")
                 best_book = (
@@ -1108,6 +1125,7 @@ class GoogleSheetsService:
                 away = p.get("away_team", "")
                 game = f"{away} @ {home}" if home and away else ""
                 signals = ", ".join(p.get("sharp_signals", []))
+                best_line_mark = "✓" if p.get("best_alt_line") else ""
 
                 situational_context = p.get(
                     "situational_context", "No historical analogs found."
@@ -1123,16 +1141,18 @@ class GoogleSheetsService:
                         stat_label,
                         p.get("line", 0),
                         best_side,
-                        _fmt_odds(odds),
+                        _fmt_odds(odds),          # Best Odds (col I)
+                        fd_odds_str,               # FD Odds (col J)
+                        best_book,                 # Best Book (col K)
                         round(p.get("projected_mean", 0), 1),
                         round(edge * 100, 2),
                         round(p.get("posterior_p", 0), 4),
                         ev_class.replace("_", " ").title() if ev_class else "",
                         _confidence_label(edge, ev_class),
                         round(p.get("kelly_fraction", 0) * 100, 2),
+                        best_line_mark,            # Best Line? (col R)
                         signals,
                         situational_context,
-                        best_book,
                         p.get("books_offering", 0),
                         _fmt_odds(p.get("over_odds", -110)),
                         _fmt_odds(p.get("under_odds", -110)),
@@ -1145,16 +1165,16 @@ class GoogleSheetsService:
             try:
                 # Dark green header
                 self._format_tab_header(ws, "#0D3B1F", len(headers))
-                # EV class row colors (col M = index 12)
-                self._apply_ev_row_colors(sheet, ws, written, 12, len(headers))
-                # Confidence column (N = index 13) color
-                self._apply_column_conditional(sheet, ws, 13, [
+                # EV class row colors — EV Class is now col O (index 14)
+                self._apply_ev_row_colors(sheet, ws, written, 14, len(headers))
+                # Confidence column (P = index 15) color
+                self._apply_column_conditional(sheet, ws, 15, [
                     {"type": "TEXT_EQ", "value": "HIGH",   "bg": "#C6EFCE", "fg": "#276221", "bold": True},
                     {"type": "TEXT_EQ", "value": "MEDIUM", "bg": "#FFEB9C", "fg": "#9C6500", "bold": True},
                     {"type": "TEXT_EQ", "value": "LOW",    "bg": "#FFC7CE", "fg": "#9C0006", "bold": False},
                 ], written, index_offset=4)
-                # Column widths
-                self._set_column_widths(sheet, ws, [80, 160, 70, 100, 180, 50, 50, 55, 60, 60, 60, 70, 90, 75, 60, 160, 200, 90, 55, 60, 60])
+                # Column widths: Date|Player|Team|Opp|Game|Stat|Line|Side|BestOdds|FDOdds|BestBook|Proj|Edge%|BayesP|EVClass|Conf|Kelly%|BestLine?|Signals|Context|Books#|OvOdds|UnOdds
+                self._set_column_widths(sheet, ws, [80, 160, 70, 100, 180, 50, 50, 55, 65, 65, 90, 60, 60, 70, 90, 75, 60, 70, 160, 200, 55, 60, 60])
                 logger.info("Applied conditional formatting to HighValueProps")
 
             except Exception as fmt_err:
@@ -1167,6 +1187,107 @@ class GoogleSheetsService:
 
         except Exception as e:
             logger.error(f"High-value props export failed: {e}")
+            return {"error": str(e)}
+
+    # ───────────────────────────────────────────────────────────────
+    # Parlays tab — generated parlay suggestions
+    # ───────────────────────────────────────────────────────────────
+
+    def export_parlays(
+        self,
+        spreadsheet_id: str,
+        parlay_suggestions: Optional[List[Dict[str, Any]]] = None,
+        tab_name: str = "🎰 Parlays",
+    ) -> Dict[str, Any]:
+        """Export generated parlay suggestions to a Parlays tab.
+
+        Args:
+            spreadsheet_id: Target Google Sheets ID
+            parlay_suggestions: List from parlay_engine.generate_suggestions()
+        """
+        if not self.client:
+            return {"error": "Google Sheets not configured"}
+
+        try:
+            sheet = self.client.open_by_key(spreadsheet_id)
+            ws = self._get_or_create_worksheet(sheet, tab_name, rows=200, cols=14)
+
+            headers = [
+                "Rank",
+                "Type",         # SGP or CROSS
+                "Leg 1",
+                "Leg 2",
+                "Leg 3",
+                "Leg 4",
+                "Combined Odds",
+                "Fair Odds",
+                "Edge %",
+                "True Prob",
+                "EV Class",
+                "Score",
+                "Notes",
+            ]
+
+            suggestions = parlay_suggestions or []
+            if not suggestions:
+                # Write header + empty state message
+                ws.clear()
+                ws.update("A1", [headers])
+                ws.update("A2", [["No qualifying parlay suggestions today — check back when more +EV props are available.", "", "", "", "", "", "", "", "", "", "", "", ""]])
+                self._format_tab_header(ws, "#5B2C8D", len(headers))
+                return {"status": "success", "tab": tab_name, "rows_written": 0}
+
+            today = datetime.now().strftime("%Y-%m-%d")
+            rows: List[List[Any]] = []
+
+            for i, s in enumerate(suggestions, 1):
+                leg_descs = s.get("leg_descriptions", [])
+                # Pad to 4 legs
+                legs_padded = (leg_descs + ["", "", "", ""])[:4]
+                combined_am = s.get("combined_odds_american", 0)
+                # Estimate fair combined odds from true_prob
+                true_p = float(s.get("combined_true_prob", 0.1))
+                if true_p > 0:
+                    fair_decimal = 1.0 / true_p
+                    fair_am = int((fair_decimal - 1) * 100) if fair_decimal >= 2 else int(-100 / (fair_decimal - 1))
+                else:
+                    fair_am = combined_am
+                ev_class = s.get("ev_class", "")
+                edge_pct = float(s.get("edge_pct", 0))
+                parlay_type = s.get("type", "CROSS")
+                notes = f"{s.get('leg_count', 2)}-leg {parlay_type}"
+
+                rows.append([
+                    i,
+                    parlay_type,
+                    legs_padded[0],
+                    legs_padded[1],
+                    legs_padded[2],
+                    legs_padded[3],
+                    _fmt_odds(combined_am),
+                    _fmt_odds(fair_am),
+                    round(edge_pct, 2),
+                    f"{round(true_p * 100, 1)}%",
+                    ev_class.replace("_", " ").title() if ev_class else "",
+                    round(s.get("composite_score", 0), 4),
+                    notes,
+                ])
+
+            written = self._batch_write(ws, headers, rows)
+
+            # ── Formatting ──
+            try:
+                self._format_tab_header(ws, "#5B2C8D", len(headers))  # purple
+                self._apply_ev_row_colors(sheet, ws, written, 10, len(headers))  # EV Class col K (index 10)
+                self._set_column_widths(sheet, ws, [45, 60, 220, 220, 220, 220, 85, 85, 60, 70, 90, 70, 130])
+            except Exception as fmt_err:
+                logger.debug(f"Parlays formatting skipped: {fmt_err}")
+
+            logger.info(f"Exported {written} parlay suggestions to '{tab_name}'")
+            return {"status": "success", "tab": tab_name, "rows_written": written}
+
+        except Exception as e:
+            logger.error(f"Parlays export failed: {e}")
             return {"error": str(e)}
 
     # ───────────────────────────────────────────────────────────────
@@ -1287,6 +1408,40 @@ class GoogleSheetsService:
                 # Column widths
                 self._set_column_widths(sheet, ws, [200, 350, 220, 100])
                 ws.freeze(rows=1)
+
+                # ── Navigation links — "Jump to Tab" section ──
+                # Append after the last content row with tab hyperlinks
+                try:
+                    all_ws = sheet.worksheets()
+                    tab_id_map = {w.title: w.id for w in all_ws}
+                    jump_header_row = len(rows) + 3  # leave a gap
+                    ws.update(f"A{jump_header_row}", [["🔗 Quick Navigation"]])
+                    ws.format(f"A{jump_header_row}", {
+                        "backgroundColor": self._hex_to_rgb("#3C4A6A"),
+                        "textFormat": {"bold": True, "foregroundColor": {"red": 1, "green": 1, "blue": 1}, "fontSize": 11},
+                    })
+                    nav_tabs = [
+                        ("🔥 Top 10 Plays", "Top 10 Plays"),
+                        ("🎰 Parlays", "Parlays"),
+                        ("📊 HighValueProps", "HighValueProps"),
+                        ("📋 Props", "Props"),
+                        ("🏀 NBA", "NBA"),
+                        ("🏈 NCAAB", "NCAAB"),
+                        ("📈 Summary", "Summary"),
+                        ("📝 BetSlip", "BetSlip"),
+                    ]
+                    nav_rows = []
+                    for label, tab_title in nav_tabs:
+                        # Find sheet by partial match
+                        gid = next((v for k, v in tab_id_map.items() if tab_title.lower() in k.lower()), None)
+                        if gid is not None:
+                            nav_rows.append([f'=HYPERLINK("#gid={gid}","{label}")'])
+                        else:
+                            nav_rows.append([label])
+                    ws.update(f"A{jump_header_row + 1}", nav_rows)
+                except Exception as nav_err:
+                    logger.debug(f"Legend navigation links skipped: {nav_err}")
+
             except Exception as fmt_err:
                 logger.debug(f"Legend formatting skipped: {fmt_err}")
 
@@ -1669,6 +1824,68 @@ class GoogleSheetsService:
                 ], written)
                 # Column widths: Date|Game|Player|Stat|Line|Side|Odds|Book|Edge%|Kelly$|EVClass|Placed?|BetID|Status|P/L|Notes
                 self._set_column_widths(sheet, ws, [80, 180, 160, 130, 55, 55, 60, 90, 60, 65, 90, 75, 120, 80, 65, 140])
+
+                # ── Data validation: checkboxes + dropdowns ──
+                ws_id = ws.id
+                dv_requests = []
+                if written > 0:
+                    data_range = {
+                        "sheetId": ws_id,
+                        "startRowIndex": 1,   # row 2 (0-indexed)
+                        "endRowIndex": written + 1,
+                    }
+                    # Col L (index 11): checkbox for ✓ Placed?
+                    dv_requests.append({
+                        "setDataValidation": {
+                            "range": {**data_range, "startColumnIndex": 11, "endColumnIndex": 12},
+                            "rule": {
+                                "condition": {"type": "BOOLEAN"},
+                                "showCustomUi": True,
+                                "strict": False,
+                            },
+                        }
+                    })
+                    # Col F (index 5): Side dropdown
+                    dv_requests.append({
+                        "setDataValidation": {
+                            "range": {**data_range, "startColumnIndex": 5, "endColumnIndex": 6},
+                            "rule": {
+                                "condition": {
+                                    "type": "ONE_OF_LIST",
+                                    "values": [
+                                        {"userEnteredValue": "OVER"},
+                                        {"userEnteredValue": "UNDER"},
+                                        {"userEnteredValue": "HOME"},
+                                        {"userEnteredValue": "AWAY"},
+                                    ],
+                                },
+                                "showCustomUi": True,
+                                "strict": False,
+                            },
+                        }
+                    })
+                    # Col N (index 13): Status dropdown
+                    dv_requests.append({
+                        "setDataValidation": {
+                            "range": {**data_range, "startColumnIndex": 13, "endColumnIndex": 14},
+                            "rule": {
+                                "condition": {
+                                    "type": "ONE_OF_LIST",
+                                    "values": [
+                                        {"userEnteredValue": "pending"},
+                                        {"userEnteredValue": "won"},
+                                        {"userEnteredValue": "lost"},
+                                        {"userEnteredValue": "push"},
+                                    ],
+                                },
+                                "showCustomUi": True,
+                                "strict": False,
+                            },
+                        }
+                    })
+                if dv_requests:
+                    sheet.batch_update({"requests": dv_requests})
+
             except Exception as fmt_err:
                 logger.debug(f"BetSlip formatting skipped: {fmt_err}")
 

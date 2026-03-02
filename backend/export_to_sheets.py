@@ -149,6 +149,19 @@ async def run_and_export(
         logger.warning("No data from any pipeline — nothing to export")
         return False
 
+    # Generate parlay suggestions from today's picks
+    parlay_suggestions: List[Dict[str, Any]] = []
+    try:
+        from app.services.parlay_engine import generate_suggestions as _gen_parlays
+        parlay_suggestions = _gen_parlays(
+            props=prop_data.get("best_props", []) if prop_data else [],
+            ncaab_analyses=ncaab_data.get("game_analyses", []) if ncaab_data else [],
+            nba_bets=nba_bets,
+        )
+        logger.info(f"Parlay engine: {len(parlay_suggestions)} suggestions generated")
+    except Exception as parlay_err:
+        logger.warning(f"Parlay engine failed (non-fatal): {parlay_err}")
+
     # Export
     results = sheets.export_daily_picks(
         spreadsheet_id=spreadsheet_id,
@@ -156,6 +169,7 @@ async def run_and_export(
         nba_predictions=nba_predictions if has_nba else None,
         nba_bets=nba_bets,
         prop_data=prop_data if has_props else None,
+        parlay_suggestions=parlay_suggestions,
     )
 
     # Report
