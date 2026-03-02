@@ -72,8 +72,13 @@ _PROP_TYPE_TO_STAT = {
     "player_points_rebounds": "pts+reb",
     "player_points_assists": "pts+ast",
     "player_rebounds_assists": "reb+ast",
-    "player_blocks_steals": "stl+blk",
+    "player_blocks_steals": "blocks+steals",
     "player_turnovers": "turnovers",
+    # Alternate line markets → same stat type as main line
+    "player_points_alternate": "points",
+    "player_rebounds_alternate": "rebounds",
+    "player_assists_alternate": "assists",
+    "player_threes_alternate": "threes",
 }
 
 
@@ -114,10 +119,10 @@ async def _get_live_props(sport: str) -> List[Dict]:
     #   - Cap at MAX_ENRICHED to avoid 200+ NBA.com calls
     MIN_DEVIG_EDGE = 0.01  # Very permissive — let model decide, not devig
     MAX_PER_STAT = (
-        20  # Max props per stat type (increased to capture long-odds edge)
+        30  # Max props per stat type (raised to support alternate lines)
     )
     MAX_ENRICHED = (
-        250  # Hard cap total (increased to allow up to 100 final best props)
+        400  # Hard cap total (raised to allow up to 150 final best props)
     )
 
     # Score and bucket by stat type
@@ -783,8 +788,8 @@ async def run_prop_analysis(sport: str = "nba") -> Dict[str, Any]:
     unique_teams = {p.get("team") for p in raw_props if p.get("team")}
     num_unique_teams = len(unique_teams) if unique_teams else 1
     
-    # Allow up to 100 total high-value props, distributed dynamically per team
-    limit_per_team = max(1, 100 // num_unique_teams)
+    # Allow up to 150 total high-value props, distributed dynamically per team
+    limit_per_team = max(1, 150 // num_unique_teams)
     
     import collections
     team_counts = collections.defaultdict(int)
@@ -796,7 +801,7 @@ async def run_prop_analysis(sport: str = "nba") -> Dict[str, Any]:
             dynamically_balanced_best.append(prop)
             team_counts[team] += 1
         
-        if len(dynamically_balanced_best) >= 100:
+        if len(dynamically_balanced_best) >= 150:
             break
 
     return {

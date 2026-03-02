@@ -19,9 +19,32 @@ PROP_TYPE_KEYS: Dict[str, str] = {
     "rebounds": "reb",
     "assists": "ast",
     "pts+reb+ast": "pra",
+    "pts+reb": "pr",
+    "pts+ast": "pa",
+    "reb+ast": "ra",
     "threes": "fg3m",
     "blocks": "blk",
     "steals": "stl",
+    "blocks+steals": "blk_stl",
+    "turnovers": "tov",
+    # Odds API market keys (alternate spellings)
+    "player_points": "pts",
+    "player_rebounds": "reb",
+    "player_assists": "ast",
+    "player_threes": "fg3m",
+    "player_blocks": "blk",
+    "player_steals": "stl",
+    "player_turnovers": "tov",
+    "player_points_rebounds_assists": "pra",
+    "player_points_rebounds": "pr",
+    "player_points_assists": "pa",
+    "player_rebounds_assists": "ra",
+    "player_blocks_steals": "blk_stl",
+    # Alternate line markets (same stats, just different line values)
+    "player_points_alternate": "pts",
+    "player_rebounds_alternate": "reb",
+    "player_assists_alternate": "ast",
+    "player_threes_alternate": "fg3m",
 }
 
 # ---------------------------------------------------------------------------
@@ -126,11 +149,27 @@ class EVCalculator:
             logger.warning("No game_logs found in research_data")
             return None
 
+        # Combo stat keys: sum multiple columns per game
+        COMBO_KEYS: Dict[str, List[str]] = {
+            "pra": ["pts", "reb", "ast"],
+            "pr":  ["pts", "reb"],
+            "pa":  ["pts", "ast"],
+            "ra":  ["reb", "ast"],
+            "blk_stl": ["blk", "stl"],
+        }
+
         values: List[float] = []
-        for game in game_logs:
-            val = game.get(stat_key)
-            if val is not None:
-                values.append(float(val))
+        if stat_key in COMBO_KEYS:
+            sub_keys = COMBO_KEYS[stat_key]
+            for game in game_logs:
+                parts = [game.get(k) for k in sub_keys]
+                if all(p is not None for p in parts):
+                    values.append(sum(float(p) for p in parts))
+        else:
+            for game in game_logs:
+                val = game.get(stat_key)
+                if val is not None:
+                    values.append(float(val))
 
         if not values:
             logger.warning(f"No values for stat key '{stat_key}' in game_logs")

@@ -807,22 +807,30 @@ class SportsAPIService:
     # Player Props — per-event odds endpoint
     # ──────────────────────────────────────────────────────────────
 
-    # Core 8 prop markets — singles + combos (good credit/value ratio)
+    # Core prop markets — main lines + alternate lines for all 4 primary stat types
+    # Alternate lines expose +150 to +500 odds edges that standard lines miss.
+    # Cost per event: 8 credits (4 main + 4 alt) vs 4 credits before.
     CORE_PROP_MARKETS: List[str] = [
         "player_points",
         "player_rebounds",
         "player_assists",
         "player_threes",
-        # Combinations removed per user request to focus on main stats + alternate lines
+        "player_points_alternate",
+        "player_rebounds_alternate",
+        "player_assists_alternate",
+        "player_threes_alternate",
     ]
 
-    # Extended markets (use when credit budget allows)
+    # Extended markets — included by default when credits allow (20k quota)
     EXTENDED_PROP_MARKETS: List[str] = [
         "player_blocks",
         "player_steals",
         "player_blocks_steals",
         "player_turnovers",
         "player_double_double",
+        "player_points_rebounds_assists",
+        "player_points_rebounds",
+        "player_points_assists",
     ]
 
     PROP_BOOKMAKERS: str = BOOKMAKER_FILTER  # Use combined sharp + retail books for wider odds ranges
@@ -951,7 +959,7 @@ class SportsAPIService:
             - devigged_under_prob: float
         """
         if markets is None:
-            markets = self.CORE_PROP_MARKETS
+            markets = self.CORE_PROP_MARKETS + self.EXTENDED_PROP_MARKETS
 
         cache_key = f"all_props_{sport}"
 
