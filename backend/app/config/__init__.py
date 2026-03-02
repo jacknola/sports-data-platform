@@ -102,8 +102,9 @@ class Settings(BaseSettings):
     # Odds fetches, CLV tracking, and bet records will reference this book.
     PRIMARY_BOOK: str = "fanduel"
 
-    # How often (in minutes) to auto-refresh odds from the primary book
-    ODDS_REFRESH_INTERVAL_MINUTES: int = 30
+    # How often (in minutes) to auto-refresh odds from the primary book.
+    # Matches the Celery beat schedule: crontab(minute=0, hour="*/4") = 240 min.
+    ODDS_REFRESH_INTERVAL_MINUTES: int = 240
 
     # Sharp Signals Data Quality
     SHARP_SIGNALS_MODE: str = "development"  # "production" or "development"

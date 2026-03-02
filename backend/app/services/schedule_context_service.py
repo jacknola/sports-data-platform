@@ -123,10 +123,11 @@ class ScheduleContextService:
                 return self._default_context(team_name)
 
             # Find the game
+            day_start = datetime.combine(game_date, datetime.min.time())
             game = db.execute(
                 select(Game).where(
-                    Game.game_date >= datetime(game_date.year, game_date.month, game_date.day),
-                    Game.game_date < datetime(game_date.year, game_date.month, game_date.day) + timedelta(days=1),
+                    Game.game_date >= day_start,
+                    Game.game_date < day_start + timedelta(days=1),
                     (Game.home_team == team_name) | (Game.away_team == team_name),
                 )
             ).scalars().first()

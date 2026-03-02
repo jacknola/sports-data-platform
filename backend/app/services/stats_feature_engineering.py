@@ -114,9 +114,8 @@ class StatsFeatureEngineer:
 
         Falls back to 1 if no schedule context is available.
         """
-        from datetime import date as _date
-        gd = game_date or _date.today()
-        ctx = self._schedule_ctx.get_context(team_name, gd, self.sport)
+        today = game_date or date.today()
+        ctx = self._schedule_ctx.get_context(team_name, today, self.sport)
         return ctx.get("rest_days") if ctx.get("rest_days") is not None else 1
 
     def _is_back_to_back(self, team_name: str, game_date: Optional[date] = None) -> bool:
@@ -125,9 +124,8 @@ class StatsFeatureEngineer:
 
         Falls back to False if no schedule context is available.
         """
-        from datetime import date as _date
-        gd = game_date or _date.today()
-        ctx = self._schedule_ctx.get_context(team_name, gd, self.sport)
+        today = game_date or date.today()
+        ctx = self._schedule_ctx.get_context(team_name, today, self.sport)
         return bool(ctx.get("is_back_to_back", False))
 
     def prepare_features(
