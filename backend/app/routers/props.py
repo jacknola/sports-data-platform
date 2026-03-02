@@ -697,6 +697,9 @@ def _build_prop_analysis(prop: Dict) -> Dict:
         "devigged_under_prob": prop.get("devigged_under_prob", 0.5),
         "is_injury_replacement": prop.get("is_injury_replacement", False),
         "replacement_note": prop.get("replacement_note", ""),
+        # FanDuel-specific odds (None if FD doesn't offer this line)
+        "fanduel_over_odds": prop.get("fanduel_over_odds"),
+        "fanduel_under_odds": prop.get("fanduel_under_odds"),
     }
 
 
@@ -755,6 +758,25 @@ async def run_prop_analysis(sport: str = "nba") -> Dict[str, Any]:
             return bayesian_edge >= 0.01
         return bayesian_edge >= 0.015
 
+    # ── Alt-line best-value tagging ──
+    # For each (player, stat_type, best_side) group, tag the entry with
+    # the highest bayesian_edge as best_alt_line=True so the sheet can
+    # surface "Ryan Rollins 0.5 3PM OVER +120 ✓" over the -200 standard line.
+    import collections as _col
+    _line_groups: dict = _col.defaultdict(list)
+    for p in analyzed:
+        grp_key = (p.get("player_name", ""), p.get("stat_type", ""), p.get("best_side", "over"))
+        _line_groups[grp_key].append(p)
+
+    for grp_key, grp_props in _line_groups.items():
+        if len(grp_props) > 1:
+            grp_props.sort(key=lambda x: x.get("bayesian_edge", 0), reverse=True)
+            best_edge = grp_props[0].get("bayesian_edge", 0)
+            for gp in grp_props:
+                gp["best_alt_line"] = (gp.get("bayesian_edge", 0) == best_edge)
+        else:
+            grp_props[0]["best_alt_line"] = True  # only one line, it's the best
+
     best = [p for p in analyzed if _is_positive(p)]
 
     # ── Diversity guarantee: ensure at least 1 pick per stat type ──
@@ -784,23 +806,20 @@ async def run_prop_analysis(sport: str = "nba") -> Dict[str, Any]:
     )
 
     # ── Dynamic Limits ──
-    # Calculate the number of unique teams playing on the slate
     unique_teams = {p.get("team") for p in raw_props if p.get("team")}
     num_unique_teams = len(unique_teams) if unique_teams else 1
-    
-    # Allow up to 150 total high-value props, distributed dynamically per team
     limit_per_team = max(1, 150 // num_unique_teams)
-    
+
     import collections
     team_counts = collections.defaultdict(int)
     dynamically_balanced_best = []
-    
+
     for prop in best:
         team = prop.get("team")
         if team_counts[team] < limit_per_team:
             dynamically_balanced_best.append(prop)
             team_counts[team] += 1
-        
+
         if len(dynamically_balanced_best) >= 150:
             break
 

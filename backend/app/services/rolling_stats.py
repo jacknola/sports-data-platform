@@ -120,6 +120,45 @@ class RollingStatsCalculator:
             logger.error(f"Error fetching game logs for team {team_id}: {e}")
             raise
 
+    def apply_kalman_filter(
+        self,
+        series: pd.Series,
+        process_variance: float = 1e-4,
+        measurement_variance: float = 1e-2,
+    ) -> pd.Series:
+        """Apply a simple 1D Kalman filter to smooth noisy series."""
+        if series.empty:
+            return series
+
+        values = self._prepare_series_for_kalman(series)
+        estimates = []
+
+        # Initial guesses
+        x_hat = values.iloc[0]
+        # Initial covariance scales with observed variance (floor at 1.0) so the
+        # filter adapts quickly on high-variance metrics while avoiding instability
+        # on low-range percentages.
+        p = max(float(values.var(ddof=0)), 1.0)
+
+        for z in values:
+            # Predict
+            x_hat_minus = x_hat
+            p_minus = p + process_variance
+
+            # Update
+            k = p_minus / (p_minus + measurement_variance)
+            x_hat = x_hat_minus + k * (z - x_hat_minus)
+            p = (1 - k) * p_minus
+            estimates.append(x_hat)
+
+        smoothed = pd.Series(estimates, index=series.index)
+        target_mean = values.mean()
+        if not np.isnan(target_mean) and not np.isnan(smoothed.mean()):
+            mean_correction = target_mean - smoothed.mean()
+            smoothed += mean_correction * 0.3
+
+        return smoothed
+
     def calculate_four_factors(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate Four Factors metrics from game log data."""
         if df.empty:
@@ -196,8 +235,19 @@ class RollingStatsCalculator:
         team_id: int,
         season: str = "2024-25",
         window: int = 10,
+        use_kalman_filter: bool = False,
     ) -> pd.DataFrame:
-        """Calculate rolling advanced stats for a team."""
+        """Calculate rolling advanced stats for a team.
+
+        When enabled, the Kalman filter post-processes the rolling averages
+        to reduce noise while keeping the window-based context.
+
+        Args:
+            team_id: NBA team id.
+            season: Season string (e.g., "2024-25").
+            window: Rolling window size for averages.
+            use_kalman_filter: Apply a Kalman smoother to the rolling averages.
+        """
         # Fetch game logs
         df = self.fetch_team_game_logs(team_id, season)
 
@@ -231,9 +281,26 @@ class RollingStatsCalculator:
 
         for col in rolling_cols:
             rolling_mean = df[col].rolling(window=window, min_periods=1).mean()
+            if use_kalman_filter:
+                rolling_mean = self.apply_kalman_filter(rolling_mean)
             df[f"{col}_rolling_{window}"] = rolling_mean
 
         return df
+
+    def _prepare_series_for_kalman(self, series: pd.Series) -> pd.Series:
+        """Sanitize input series before Kalman smoothing."""
+        # Upstream stat feeds occasionally arrive as object dtype from JSON parsing;
+        # coerce to float so the filter can operate deterministically.
+        float_values = series.astype(float)
+        # Preserve temporal continuity: forward fill recent observations, backfill early gaps,
+        # then fall back to the mean to avoid injecting zeros into percentage metrics.
+        filled_values = float_values.ffill().bfill()
+        if filled_values.isna().any():
+            mean_value = filled_values.mean()
+            if np.isnan(mean_value):
+                mean_value = 0.0
+            filled_values = filled_values.fillna(mean_value)
+        return filled_values.fillna(0.0)
 
     def get_team_season_stats(
         self, team_id: int, season: str = "2024-25"
@@ -267,7 +334,11 @@ class RollingStatsCalculator:
         return stats
 
     def get_team_rolling_stats_by_name(
-        self, team_name: str, season: str = "2024-25", window: int = 10
+        self,
+        team_name: str,
+        season: str = "2024-25",
+        window: int = 10,
+        use_kalman_filter: bool = False,
     ) -> Dict[str, float]:
         """Get rolling stats for a team by name.
 
@@ -299,7 +370,7 @@ class RollingStatsCalculator:
             logger.error(f"Error finding team {team_name}: {e}")
             return self._league_averages.copy()
 
-        df = self.calculate_rolling_stats(team_id, season, window)
+        df = self.calculate_rolling_stats(team_id, season, window, use_kalman_filter)
 
         if df.empty:
             return self._league_averages.copy()

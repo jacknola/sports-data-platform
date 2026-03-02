@@ -154,16 +154,16 @@ class StatsFeatureEngineer:
 
         # Get rolling stats (5-game and 10-game windows)
         home_stats_5g = self.rolling_calc.get_team_rolling_stats_by_name(
-            home_team, window=5, season=self.season
+            home_team, window=5, season=self.season, use_kalman_filter=True
         )
         home_stats_10g = self.rolling_calc.get_team_rolling_stats_by_name(
-            home_team, window=10, season=self.season
+            home_team, window=10, season=self.season, use_kalman_filter=True
         )
         away_stats_5g = self.rolling_calc.get_team_rolling_stats_by_name(
-            away_team, window=5, season=self.season
+            away_team, window=5, season=self.season, use_kalman_filter=True
         )
         away_stats_10g = self.rolling_calc.get_team_rolling_stats_by_name(
-            away_team, window=10, season=self.season
+            away_team, window=10, season=self.season, use_kalman_filter=True
         )
 
         # Calculate win percentages

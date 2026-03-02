@@ -150,6 +150,184 @@ class GoogleSheetsService:
         return len(rows)
 
     # ───────────────────────────────────────────────────────────────
+    # Shared formatting helpers
+    # ───────────────────────────────────────────────────────────────
+
+    def _hex_to_rgb(self, hex_color: str) -> Dict:
+        """Convert '#RRGGBB' to Sheets-compatible RGB dict (0–1 scale)."""
+        h = hex_color.lstrip("#")
+        return {
+            "red": int(h[0:2], 16) / 255,
+            "green": int(h[2:4], 16) / 255,
+            "blue": int(h[4:6], 16) / 255,
+        }
+
+    def _col_letter(self, n: int) -> str:
+        """Convert 1-based column number to A1 letter (e.g. 27 → AA)."""
+        name = ""
+        while n > 0:
+            n, r = divmod(n - 1, 26)
+            name = chr(65 + r) + name
+        return name
+
+    def _format_tab_header(
+        self,
+        ws: gspread.Worksheet,
+        hex_color: str,
+        col_count: int,
+    ) -> None:
+        """Apply bold white header with custom background color."""
+        try:
+            col_letter = self._col_letter(col_count)
+            rgb = self._hex_to_rgb(hex_color)
+            ws.format(
+                f"A1:{col_letter}1",
+                {
+                    "backgroundColor": rgb,
+                    "textFormat": {
+                        "foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0},
+                        "bold": True,
+                        "fontSize": 11,
+                    },
+                    "horizontalAlignment": "CENTER",
+                },
+            )
+        except Exception as e:
+            logger.debug(f"Header format skipped: {e}")
+
+    def _apply_ev_row_colors(
+        self,
+        spreadsheet: gspread.Spreadsheet,
+        ws: gspread.Worksheet,
+        data_row_count: int,
+        ev_col_idx: int,  # 0-based column index of EV Class column
+        col_count: int,
+    ) -> None:
+        """Apply row-level colors based on EV Class via conditional format rules."""
+        # (ev_class_text, bg_hex, fg_hex)
+        ev_colors = [
+            ("Strong Play", "#C6EFCE", "#276221"),
+            ("Good Play",   "#E2EFDA", "#375623"),
+            ("Lean",        "#FFEB9C", "#9C6500"),
+            ("Pass",        "#FFC7CE", "#9C0006"),
+        ]
+        col_letter = self._col_letter(ev_col_idx + 1)  # 1-based for formula
+        requests = []
+        for i, (ev_class, bg_hex, fg_hex) in enumerate(ev_colors):
+            bg = self._hex_to_rgb(bg_hex)
+            fg = self._hex_to_rgb(fg_hex)
+            requests.append({
+                "addConditionalFormatRule": {
+                    "rule": {
+                        "ranges": [{
+                            "sheetId": ws.id,
+                            "startRowIndex": 1,
+                            "endRowIndex": data_row_count + 2,
+                            "startColumnIndex": 0,
+                            "endColumnIndex": col_count,
+                        }],
+                        "booleanRule": {
+                            "condition": {
+                                "type": "CUSTOM_FORMULA",
+                                "values": [{"userEnteredValue": f'=${col_letter}2="{ev_class}"'}],
+                            },
+                            "format": {
+                                "backgroundColor": bg,
+                                "textFormat": {"foregroundColor": fg},
+                            },
+                        },
+                    },
+                    "index": i,
+                }
+            })
+        if requests:
+            try:
+                spreadsheet.batch_update({"requests": requests})
+            except Exception as e:
+                logger.debug(f"EV row colors skipped: {e}")
+
+    def _apply_column_conditional(
+        self,
+        spreadsheet: gspread.Spreadsheet,
+        ws: gspread.Worksheet,
+        col_idx: int,  # 0-based
+        rules: List[Dict],  # [{"type": "NUMBER_GREATER_THAN_EQ"|"TEXT_EQ", "value": ..., "bg": "#hex", "fg": "#hex", "bold": bool}]
+        data_row_count: int,
+        index_offset: int = 0,
+    ) -> None:
+        """Apply conditional formatting to a single column."""
+        requests = []
+        for i, rule in enumerate(rules):
+            bg = self._hex_to_rgb(rule["bg"])
+            fg = self._hex_to_rgb(rule.get("fg", "#000000"))
+            cond_type = rule["type"]
+            val = rule["value"]
+            condition: Dict = {"type": cond_type}
+            if cond_type == "NUMBER_BETWEEN":
+                condition["values"] = [
+                    {"userEnteredValue": str(val[0])},
+                    {"userEnteredValue": str(val[1])},
+                ]
+            else:
+                condition["values"] = [{"userEnteredValue": str(val)}]
+            requests.append({
+                "addConditionalFormatRule": {
+                    "rule": {
+                        "ranges": [{
+                            "sheetId": ws.id,
+                            "startRowIndex": 1,
+                            "endRowIndex": data_row_count + 2,
+                            "startColumnIndex": col_idx,
+                            "endColumnIndex": col_idx + 1,
+                        }],
+                        "booleanRule": {
+                            "condition": condition,
+                            "format": {
+                                "backgroundColor": bg,
+                                "textFormat": {
+                                    "foregroundColor": fg,
+                                    "bold": rule.get("bold", False),
+                                },
+                            },
+                        },
+                    },
+                    "index": index_offset + i,
+                }
+            })
+        if requests:
+            try:
+                spreadsheet.batch_update({"requests": requests})
+            except Exception as e:
+                logger.debug(f"Column conditional skipped: {e}")
+
+    def _set_column_widths(
+        self,
+        spreadsheet: gspread.Spreadsheet,
+        ws: gspread.Worksheet,
+        widths: List[int],
+    ) -> None:
+        """Set column pixel widths via Sheets API batch update."""
+        requests = []
+        for idx, width in enumerate(widths):
+            requests.append({
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": ws.id,
+                        "dimension": "COLUMNS",
+                        "startIndex": idx,
+                        "endIndex": idx + 1,
+                    },
+                    "properties": {"pixelSize": width},
+                    "fields": "pixelSize",
+                }
+            })
+        if requests:
+            try:
+                spreadsheet.batch_update({"requests": requests})
+            except Exception as e:
+                logger.debug(f"Column widths skipped: {e}")
+
+    # ───────────────────────────────────────────────────────────────
     # Props export
     # ───────────────────────────────────────────────────────────────
 
@@ -260,6 +438,18 @@ class GoogleSheetsService:
                 )
 
             written = self._batch_write(ws, headers, rows)
+
+            # ── Formatting ──
+            try:
+                # Slate header
+                self._format_tab_header(ws, "#3C4A6A", len(headers))
+                # EV class row colors (col 12 = M, 0-based index 12)
+                self._apply_ev_row_colors(sheet, ws, written, 12, len(headers))
+                # Column widths: Date|Player|Team|Opp|Game|Stat|Line|Side|Odds|Proj|Edge%|BayesP|EVClass|Conf|Kelly%|Signals|Context|Book|Books#|OvOdds|UnOdds
+                self._set_column_widths(sheet, ws, [80, 160, 70, 100, 180, 50, 50, 55, 60, 60, 60, 70, 90, 75, 60, 160, 200, 90, 55, 60, 60])
+            except Exception as fmt_err:
+                logger.debug(f"Props formatting skipped: {fmt_err}")
+
             logger.info(f"Exported {written} props to Google Sheets tab '{tab_name}'")
             return {"status": "success", "tab": tab_name, "rows_written": written}
 
@@ -388,6 +578,44 @@ class GoogleSheetsService:
                 )
 
             written = self._batch_write(ws, headers, rows)
+
+            # ── Formatting ──
+            try:
+                # Navy header
+                self._format_tab_header(ws, "#1A3A6B", len(headers))
+                # Highlight rows where Best Bet (col Q = index 16) is not empty
+                if written:
+                    spreadsheet_obj = self.client.open_by_key(spreadsheet_id)
+                    spreadsheet_obj.batch_update({"requests": [{
+                        "addConditionalFormatRule": {
+                            "rule": {
+                                "ranges": [{
+                                    "sheetId": ws.id,
+                                    "startRowIndex": 1,
+                                    "endRowIndex": written + 1,
+                                    "startColumnIndex": 0,
+                                    "endColumnIndex": len(headers),
+                                }],
+                                "booleanRule": {
+                                    "condition": {
+                                        "type": "CUSTOM_FORMULA",
+                                        "values": [{"userEnteredValue": '=$Q2<>""'}],
+                                    },
+                                    "format": {
+                                        "backgroundColor": self._hex_to_rgb("#C6EFCE"),
+                                        "textFormat": {"foregroundColor": self._hex_to_rgb("#276221")},
+                                    },
+                                },
+                            },
+                            "index": 0,
+                        }
+                    }]})
+                # Column widths: Date|Home|Away|Book|HomML|AwML|Spread|SpOdds|Total|OvOdds|UnOdds|H%|A%|ProjSprd|ProjTot|O/U|BestBet|Edge%|Kelly%|BetSize
+                self._set_column_widths(self.client.open_by_key(spreadsheet_id), ws,
+                    [80, 140, 140, 90, 65, 65, 65, 75, 65, 65, 65, 65, 65, 75, 75, 65, 160, 65, 65, 75])
+            except Exception as fmt_err:
+                logger.debug(f"NBA formatting skipped: {fmt_err}")
+
             logger.info(f"Exported {written} NBA games to tab '{tab_name}'")
             return {"status": "success", "tab": tab_name, "rows_written": written}
 
@@ -513,6 +741,51 @@ class GoogleSheetsService:
                 )
 
             written = self._batch_write(ws, headers, rows)
+
+            # ── Formatting ──
+            try:
+                sheet = self.client.open_by_key(spreadsheet_id)
+                # Maroon header
+                self._format_tab_header(ws, "#6B1A1A", len(headers))
+                # Highlight rows where Pick (col Z = index 25) is not empty
+                if written:
+                    sheet.batch_update({"requests": [{
+                        "addConditionalFormatRule": {
+                            "rule": {
+                                "ranges": [{
+                                    "sheetId": ws.id,
+                                    "startRowIndex": 1,
+                                    "endRowIndex": written + 1,
+                                    "startColumnIndex": 0,
+                                    "endColumnIndex": len(headers),
+                                }],
+                                "booleanRule": {
+                                    "condition": {
+                                        "type": "CUSTOM_FORMULA",
+                                        "values": [{"userEnteredValue": '=$Z2<>""'}],
+                                    },
+                                    "format": {
+                                        "backgroundColor": self._hex_to_rgb("#C6EFCE"),
+                                        "textFormat": {"foregroundColor": self._hex_to_rgb("#276221")},
+                                    },
+                                },
+                            },
+                            "index": 0,
+                        }
+                    }]})
+                # Confidence column color (col 27 = AB, 0-based 27)
+                self._apply_column_conditional(sheet, ws, 27, [
+                    {"type": "TEXT_EQ", "value": "HIGH",        "bg": "#C6EFCE", "fg": "#276221", "bold": True},
+                    {"type": "TEXT_EQ", "value": "MEDIUM",      "bg": "#FFEB9C", "fg": "#9C6500", "bold": True},
+                    {"type": "TEXT_EQ", "value": "LOW",         "bg": "#FFC7CE", "fg": "#9C0006", "bold": False},
+                    {"type": "TEXT_EQ", "value": "SPECULATIVE", "bg": "#EEEEEE", "fg": "#555555", "bold": False},
+                ], written, index_offset=1)
+                # Column widths
+                self._set_column_widths(sheet, ws,
+                    [80, 130, 130, 90, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 100, 180, 70, 60, 60, 60, 60, 60, 60, 90, 65, 75, 75, 220])
+            except Exception as fmt_err:
+                logger.debug(f"NCAAB formatting skipped: {fmt_err}")
+
             logger.info(f"Exported {written} NCAAB games to tab '{tab_name}'")
             return {"status": "success", "tab": tab_name, "rows_written": written}
 
@@ -539,7 +812,7 @@ class GoogleSheetsService:
 
         try:
             sheet = self.client.open_by_key(spreadsheet_id)
-            ws = self._get_or_create_worksheet(sheet, tab_name, rows=30, cols=5)
+            ws = self._get_or_create_worksheet(sheet, tab_name, rows=40, cols=5)
 
             now = datetime.now().strftime("%Y-%m-%d %I:%M %p ET")
             ncaab_games = len((ncaab_data or {}).get("game_analyses", []))
@@ -548,30 +821,68 @@ class GoogleSheetsService:
             nba_bet_count = len(nba_bets or [])
             prop_total = (prop_data or {}).get("total_props", 0)
             prop_ev = (prop_data or {}).get("positive_ev_count", 0)
+            strong_plays = len([p for p in (prop_data or {}).get("props", []) if p.get("ev_classification") == "strong_play"])
+            high_value_props = len((prop_data or {}).get("best_props", []))
 
             total_exposure = sum(
                 b.get("bet_size_$", 0) for b in (ncaab_data or {}).get("bets", [])
             ) + sum(b.get("bet_size", 0) for b in (nba_bets or []))
 
+            # CLV avg from bet_tracker if available
+            avg_clv = ""
+            try:
+                from app.services.bet_tracker import BetTracker
+                metrics = BetTracker().get_performance_metrics()
+                avg_clv_val = metrics.get("avg_clv")
+                if avg_clv_val is not None:
+                    avg_clv = f"{avg_clv_val:+.2f}%"
+            except Exception:
+                pass
+
             summary_data = [
-                ["Daily Picks Summary", now],
-                ["", ""],
-                ["Metric", "Value"],
-                ["NCAAB Games", ncaab_games],
-                ["NCAAB Bets", ncaab_bets],
-                ["NBA Games", nba_games],
-                ["NBA Bets", nba_bet_count],
-                ["Props Scanned", prop_total],
-                ["Props +EV", prop_ev],
-                ["Total Exposure", f"${total_exposure:.0f}"],
-                ["", ""],
-                ["Generated by", "sports-data-platform"],
+                ["🏀 Daily Picks Summary", now, "", "", ""],
+                ["", "", "", "", ""],
+                ["📊 GAMES ANALYZED", "", "", "", ""],
+                ["  NCAAB Games Analyzed",  ncaab_games, "", "", ""],
+                ["  NCAAB Qualifying Bets", ncaab_bets,  "", "", ""],
+                ["  NBA Games Analyzed",    nba_games,   "", "", ""],
+                ["  NBA Qualifying Bets",   nba_bet_count, "", "", ""],
+                ["", "", "", "", ""],
+                ["🎯 PROPS", "", "", "", ""],
+                ["  Props Scanned",         prop_total,      "", "", ""],
+                ["  Props +EV",             prop_ev,         "", "", ""],
+                ["  Strong Plays",          strong_plays,    "", "", ""],
+                ["  High Value Props",      high_value_props,"", "", ""],
+                ["", "", "", "", ""],
+                ["💰 EXPOSURE & PERFORMANCE", "", "", "", ""],
+                ["  Total Exposure",        f"${total_exposure:.0f}", "", "", ""],
+                ["  Avg CLV (settled)",     avg_clv or "N/A", "", "", ""],
+                ["", "", "", "", ""],
+                ["⚙️ Meta", "", "", "", ""],
+                ["  Generated by", "sports-data-platform", "", "", ""],
+                ["  Generated at", now, "", "", ""],
             ]
 
-            ws.update(range_name=f"A1:B{len(summary_data)}", values=summary_data)
-            ws.format("1:1", {"textFormat": {"bold": True, "fontSize": 14}})
-            ws.format("3:3", {"textFormat": {"bold": True}})
-            ws.freeze(rows=0)
+            ws.update(range_name=f"A1:E{len(summary_data)}", values=summary_data)
+
+            # Title row
+            ws.format("A1:E1", {
+                "backgroundColor": self._hex_to_rgb("#333333"),
+                "textFormat": {
+                    "foregroundColor": {"red": 1, "green": 1, "blue": 1},
+                    "bold": True,
+                    "fontSize": 13,
+                },
+            })
+            # Section header rows (row 3, 9, 15, 19)
+            for row_num in [3, 9, 15, 19]:
+                ws.format(f"A{row_num}:E{row_num}", {
+                    "backgroundColor": self._hex_to_rgb("#E8E8E8"),
+                    "textFormat": {"bold": True, "fontSize": 11},
+                })
+            ws.freeze(rows=1)
+            # Column widths
+            self._set_column_widths(sheet, ws, [220, 120, 80, 80, 80])
 
             logger.info("Exported summary to Google Sheets")
             return {"status": "success", "tab": tab_name}
@@ -591,6 +902,7 @@ class GoogleSheetsService:
         nba_predictions: Optional[List[Dict[str, Any]]] = None,
         nba_bets: Optional[List[Dict[str, Any]]] = None,
         prop_data: Optional[Dict[str, Any]] = None,
+        parlay_suggestions: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Export all daily picks to Google Sheets (Props + NBA + NCAAB + Summary).
 
@@ -608,6 +920,24 @@ class GoogleSheetsService:
             return {"error": "Google Sheets not configured"}
 
         results: Dict[str, Any] = {}
+
+        # 1. Legend — always first
+        results["legend"] = self.export_legend(spreadsheet_id)
+
+        # 2. Top 10 Plays — always second
+        results["top10"] = self.export_top10_plays(
+            spreadsheet_id,
+            prop_data=prop_data,
+            ncaab_data=ncaab_data,
+            nba_predictions=nba_predictions,
+            nba_bets=nba_bets,
+        )
+
+        # 3. Parlays — generated suggestions (or empty-state message if none)
+        results["parlays"] = self.export_parlays(
+            spreadsheet_id,
+            parlay_suggestions=parlay_suggestions,
+        )
 
         if prop_data and prop_data.get("props"):
             results["props"] = self.export_props(spreadsheet_id, prop_data)
@@ -707,16 +1037,18 @@ class GoogleSheetsService:
                 "Stat",
                 "Line",
                 "Side",
-                "Odds",
+                "Best Odds",      # best across all books
+                "FD Odds",        # FanDuel-specific (— if not offered)
+                "Best Book",
                 "Projected",
                 "Edge %",
                 "Bayesian P",
                 "EV Class",
                 "Confidence",
                 "Kelly %",
+                "Best Line?",     # ✓ = highest-edge line for player+stat
                 "Sharp Signals",
                 "Situational Context",
-                "Best Book",
                 "Books #",
                 "Over Odds",
                 "Under Odds",
@@ -777,6 +1109,14 @@ class GoogleSheetsService:
                     if best_side == "OVER"
                     else p.get("under_odds", -110)
                 )
+                # FanDuel-specific odds — show "—" when FD doesn't offer this line
+                fd_raw = (
+                    p.get("fanduel_over_odds")
+                    if best_side == "OVER"
+                    else p.get("fanduel_under_odds")
+                )
+                fd_odds_str = _fmt_odds(int(fd_raw)) if fd_raw is not None else "—"
+
                 edge = p.get("bayesian_edge", 0)
                 ev_class = p.get("ev_classification", "")
                 best_book = (
@@ -788,6 +1128,7 @@ class GoogleSheetsService:
                 away = p.get("away_team", "")
                 game = f"{away} @ {home}" if home and away else ""
                 signals = ", ".join(p.get("sharp_signals", []))
+                best_line_mark = "✓" if p.get("best_alt_line") else ""
 
                 situational_context = p.get(
                     "situational_context", "No historical analogs found."
@@ -803,16 +1144,18 @@ class GoogleSheetsService:
                         stat_label,
                         p.get("line", 0),
                         best_side,
-                        _fmt_odds(odds),
+                        _fmt_odds(odds),          # Best Odds (col I)
+                        fd_odds_str,               # FD Odds (col J)
+                        best_book,                 # Best Book (col K)
                         round(p.get("projected_mean", 0), 1),
                         round(edge * 100, 2),
                         round(p.get("posterior_p", 0), 4),
                         ev_class.replace("_", " ").title() if ev_class else "",
                         _confidence_label(edge, ev_class),
                         round(p.get("kelly_fraction", 0) * 100, 2),
+                        best_line_mark,            # Best Line? (col R)
                         signals,
                         situational_context,
-                        best_book,
                         p.get("books_offering", 0),
                         _fmt_odds(p.get("over_odds", -110)),
                         _fmt_odds(p.get("under_odds", -110)),
@@ -823,130 +1166,18 @@ class GoogleSheetsService:
 
             # --- Advanced Formatting ---
             try:
-                # Format headers
-                ws.format(
-                    "A1:U1",
-                    {
-                        "backgroundColor": {"red": 0.2, "green": 0.2, "blue": 0.2},
-                        "textFormat": {
-                            "foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0},
-                            "bold": True,
-                            "fontSize": 11,
-                        },
-                    },
-                )
-
-                # Conditional formatting rules using raw API via batch_update
-                rule_edge_high = {
-                    "addConditionalFormatRule": {
-                        "rule": {
-                            "ranges": [
-                                {
-                                    "sheetId": ws.id,
-                                    "startRowIndex": 1,
-                                    "startColumnIndex": 10,
-                                    "endColumnIndex": 11,
-                                }
-                            ],
-                            "booleanRule": {
-                                "condition": {
-                                    "type": "NUMBER_GREATER_THAN_EQ",
-                                    "values": [{"userEnteredValue": "5"}],
-                                },
-                                "format": {
-                                    "backgroundColor": {
-                                        "red": 0.85,
-                                        "green": 0.93,
-                                        "blue": 0.83,
-                                    },
-                                    "textFormat": {
-                                        "bold": True,
-                                        "foregroundColor": {
-                                            "red": 0.1,
-                                            "green": 0.4,
-                                            "blue": 0.1,
-                                        },
-                                    },
-                                },
-                            },
-                        },
-                        "index": 0,
-                    }
-                }
-
-                rule_edge_med = {
-                    "addConditionalFormatRule": {
-                        "rule": {
-                            "ranges": [
-                                {
-                                    "sheetId": ws.id,
-                                    "startRowIndex": 1,
-                                    "startColumnIndex": 10,
-                                    "endColumnIndex": 11,
-                                }
-                            ],
-                            "booleanRule": {
-                                "condition": {
-                                    "type": "NUMBER_BETWEEN",
-                                    "values": [
-                                        {"userEnteredValue": "3"},
-                                        {"userEnteredValue": "4.99"},
-                                    ],
-                                },
-                                "format": {
-                                    "backgroundColor": {
-                                        "red": 1.0,
-                                        "green": 0.95,
-                                        "blue": 0.8,
-                                    },
-                                    "textFormat": {
-                                        "bold": True,
-                                        "foregroundColor": {
-                                            "red": 0.5,
-                                            "green": 0.4,
-                                            "blue": 0.0,
-                                        },
-                                    },
-                                },
-                            },
-                        },
-                        "index": 1,
-                    }
-                }
-
-                rule_conf_high = {
-                    "addConditionalFormatRule": {
-                        "rule": {
-                            "ranges": [
-                                {
-                                    "sheetId": ws.id,
-                                    "startRowIndex": 1,
-                                    "startColumnIndex": 13,
-                                    "endColumnIndex": 14,
-                                }
-                            ],
-                            "booleanRule": {
-                                "condition": {
-                                    "type": "TEXT_EQ",
-                                    "values": [{"userEnteredValue": "HIGH"}],
-                                },
-                                "format": {
-                                    "backgroundColor": {
-                                        "red": 0.85,
-                                        "green": 0.93,
-                                        "blue": 0.83,
-                                    },
-                                    "textFormat": {"bold": True},
-                                },
-                            },
-                        },
-                        "index": 2,
-                    }
-                }
-
-                sheet.batch_update(
-                    {"requests": [rule_edge_high, rule_edge_med, rule_conf_high]}
-                )
+                # Dark green header
+                self._format_tab_header(ws, "#0D3B1F", len(headers))
+                # EV class row colors — EV Class is now col O (index 14)
+                self._apply_ev_row_colors(sheet, ws, written, 14, len(headers))
+                # Confidence column (P = index 15) color
+                self._apply_column_conditional(sheet, ws, 15, [
+                    {"type": "TEXT_EQ", "value": "HIGH",   "bg": "#C6EFCE", "fg": "#276221", "bold": True},
+                    {"type": "TEXT_EQ", "value": "MEDIUM", "bg": "#FFEB9C", "fg": "#9C6500", "bold": True},
+                    {"type": "TEXT_EQ", "value": "LOW",    "bg": "#FFC7CE", "fg": "#9C0006", "bold": False},
+                ], written, index_offset=4)
+                # Column widths: Date|Player|Team|Opp|Game|Stat|Line|Side|BestOdds|FDOdds|BestBook|Proj|Edge%|BayesP|EVClass|Conf|Kelly%|BestLine?|Signals|Context|Books#|OvOdds|UnOdds
+                self._set_column_widths(sheet, ws, [80, 160, 70, 100, 180, 50, 50, 55, 65, 65, 90, 60, 60, 70, 90, 75, 60, 70, 160, 200, 55, 60, 60])
                 logger.info("Applied conditional formatting to HighValueProps")
 
             except Exception as fmt_err:
@@ -959,6 +1190,462 @@ class GoogleSheetsService:
 
         except Exception as e:
             logger.error(f"High-value props export failed: {e}")
+            return {"error": str(e)}
+
+    # ───────────────────────────────────────────────────────────────
+    # Parlays tab — generated parlay suggestions
+    # ───────────────────────────────────────────────────────────────
+
+    def export_parlays(
+        self,
+        spreadsheet_id: str,
+        parlay_suggestions: Optional[List[Dict[str, Any]]] = None,
+        tab_name: str = "🎰 Parlays",
+    ) -> Dict[str, Any]:
+        """Export generated parlay suggestions to a Parlays tab.
+
+        Args:
+            spreadsheet_id: Target Google Sheets ID
+            parlay_suggestions: List from parlay_engine.generate_suggestions()
+        """
+        if not self.client:
+            return {"error": "Google Sheets not configured"}
+
+        try:
+            sheet = self.client.open_by_key(spreadsheet_id)
+            ws = self._get_or_create_worksheet(sheet, tab_name, rows=200, cols=14)
+
+            headers = [
+                "Rank",
+                "Type",         # SGP or CROSS
+                "Leg 1",
+                "Leg 2",
+                "Leg 3",
+                "Leg 4",
+                "Combined Odds",
+                "Fair Odds",
+                "Edge %",
+                "True Prob",
+                "EV Class",
+                "Score",
+                "Notes",
+            ]
+
+            suggestions = parlay_suggestions or []
+            if not suggestions:
+                # Write header + empty state message
+                ws.clear()
+                ws.update("A1", [headers])
+                ws.update("A2", [["No qualifying parlay suggestions today — check back when more +EV props are available.", "", "", "", "", "", "", "", "", "", "", "", ""]])
+                self._format_tab_header(ws, "#5B2C8D", len(headers))
+                return {"status": "success", "tab": tab_name, "rows_written": 0}
+
+            today = datetime.now().strftime("%Y-%m-%d")
+            rows: List[List[Any]] = []
+
+            for i, s in enumerate(suggestions, 1):
+                leg_descs = s.get("leg_descriptions", [])
+                # Pad to 4 legs
+                legs_padded = (leg_descs + ["", "", "", ""])[:4]
+                combined_am = s.get("combined_odds_american", 0)
+                # Estimate fair combined odds from true_prob
+                true_p = float(s.get("combined_true_prob", 0.1))
+                if true_p > 0:
+                    fair_decimal = 1.0 / true_p
+                    fair_am = int((fair_decimal - 1) * 100) if fair_decimal >= 2 else int(-100 / (fair_decimal - 1))
+                else:
+                    fair_am = combined_am
+                ev_class = s.get("ev_class", "")
+                edge_pct = float(s.get("edge_pct", 0))
+                parlay_type = s.get("type", "CROSS")
+                notes = f"{s.get('leg_count', 2)}-leg {parlay_type}"
+
+                rows.append([
+                    i,
+                    parlay_type,
+                    legs_padded[0],
+                    legs_padded[1],
+                    legs_padded[2],
+                    legs_padded[3],
+                    _fmt_odds(combined_am),
+                    _fmt_odds(fair_am),
+                    round(edge_pct, 2),
+                    f"{round(true_p * 100, 1)}%",
+                    ev_class.replace("_", " ").title() if ev_class else "",
+                    round(s.get("composite_score", 0), 4),
+                    notes,
+                ])
+
+            written = self._batch_write(ws, headers, rows)
+
+            # ── Formatting ──
+            try:
+                self._format_tab_header(ws, "#5B2C8D", len(headers))  # purple
+                self._apply_ev_row_colors(sheet, ws, written, 10, len(headers))  # EV Class col K (index 10)
+                self._set_column_widths(sheet, ws, [45, 60, 220, 220, 220, 220, 85, 85, 60, 70, 90, 70, 130])
+            except Exception as fmt_err:
+                logger.debug(f"Parlays formatting skipped: {fmt_err}")
+
+            logger.info(f"Exported {written} parlay suggestions to '{tab_name}'")
+            return {"status": "success", "tab": tab_name, "rows_written": written}
+
+        except Exception as e:
+            logger.error(f"Parlays export failed: {e}")
+            return {"error": str(e)}
+
+    # ───────────────────────────────────────────────────────────────
+    # Legend tab — color key + column glossary + how-to
+    # ───────────────────────────────────────────────────────────────
+
+    def export_legend(
+        self,
+        spreadsheet_id: str,
+        tab_name: str = "📖 Legend",
+    ) -> Dict[str, Any]:
+        """Write a color-coded legend / guide tab."""
+        if not self.client:
+            return {"error": "Google Sheets not configured"}
+
+        try:
+            sheet = self.client.open_by_key(spreadsheet_id)
+            ws = self._get_or_create_worksheet(sheet, tab_name, rows=80, cols=4)
+
+            rows: List[List[Any]] = [
+                # ── Section 1: Title ──
+                ["🏀 Sports Data Platform — Daily Picks Guide", "", "", ""],
+                ["Last updated", datetime.now().strftime("%Y-%m-%d %I:%M %p"), "", ""],
+                ["", "", "", ""],
+
+                # ── Section 2: Color Key ──
+                ["🎨 COLOR CODE", "Meaning", "Action", ""],
+                ["🟢 Strong Play",  "Edge ≥ 7% + High confidence",    "BET — Full Kelly recommendation", ""],
+                ["🟩 Good Play",    "Edge 5–7% + Medium confidence",  "BET — Half Kelly recommended", ""],
+                ["🟡 Lean",         "Edge 3–5% — Lower confidence",   "SMALL BET or pass", ""],
+                ["🔴 Pass",         "Edge < 3% or negative",          "SKIP — no value", ""],
+                ["", "", "", ""],
+
+                # ── Section 3: Confidence Tiers ──
+                ["📊 CONFIDENCE TIER", "Edge Range", "Kelly Fraction", "Min Edge"],
+                ["MAX",         "≥ 10%",  "Quarter Kelly",  "10%"],
+                ["HIGH",        "7–10%",  "Quarter Kelly",  "7%"],
+                ["MEDIUM",      "5–7%",   "Quarter Kelly",  "5%"],
+                ["LOW",         "3–5%",   "Quarter Kelly",  "3%"],
+                ["SPECULATIVE", "< 3%",   "Skip / $0",      "—"],
+                ["", "", "", ""],
+
+                # ── Section 4: Tab Guide ──
+                ["📋 TAB GUIDE", "What it shows", "", ""],
+                ["🔥 Top 10 Plays",  "Best ranked bets across all sports — start here",             "", ""],
+                ["HighValueProps",   "Player props with realistic odds (-110 to +110) or ≤30% edge","", ""],
+                ["Props",            "All analyzed player props sorted by Bayesian edge",           "", ""],
+                ["NBA",              "NBA game picks: spreads, totals, ML probabilities",           "", ""],
+                ["NCAAB",            "College basketball sharp money analysis",                     "", ""],
+                ["Summary",          "Daily counts: games analyzed, bets placed, exposure total",  "", ""],
+                ["BetSlip",          "Interactive tracker — fill ✓ Placed? with Y for bets taken", "", ""],
+                ["Performance",      "W/L record, units, ROI, avg CLV by model/sport",             "", ""],
+                ["", "", "", ""],
+
+                # ── Section 5: Column Glossary ──
+                ["🔑 COLUMN GLOSSARY", "Definition", "", ""],
+                ["Edge %",          "((True Prob × Decimal Odds) - 1) × 100. Positive = +EV",         "", ""],
+                ["Bayesian P",      "Posterior probability of covering/hitting from Bayesian model",   "", ""],
+                ["Kelly %",         "Fractional Kelly stake as % of bankroll (Quarter Kelly, max 5%)", "", ""],
+                ["Kelly $",         "Dollar stake based on $100 bankroll",                            "", ""],
+                ["EV Class",        "Strong Play / Good Play / Lean / Pass based on edge tier",        "", ""],
+                ["Confidence",      "MAX / HIGH / MEDIUM / LOW / SPECULATIVE",                        "", ""],
+                ["Sharp Signals",   "RLM = reverse line movement, STEAM = rapid multi-book move",      "", ""],
+                ["CLV",             "Closing Line Value — positive means you beat the closing odds",   "", ""],
+                ["Proj Spread",     "Model-implied spread from win probability",                       "", ""],
+                ["Signal Conf %",   "How strongly signals agree (0–100%)",                            "", ""],
+                ["", "", "", ""],
+
+                # ── Section 6: BetSlip Workflow ──
+                ["📝 BETSLIP WORKFLOW", "", "", ""],
+                ["Step 1", "Open BetSlip tab",                                           "", ""],
+                ["Step 2", "Review picks — check Edge%, EV Class, Confidence",          "", ""],
+                ["Step 3", 'Type "Y" in the ✓ Placed? column for bets you are taking', "", ""],
+                ["Step 4", "Run: python3 backend/sync_betslip.py  to register bets",    "", ""],
+                ["Step 5", "After games finish: python3 backend/sync_betslip.py --settle to record W/L", "", ""],
+                ["", "", "", ""],
+
+                # ── Section 7: Kelly Sizing Cheatsheet ──
+                ["💰 KELLY SIZING QUICK REF", "Bankroll $1,000", "Bankroll $2,500", "Bankroll $5,000"],
+                ["1% Kelly",   "$10",   "$25",   "$50"],
+                ["2% Kelly",   "$20",   "$50",   "$100"],
+                ["3% Kelly",   "$30",   "$75",   "$150"],
+                ["5% Kelly",   "$50",   "$125",  "$250"],
+                ["Max (5%)",   "$50",   "$125",  "$250"],
+            ]
+
+            ws.update(range_name=f"A1:D{len(rows)}", values=rows)
+
+            # Formatting
+            try:
+                # Title row
+                ws.format("A1:D1", {
+                    "backgroundColor": self._hex_to_rgb("#333333"),
+                    "textFormat": {
+                        "foregroundColor": {"red": 1, "green": 1, "blue": 1},
+                        "bold": True,
+                        "fontSize": 13,
+                    },
+                })
+                # Section headers (rows 4, 11, 17, 27, 38, 47, 54)
+                section_rows = [4, 11, 17, 27, 38, 47, 54]
+                for r in section_rows:
+                    ws.format(f"A{r}:D{r}", {
+                        "backgroundColor": self._hex_to_rgb("#E8E8E8"),
+                        "textFormat": {"bold": True, "fontSize": 11},
+                    })
+                # Color-code the swatch rows
+                swatch_map = [
+                    (5,  "#C6EFCE"),  # Strong Play
+                    (6,  "#E2EFDA"),  # Good Play
+                    (7,  "#FFEB9C"),  # Lean
+                    (8,  "#FFC7CE"),  # Pass
+                ]
+                for row_num, bg_hex in swatch_map:
+                    ws.format(f"A{row_num}:D{row_num}", {
+                        "backgroundColor": self._hex_to_rgb(bg_hex),
+                    })
+                # Column widths
+                self._set_column_widths(sheet, ws, [200, 350, 220, 100])
+                ws.freeze(rows=1)
+
+                # ── Navigation links — "Jump to Tab" section ──
+                # Append after the last content row with tab hyperlinks
+                try:
+                    all_ws = sheet.worksheets()
+                    tab_id_map = {w.title: w.id for w in all_ws}
+                    jump_header_row = len(rows) + 3  # leave a gap
+                    ws.update(f"A{jump_header_row}", [["🔗 Quick Navigation"]])
+                    ws.format(f"A{jump_header_row}", {
+                        "backgroundColor": self._hex_to_rgb("#3C4A6A"),
+                        "textFormat": {"bold": True, "foregroundColor": {"red": 1, "green": 1, "blue": 1}, "fontSize": 11},
+                    })
+                    nav_tabs = [
+                        ("🔥 Top 10 Plays", "Top 10 Plays"),
+                        ("🎰 Parlays", "Parlays"),
+                        ("📊 HighValueProps", "HighValueProps"),
+                        ("📋 Props", "Props"),
+                        ("🏀 NBA", "NBA"),
+                        ("🏈 NCAAB", "NCAAB"),
+                        ("📈 Summary", "Summary"),
+                        ("📝 BetSlip", "BetSlip"),
+                    ]
+                    nav_rows = []
+                    for label, tab_title in nav_tabs:
+                        # Find sheet by partial match
+                        gid = next((v for k, v in tab_id_map.items() if tab_title.lower() in k.lower()), None)
+                        if gid is not None:
+                            nav_rows.append([f'=HYPERLINK("#gid={gid}","{label}")'])
+                        else:
+                            nav_rows.append([label])
+                    ws.update(f"A{jump_header_row + 1}", nav_rows)
+                except Exception as nav_err:
+                    logger.debug(f"Legend navigation links skipped: {nav_err}")
+
+            except Exception as fmt_err:
+                logger.debug(f"Legend formatting skipped: {fmt_err}")
+
+            logger.info("Exported Legend tab to Google Sheets")
+            return {"status": "success", "tab": tab_name, "rows_written": len(rows)}
+
+        except Exception as e:
+            logger.error(f"Legend export failed: {e}")
+            return {"error": str(e)}
+
+    # ───────────────────────────────────────────────────────────────
+    # Top 10 Plays — ranked across all data sources
+    # ───────────────────────────────────────────────────────────────
+
+    def export_top10_plays(
+        self,
+        spreadsheet_id: str,
+        prop_data: Optional[Dict[str, Any]] = None,
+        ncaab_data: Optional[Dict[str, Any]] = None,
+        nba_predictions: Optional[List[Dict[str, Any]]] = None,
+        nba_bets: Optional[List[Dict[str, Any]]] = None,
+        tab_name: str = "🔥 Top 10 Plays",
+        top_n: int = 10,
+    ) -> Dict[str, Any]:
+        """Rank and export the top N plays of the day across all sports/markets.
+
+        Composite score = bayesian_edge × ev_weight × confidence_weight
+        ev_weight:    Strong Play=1.0, Good Play=0.75, Lean=0.5, other=0.3
+        conf_weight:  MAX=1.3, HIGH=1.0, MEDIUM=0.8, LOW=0.6, SPECULATIVE=0.4
+        """
+        if not self.client:
+            return {"error": "Google Sheets not configured"}
+
+        EV_WEIGHTS = {"strong play": 1.0, "strong_play": 1.0, "good play": 0.75, "good_play": 0.75, "lean": 0.5}
+        CONF_WEIGHTS = {"MAX": 1.3, "HIGH": 1.0, "MEDIUM": 0.8, "LOW": 0.6, "SPECULATIVE": 0.4}
+
+        candidates: List[Dict[str, Any]] = []
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        # ── Props candidates ──
+        for p in (prop_data or {}).get("props", []):
+            edge = float(p.get("bayesian_edge", 0) or 0)
+            if edge <= 0:
+                continue
+            ev_class = (p.get("ev_classification", "") or "").lower().replace("_", " ")
+            conf = _confidence_label(edge, p.get("ev_classification", ""))
+            ev_w = EV_WEIGHTS.get(ev_class, 0.3)
+            conf_w = CONF_WEIGHTS.get(conf, 0.4)
+            score = edge * ev_w * conf_w
+
+            best_side = (p.get("best_side", "over") or "over").upper()
+            odds = p.get("over_odds", -110) if best_side == "OVER" else p.get("under_odds", -110)
+            book = (p.get("best_over_book", "") if best_side == "OVER" else p.get("best_under_book", "")) or ""
+            home = p.get("home_team", "")
+            away = p.get("away_team", "")
+            game = f"{away} @ {home}" if home and away else ""
+            stat_label = _STAT_DISPLAY.get(p.get("stat_type", ""), (p.get("stat_type") or "").upper())
+
+            candidates.append({
+                "score": score,
+                "type": "Player Prop",
+                "source": "HighValueProps" if ev_class in ("strong play", "good play") else "Props",
+                "game": game,
+                "pick": p.get("player_name", ""),
+                "market": f"{stat_label} {best_side}",
+                "line": p.get("line", ""),
+                "odds": _fmt_odds(odds),
+                "edge_pct": round(edge * 100, 2),
+                "ev_class": ev_class.title(),
+                "confidence": conf,
+                "book": book,
+                "composite": round(score * 1000, 1),
+            })
+
+        # ── NBA candidates ──
+        nba_bet_lookup = {b.get("game_id", ""): b for b in (nba_bets or [])}
+        for p in (nba_predictions or []):
+            if "error" in p:
+                continue
+            ev = p.get("expected_value", {})
+            best_bet = ev.get("best_bet", "")
+            if not best_bet:
+                continue
+            home = p.get("home_team", "")
+            away = p.get("away_team", "")
+            home_edge = float(ev.get("home_ev", 0) or 0)
+            away_edge = float(ev.get("away_ev", 0) or 0)
+            edge = home_edge if best_bet == "home" else away_edge
+            if edge <= 0:
+                continue
+            conf = "HIGH" if edge >= 0.07 else ("MEDIUM" if edge >= 0.05 else "LOW")
+            ev_class = "strong_play" if edge >= 0.07 else ("good_play" if edge >= 0.05 else "lean")
+            score = edge * EV_WEIGHTS.get(ev_class, 0.3) * CONF_WEIGHTS.get(conf, 0.4)
+            pick = home if best_bet == "home" else away
+            candidates.append({
+                "score": score,
+                "type": "NBA Game",
+                "source": "NBA",
+                "game": f"{away} @ {home}",
+                "pick": pick,
+                "market": "Moneyline",
+                "line": "",
+                "odds": _fmt_odds(ev.get(f"{best_bet}_odds", 0)) if ev.get(f"{best_bet}_odds") else "",
+                "edge_pct": round(edge * 100, 2),
+                "ev_class": ev_class.replace("_", " ").title(),
+                "confidence": conf,
+                "book": "",
+                "composite": round(score * 1000, 1),
+            })
+
+        # ── NCAAB candidates ──
+        for a in (ncaab_data or {}).get("game_analyses", []):
+            game_d = a.get("game", {})
+            home = game_d.get("home", "")
+            away = game_d.get("away", "")
+            he = float(a.get("home_edge", 0) or 0)
+            ae = float(a.get("away_edge", 0) or 0)
+            sharp_side = (a.get("sharp_side") or "").upper()
+            edge = he if sharp_side == "HOME" or (not sharp_side and he > ae) else ae
+            if edge <= 0:
+                continue
+            conf = a.get("confidence_level", "LOW")
+            ev_class = "strong_play" if edge >= 0.07 else ("good_play" if edge >= 0.05 else "lean")
+            score = edge * EV_WEIGHTS.get(ev_class, 0.3) * CONF_WEIGHTS.get(conf, 0.4)
+            pick = sharp_side or (home if he > ae else away)
+            candidates.append({
+                "score": score,
+                "type": "NCAAB Game",
+                "source": "NCAAB",
+                "game": f"{away} @ {home}",
+                "pick": pick,
+                "market": "Sharp Side",
+                "line": game_d.get("spread", ""),
+                "odds": "",
+                "edge_pct": round(edge * 100, 2),
+                "ev_class": ev_class.replace("_", " ").title(),
+                "confidence": conf,
+                "book": "",
+                "composite": round(score * 1000, 1),
+            })
+
+        # Sort and take top N
+        candidates.sort(key=lambda x: x["score"], reverse=True)
+        top_plays = candidates[:top_n]
+
+        try:
+            sheet = self.client.open_by_key(spreadsheet_id)
+            ws = self._get_or_create_worksheet(sheet, tab_name, rows=top_n + 5, cols=13)
+
+            headers = [
+                "Rank", "Type", "Game", "Pick", "Market", "Line",
+                "Odds", "Edge %", "EV Class", "Confidence", "Score", "Book", "Source Tab",
+            ]
+            rows_out: List[List[Any]] = []
+            for i, c in enumerate(top_plays, 1):
+                rows_out.append([
+                    i,
+                    c["type"],
+                    c["game"],
+                    c["pick"],
+                    c["market"],
+                    c["line"],
+                    c["odds"],
+                    c["edge_pct"],
+                    c["ev_class"],
+                    c["confidence"],
+                    c["composite"],
+                    c["book"],
+                    c["source"],
+                ])
+
+            if not rows_out:
+                rows_out = [["No picks available today.", "", "", "", "", "", "", "", "", "", "", "", ""]]
+
+            written = self._batch_write(ws, headers, rows_out)
+
+            # Formatting
+            try:
+                # Orange-red "fire" header
+                self._format_tab_header(ws, "#B03A00", len(headers))
+                # EV class row colors (col I = index 8)
+                self._apply_ev_row_colors(sheet, ws, written, 8, len(headers))
+                # Confidence column (J = index 9) color
+                self._apply_column_conditional(sheet, ws, 9, [
+                    {"type": "TEXT_EQ", "value": "High",   "bg": "#C6EFCE", "fg": "#276221", "bold": True},
+                    {"type": "TEXT_EQ", "value": "Medium", "bg": "#FFEB9C", "fg": "#9C6500", "bold": True},
+                    {"type": "TEXT_EQ", "value": "Low",    "bg": "#FFC7CE", "fg": "#9C0006", "bold": False},
+                ], written, index_offset=4)
+                # Column widths: Rank|Type|Game|Pick|Market|Line|Odds|Edge%|EVClass|Conf|Score|Book|Source
+                self._set_column_widths(sheet, ws, [45, 90, 200, 160, 110, 55, 60, 65, 90, 85, 65, 90, 100])
+                # Bold rank column
+                if written:
+                    ws.format(f"A2:A{written + 1}", {"textFormat": {"bold": True, "fontSize": 12}})
+            except Exception as fmt_err:
+                logger.debug(f"Top10 formatting skipped: {fmt_err}")
+
+            logger.info(f"Exported Top {top_n} Plays tab ({written} rows)")
+            return {"status": "success", "tab": tab_name, "rows_written": written}
+
+        except Exception as e:
+            logger.error(f"Top 10 Plays export failed: {e}")
             return {"error": str(e)}
 
     # ───────────────────────────────────────────────────────────────
@@ -1122,27 +1809,86 @@ class GoogleSheetsService:
 
             written = self._batch_write(ws, headers, rows)
 
-            # Format header bar (dark green for BetSlip)
+            # ── Formatting ──
             try:
-                ws.format(
-                    "A1:P1",
-                    {
-                        "backgroundColor": {"red": 0.1, "green": 0.35, "blue": 0.1},
-                        "textFormat": {
-                            "foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0},
-                            "bold": True,
-                            "fontSize": 11,
-                        },
-                    },
-                )
-                # Highlight the "✓ Placed?" column (L = col 12) in yellow
-                ws.format(
-                    f"L2:L{written + 1}",
-                    {
-                        "backgroundColor": {"red": 1.0, "green": 0.95, "blue": 0.6},
-                        "textFormat": {"bold": True},
-                    },
-                )
+                # Dark green header
+                self._format_tab_header(ws, "#0D3B1F", len(headers))
+                # "✓ Placed?" column (L = index 11) — yellow bg
+                ws.format(f"L2:L{written + 1}", {
+                    "backgroundColor": {"red": 1.0, "green": 0.95, "blue": 0.6},
+                    "textFormat": {"bold": True},
+                })
+                # Status column (N = index 13) conditional coloring
+                self._apply_column_conditional(sheet, ws, 13, [
+                    {"type": "TEXT_EQ", "value": "won",     "bg": "#C6EFCE", "fg": "#276221", "bold": True},
+                    {"type": "TEXT_EQ", "value": "lost",    "bg": "#FFC7CE", "fg": "#9C0006", "bold": True},
+                    {"type": "TEXT_EQ", "value": "push",    "bg": "#EEEEEE", "fg": "#555555", "bold": False},
+                    {"type": "TEXT_EQ", "value": "pending", "bg": "#FFEB9C", "fg": "#9C6500", "bold": False},
+                ], written)
+                # Column widths: Date|Game|Player|Stat|Line|Side|Odds|Book|Edge%|Kelly$|EVClass|Placed?|BetID|Status|P/L|Notes
+                self._set_column_widths(sheet, ws, [80, 180, 160, 130, 55, 55, 60, 90, 60, 65, 90, 75, 120, 80, 65, 140])
+
+                # ── Data validation: checkboxes + dropdowns ──
+                ws_id = ws.id
+                dv_requests = []
+                if written > 0:
+                    data_range = {
+                        "sheetId": ws_id,
+                        "startRowIndex": 1,   # row 2 (0-indexed)
+                        "endRowIndex": written + 1,
+                    }
+                    # Col L (index 11): checkbox for ✓ Placed?
+                    dv_requests.append({
+                        "setDataValidation": {
+                            "range": {**data_range, "startColumnIndex": 11, "endColumnIndex": 12},
+                            "rule": {
+                                "condition": {"type": "BOOLEAN"},
+                                "showCustomUi": True,
+                                "strict": False,
+                            },
+                        }
+                    })
+                    # Col F (index 5): Side dropdown
+                    dv_requests.append({
+                        "setDataValidation": {
+                            "range": {**data_range, "startColumnIndex": 5, "endColumnIndex": 6},
+                            "rule": {
+                                "condition": {
+                                    "type": "ONE_OF_LIST",
+                                    "values": [
+                                        {"userEnteredValue": "OVER"},
+                                        {"userEnteredValue": "UNDER"},
+                                        {"userEnteredValue": "HOME"},
+                                        {"userEnteredValue": "AWAY"},
+                                    ],
+                                },
+                                "showCustomUi": True,
+                                "strict": False,
+                            },
+                        }
+                    })
+                    # Col N (index 13): Status dropdown
+                    dv_requests.append({
+                        "setDataValidation": {
+                            "range": {**data_range, "startColumnIndex": 13, "endColumnIndex": 14},
+                            "rule": {
+                                "condition": {
+                                    "type": "ONE_OF_LIST",
+                                    "values": [
+                                        {"userEnteredValue": "pending"},
+                                        {"userEnteredValue": "won"},
+                                        {"userEnteredValue": "lost"},
+                                        {"userEnteredValue": "push"},
+                                    ],
+                                },
+                                "showCustomUi": True,
+                                "strict": False,
+                            },
+                        }
+                    })
+                if dv_requests:
+                    sheet.batch_update({"requests": dv_requests})
+
             except Exception as fmt_err:
                 logger.debug(f"BetSlip formatting skipped: {fmt_err}")
 
