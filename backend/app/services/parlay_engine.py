@@ -145,8 +145,8 @@ def generate_suggestions(
         game_d = a.get("game", {})
         he = float(a.get("home_edge", 0) or 0)
         ae = float(a.get("away_edge", 0) or 0)
-        sharp_side = a.get("sharp_side", "")
-        edge = he if sharp_side.upper() == "HOME" or (not sharp_side and he > ae) else ae
+        sharp_side = (a.get("sharp_side") or "").upper()
+        edge = he if sharp_side == "HOME" or (not sharp_side and he > ae) else ae
         if edge < 0.03:
             continue
         home = game_d.get("home", "")

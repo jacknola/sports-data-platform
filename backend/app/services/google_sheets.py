@@ -1559,8 +1559,8 @@ class GoogleSheetsService:
             away = game_d.get("away", "")
             he = float(a.get("home_edge", 0) or 0)
             ae = float(a.get("away_edge", 0) or 0)
-            sharp_side = a.get("sharp_side", "")
-            edge = he if sharp_side.upper() == "HOME" or (not sharp_side and he > ae) else ae
+            sharp_side = (a.get("sharp_side") or "").upper()
+            edge = he if sharp_side == "HOME" or (not sharp_side and he > ae) else ae
             if edge <= 0:
                 continue
             conf = a.get("confidence_level", "LOW")
