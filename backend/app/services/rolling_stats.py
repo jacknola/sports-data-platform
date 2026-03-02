@@ -120,6 +120,36 @@ class RollingStatsCalculator:
             logger.error(f"Error fetching game logs for team {team_id}: {e}")
             raise
 
+    def apply_kalman_filter(
+        self,
+        series: pd.Series,
+        process_variance: float = 1e-4,
+        measurement_variance: float = 1e-2,
+    ) -> pd.Series:
+        """Apply a simple 1D Kalman filter to smooth noisy series."""
+        if series.empty:
+            return series
+
+        values = series.astype(float).ffill().bfill().fillna(0.0)
+        estimates = []
+
+        # Initial guesses
+        x_hat = values.iloc[0]
+        p = 1.0
+
+        for z in values:
+            # Predict
+            x_hat_minus = x_hat
+            p_minus = p + process_variance
+
+            # Update
+            k = p_minus / (p_minus + measurement_variance)
+            x_hat = x_hat_minus + k * (z - x_hat_minus)
+            p = (1 - k) * p_minus
+            estimates.append(x_hat)
+
+        return pd.Series(estimates, index=series.index)
+
     def calculate_four_factors(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate Four Factors metrics from game log data."""
         if df.empty:
@@ -196,6 +226,7 @@ class RollingStatsCalculator:
         team_id: int,
         season: str = "2024-25",
         window: int = 10,
+        use_kalman_filter: bool = True,
     ) -> pd.DataFrame:
         """Calculate rolling advanced stats for a team."""
         # Fetch game logs
@@ -230,7 +261,11 @@ class RollingStatsCalculator:
         rolling_cols = [c for c in numeric_cols if c in df.columns]
 
         for col in rolling_cols:
-            rolling_mean = df[col].rolling(window=window, min_periods=1).mean()
+            col_values = df[col]
+            if use_kalman_filter:
+                col_values = self.apply_kalman_filter(col_values)
+                df[col] = col_values
+            rolling_mean = col_values.rolling(window=window, min_periods=1).mean()
             df[f"{col}_rolling_{window}"] = rolling_mean
 
         return df
