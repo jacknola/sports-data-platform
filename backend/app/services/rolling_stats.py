@@ -226,7 +226,7 @@ class RollingStatsCalculator:
         team_id: int,
         season: str = "2024-25",
         window: int = 10,
-        use_kalman_filter: bool = True,
+        use_kalman_filter: bool = False,
     ) -> pd.DataFrame:
         """Calculate rolling advanced stats for a team."""
         # Fetch game logs
@@ -264,7 +264,6 @@ class RollingStatsCalculator:
             col_values = df[col]
             if use_kalman_filter:
                 col_values = self.apply_kalman_filter(col_values)
-                df[col] = col_values
             rolling_mean = col_values.rolling(window=window, min_periods=1).mean()
             df[f"{col}_rolling_{window}"] = rolling_mean
 
@@ -302,7 +301,11 @@ class RollingStatsCalculator:
         return stats
 
     def get_team_rolling_stats_by_name(
-        self, team_name: str, season: str = "2024-25", window: int = 10
+        self,
+        team_name: str,
+        season: str = "2024-25",
+        window: int = 10,
+        use_kalman_filter: bool = False,
     ) -> Dict[str, float]:
         """Get rolling stats for a team by name.
 
@@ -334,7 +337,7 @@ class RollingStatsCalculator:
             logger.error(f"Error finding team {team_name}: {e}")
             return self._league_averages.copy()
 
-        df = self.calculate_rolling_stats(team_id, season, window)
+        df = self.calculate_rolling_stats(team_id, season, window, use_kalman_filter)
 
         if df.empty:
             return self._league_averages.copy()
