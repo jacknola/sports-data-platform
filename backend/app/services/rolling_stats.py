@@ -130,12 +130,19 @@ class RollingStatsCalculator:
         if series.empty:
             return series
 
-        values = series.astype(float).ffill().bfill().fillna(0.0)
+        values = series.astype(float)
+        filled = values.ffill().bfill()
+        if filled.isna().any():
+            mean_value = filled.mean()
+            if np.isnan(mean_value):
+                mean_value = 0.0
+            filled = filled.fillna(mean_value)
+        values = filled
         estimates = []
 
         # Initial guesses
         x_hat = values.iloc[0]
-        p = 1.0
+        p = 1.0  # moderate initial uncertainty to adapt quickly on early observations
 
         for z in values:
             # Predict
@@ -228,7 +235,11 @@ class RollingStatsCalculator:
         window: int = 10,
         use_kalman_filter: bool = False,
     ) -> pd.DataFrame:
-        """Calculate rolling advanced stats for a team."""
+        """Calculate rolling advanced stats for a team.
+
+        When enabled, the Kalman filter acts as an alternative smoother
+        to the rolling mean to avoid double-smoothing the series.
+        """
         # Fetch game logs
         df = self.fetch_team_game_logs(team_id, season)
 
@@ -263,9 +274,11 @@ class RollingStatsCalculator:
         for col in rolling_cols:
             col_values = df[col]
             if use_kalman_filter:
-                col_values = self.apply_kalman_filter(col_values)
-            rolling_mean = col_values.rolling(window=window, min_periods=1).mean()
-            df[f"{col}_rolling_{window}"] = rolling_mean
+                # Kalman smoothing acts as a stand-in for the rolling mean
+                df[f"{col}_rolling_{window}"] = self.apply_kalman_filter(col_values)
+            else:
+                rolling_mean = col_values.rolling(window=window, min_periods=1).mean()
+                df[f"{col}_rolling_{window}"] = rolling_mean
 
         return df
 
