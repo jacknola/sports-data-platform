@@ -9,10 +9,12 @@ from loguru import logger
 
 from app.services.bayesian import BayesianAnalyzer
 from app.services.nba_ml_predictor import NBAMLPredictor
+from app.services.bet_tracker import BetTracker
 
 router = APIRouter()
 bayesian_analyzer = BayesianAnalyzer()
 nba_predictor = NBAMLPredictor()
+_bet_tracker = BetTracker()
 
 
 @router.get("/bets")
@@ -173,3 +175,122 @@ def _process_nba_total(pred: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "method": "ml_xgboost",
         "ml_prediction": pred,
     }
+
+
+# ---------------------------------------------------------------------------
+# Bet result tracking endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.get("/bets/tracked")
+async def get_tracked_bets(
+    sport: Optional[str] = Query(None, description="Filter by sport (ncaab, nba, all)"),
+    status: Optional[str] = Query(None, description="Filter by status: pending, won, lost, push, void"),
+) -> List[Dict[str, Any]]:
+    """Return all bets saved by the portfolio optimizer for win/loss tracking.
+
+    Supports filtering by sport and status. Returns all bets sorted newest-first.
+    """
+    try:
+        import sqlite3
+
+        db_path = _bet_tracker.LOCAL_DB_PATH
+        _bet_tracker._init_sqlite()
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            query = "SELECT * FROM bets WHERE 1=1"
+            params: List[Any] = []
+            if sport and sport.lower() != "all":
+                query += " AND sport = ?"
+                params.append(sport.lower())
+            if status:
+                query += " AND status = ?"
+                params.append(status.lower())
+            query += " ORDER BY created_at DESC"
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error(f"Failed to fetch tracked bets: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/bets/tracked")
+async def save_tracked_bet(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Manually save a bet for tracking.
+
+    Required: sport, side, market, odds, bet_size. Optional: game_id, line, edge, book, date.
+    """
+    try:
+        bet_id = _bet_tracker.save_bet(data)
+        return {"bet_id": bet_id, "status": "saved"}
+    except Exception as e:
+        logger.error(f"Failed to save tracked bet: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/bets/{bet_id}/settle")
+async def settle_bet(bet_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    """Mark a pending bet as won, lost, push, or void.
+
+    Body: { "status": "won" | "lost" | "push" | "void", "clv": float (optional) }
+    """
+    valid_statuses = ("won", "lost", "push", "void")
+    status = data.get("status", "").lower()
+    if status not in valid_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"status must be one of: {', '.join(valid_statuses)}",
+        )
+    clv = data.get("clv")
+    try:
+        _bet_tracker.update_bet_result(bet_id, status, clv=clv)
+        logger.info(f"Settled bet {bet_id}: {status}")
+        return {"bet_id": bet_id, "status": status}
+    except Exception as e:
+        logger.error(f"Failed to settle bet {bet_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/bets/performance")
+async def get_performance_metrics(
+    sport: Optional[str] = Query(None, description="Filter by sport or 'all'"),
+) -> Dict[str, Any]:
+    """Win/loss performance metrics for all settled bets.
+
+    Returns: wins, losses, pushes, win_rate, ROI, units, avg_clv, pending_bets.
+    """
+    try:
+        import sqlite3
+
+        db_path = _bet_tracker.LOCAL_DB_PATH
+        _bet_tracker._init_sqlite()
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            query = "SELECT * FROM bets WHERE status != 'pending'"
+            params: List[Any] = []
+            if sport and sport.lower() != "all":
+                query += " AND sport = ?"
+                params.append(sport.lower())
+            cursor.execute(query, params)
+            rows = [dict(r) for r in cursor.fetchall()]
+
+        metrics = _bet_tracker._calculate_metrics(rows)
+
+        # Count pending separately
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            pq = "SELECT COUNT(*) FROM bets WHERE status = 'pending'"
+            pp: List[Any] = []
+            if sport and sport.lower() != "all":
+                pq += " AND sport = ?"
+                pp.append(sport.lower())
+            cursor.execute(pq, pp)
+            metrics["pending_bets"] = cursor.fetchone()[0]
+
+        return metrics
+    except Exception as e:
+        logger.error(f"Failed to fetch performance metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

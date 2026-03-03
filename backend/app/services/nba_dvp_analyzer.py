@@ -65,6 +65,113 @@ DEFAULT_SLATE_PATH = os.path.join(
     os.path.dirname(__file__), "..", "config", "nba_dvp_slate.json"
 )
 
+# Path to historical NBA advanced stats CSV (project root)
+ADVANCED_CSV_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "..", "..", "Advanced.csv"
+)
+
+# Empirical multipliers for deriving per-game counting stats from advanced CSV columns.
+# Validated against known 2025-26 baselines (e.g., Jokic: pts=26.6, reb=12.4).
+_USG_TO_PTS: float = 0.85      # avg_PTS  ≈ usg_percent × 0.85
+_TRB_TO_REB: float = 0.60      # avg_REB  ≈ trb_percent × 0.60
+_AST_PCT_TO_AST: float = 0.25  # avg_AST  ≈ ast_percent × 0.25
+
+# Map CSV team codes → internal abbreviations
+_CSV_TEAM_MAP = {
+    "ATL": "ATL", "BOS": "BOS", "BRK": "BKN", "CHO": "CHA",
+    "CHI": "CHI", "CLE": "CLE", "DAL": "DAL", "DEN": "DEN",
+    "DET": "DET", "GSW": "GS", "HOU": "HOU", "IND": "IND",
+    "LAC": "LAC", "LAL": "LAL", "MEM": "MEM", "MIA": "MIA",
+    "MIL": "MIL", "MIN": "MIN", "NOP": "NO", "NYK": "NYK",
+    "OKC": "OKC", "ORL": "ORL", "PHI": "PHI", "PHO": "PHX",
+    "POR": "POR", "SAC": "SAC", "SAS": "SA", "TOR": "TOR",
+    "UTA": "UTA", "WAS": "WAS",
+}
+
+
+def _load_advanced_csv(
+    season: int = 2026,
+    min_games: int = 15,
+    min_minutes: int = 300,
+) -> List[Dict[str, Any]]:
+    """Load NBA player advanced stats from Advanced.csv.
+
+    Derives approximate per-game counting stats using empirical formulas:
+        avg_PTS  ≈ usg_percent × 0.85
+        avg_REB  ≈ trb_percent × 0.60
+        avg_AST  ≈ ast_percent × 0.25
+
+    Returns a list of player dicts compatible with _fallback_player_baselines().
+    """
+    csv_path = os.path.abspath(ADVANCED_CSV_PATH)
+    if not os.path.exists(csv_path):
+        logger.debug("Advanced.csv not found at {}", csv_path)
+        return []
+
+    try:
+        import csv as _csv
+
+        players: List[Dict[str, Any]] = []
+        with open(csv_path, newline="", encoding="utf-8") as fh:
+            reader = _csv.DictReader(fh)
+            for row in reader:
+                if int(row.get("season", 0)) != season:
+                    continue
+                if row.get("lg", "NBA") != "NBA":
+                    continue
+                team_csv = row.get("team", "")
+                team = _CSV_TEAM_MAP.get(team_csv)
+                if not team:
+                    continue  # skip traded (2TM/3TM) or unknown teams
+                g = int(row.get("g") or 0)
+                mp_total = float(row.get("mp") or 0)
+                if g < min_games or mp_total < min_minutes:
+                    continue
+                mpg = mp_total / g
+
+                usg = float(row.get("usg_percent") or 0)
+                trb = float(row.get("trb_percent") or 0)
+                ast_pct = float(row.get("ast_percent") or 0)
+
+                pts = round(usg * _USG_TO_PTS, 1)
+                reb = round(trb * _TRB_TO_REB, 1)
+                ast = round(ast_pct * _AST_PCT_TO_AST, 1)
+
+                if pts <= 0:
+                    continue
+
+                # Position: take first token (e.g. "PG-SG" → "PG")
+                raw_pos = row.get("pos", "SF")
+                pos = raw_pos.split("-")[0] if raw_pos else "SF"
+                if pos not in POSITIONS:
+                    pos = "SF"
+
+                players.append({
+                    "name": row.get("player", ""),
+                    "player_id": row.get("player_id", ""),
+                    "team": team,
+                    "position": pos,
+                    "avg_PTS": pts,
+                    "avg_REB": reb,
+                    "avg_AST": ast,
+                    "avg_PTS+REB+AST": round(pts + reb + ast, 1),
+                    "games_played": g,
+                    "minutes": round(mpg, 1),
+                    # Advanced stats (informational)
+                    "bpm": float(row.get("bpm") or 0),
+                    "vorp": float(row.get("vorp") or 0),
+                    "per": float(row.get("per") or 0),
+                })
+
+        logger.info(
+            "Loaded {} players from Advanced.csv (season={})", len(players), season
+        )
+        return players
+
+    except Exception as e:
+        logger.warning("Failed to load Advanced.csv: {}", e)
+        return []
+
 
 class NBADvPAnalyzer:
     """
@@ -896,6 +1003,7 @@ class NBADvPAnalyzer:
     def _fallback_player_baselines(self) -> List[Dict[str, Any]]:
         """
         Representative starting-player baselines for slate teams.
+        Prefers Advanced.csv data (current season) over hardcoded values.
         Used when nba_api is unavailable.
         """
         logger.info("Using fallback player baselines")
@@ -903,6 +1011,24 @@ class NBADvPAnalyzer:
         for game in self.slate.get("games", []):
             slate_teams.add(game["home"])
             slate_teams.add(game["away"])
+
+        # ── Try Advanced.csv first ──
+        try:
+            season_year = int(self.season.split("-")[0]) + 1  # "2025-26" → 2026
+        except Exception:
+            season_year = 2026
+
+        csv_players = _load_advanced_csv(season=season_year)
+        if csv_players:
+            slate_players = [p for p in csv_players if p["team"] in slate_teams]
+            if slate_players:
+                logger.info(
+                    "Using {} Advanced.csv baselines for {} slate teams",
+                    len(slate_players),
+                    len(slate_teams),
+                )
+                return slate_players
+            logger.debug("Advanced.csv loaded but no players matched slate teams {}", slate_teams)
 
         # Representative starters for common teams
         all_players = {
