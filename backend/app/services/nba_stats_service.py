@@ -790,14 +790,18 @@ class NBAStatsService:
         """
         Fetch current NBA injury report.
 
-        Uses the-odds-api.com injuries endpoint when available, falling back
-        to an empty list if the key is missing.
+        NOTE: The Odds API v4 does not provide an injuries endpoint
+        (``/sports/basketball_nba/injuries`` returns HTTP 404). Until an
+        authoritative injury-data source is integrated, this method returns
+        an empty list and logs at DEBUG level so callers can treat it as
+        an optional enrichment step without filling logs with ERROR noise.
 
         Args:
             team_abbreviation: Optional filter (e.g. "LAL").
 
         Returns:
             List of injury dicts with player_name, team, status, description.
+            Currently always returns an empty list.
         """
         cache_key = f"injuries:{team_abbreviation or 'all'}"
         cached = self._cache.get(cache_key)
@@ -805,8 +809,8 @@ class NBAStatsService:
             return cached
 
         if not self.odds_api_key:
-            logger.warning(
-                "THE_ODDS_API_KEY not configured; cannot fetch injury report"
+            logger.debug(
+                "THE_ODDS_API_KEY not configured; skipping injury report fetch"
             )
             return []
 
@@ -845,10 +849,22 @@ class NBAStatsService:
             return injuries
 
         except httpx.HTTPStatusError as exc:
-            logger.error(f"HTTP error fetching injuries: {exc.response.status_code}")
+            status = exc.response.status_code
+            if status == 404:
+                # The Odds API v4 does not expose an injuries endpoint.
+                # This is expected — log at DEBUG, not ERROR.
+                logger.debug(
+                    "Injuries endpoint returned 404 — The Odds API v4 does not "
+                    "provide injury data. Returning empty list."
+                )
+            else:
+                logger.warning(
+                    f"HTTP {status} fetching injury report"
+                    f"{' for ' + team_abbreviation if team_abbreviation else ''}"
+                )
             return []
         except Exception as exc:
-            logger.error(f"Error fetching injury report: {exc}")
+            logger.warning(f"Error fetching injury report: {exc}")
             return []
 
     async def get_team_rotation(self, team_abbr: str) -> List[Dict[str, Any]]:

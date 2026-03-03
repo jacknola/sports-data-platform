@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     SPORTS_GAME_ODDS_API_KEY: Optional[str] = None
     ODDS_API_IO_KEY: Optional[str] = None
 
+    # BallDontLie — https://www.balldontlie.io (NBA stats, free tier requires key)
+    BALLDONTLIE_API_KEY: Optional[str] = None
+    BALL_DONT_LIE_API_KEY: Optional[str] = None  # Alias used in some services
+
     # Twitter
     TWITTER_BEARER_TOKEN: Optional[str] = None
     TWITTER_CONSUMER_KEY: Optional[str] = None
