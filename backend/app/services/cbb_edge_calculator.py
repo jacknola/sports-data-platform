@@ -392,30 +392,49 @@ class CBBEdgeCalculator:
             return self._consensus_totals(prices)
         return None
 
+    def _devig_two_way_prices(
+        self,
+        prices: List[Dict],
+        side_a_name: str,
+        side_b_name: str,
+    ) -> Tuple[List[float], List[float]]:
+        """
+        Compute per-book devigged probabilities for a two-way market.
+
+        Groups prices by book, finds the matching outcome for each side, and
+        applies multiplicative devigging to each pair.
+
+        Args:
+            prices:       Flat list of {book, name, price, point} records.
+            side_a_name:  Outcome name to match as side A (e.g. home team).
+            side_b_name:  Outcome name to match as side B (e.g. away team).
+
+        Returns:
+            Tuple of (side_a_probs, side_b_probs) — one entry per book that
+            had complete pricing for both sides.
+        """
+        a_probs: List[float] = []
+        b_probs: List[float] = []
+        for book in {p["book"] for p in prices}:
+            book_prices = [p for p in prices if p["book"] == book]
+            side_a = next((p for p in book_prices if p["name"] == side_a_name), None)
+            side_b = next((p for p in book_prices if p["name"] == side_b_name), None)
+            if side_a and side_b and side_a["price"] and side_b["price"]:
+                raw = [
+                    american_to_implied_prob(side_a["price"]),
+                    american_to_implied_prob(side_b["price"]),
+                ]
+                devigged = multiplicative_devig(raw)
+                a_probs.append(devigged[0])
+                b_probs.append(devigged[1])
+        return a_probs, b_probs
+
     def _consensus_h2h(
         self, prices: List[Dict], home: str, away: str
     ) -> Optional[Dict[str, float]]:
-        home_probs: List[float] = []
-        away_probs: List[float] = []
-
-        # Group by book and devig each pair
-        books = {p["book"] for p in prices}
-        for book in books:
-            book_prices = [p for p in prices if p["book"] == book]
-            home_p = next((p for p in book_prices if p["name"] == home), None)
-            away_p = next((p for p in book_prices if p["name"] == away), None)
-            if home_p and away_p and home_p["price"] and away_p["price"]:
-                raw = [
-                    american_to_implied_prob(home_p["price"]),
-                    american_to_implied_prob(away_p["price"]),
-                ]
-                devigged = multiplicative_devig(raw)
-                home_probs.append(devigged[0])
-                away_probs.append(devigged[1])
-
+        home_probs, away_probs = self._devig_two_way_prices(prices, home, away)
         if not home_probs:
             return None
-
         return {
             home: float(np.mean(home_probs)),
             away: float(np.mean(away_probs)),
@@ -424,26 +443,9 @@ class CBBEdgeCalculator:
     def _consensus_spreads(
         self, prices: List[Dict], home: str, away: str
     ) -> Optional[Dict[str, float]]:
-        home_probs: List[float] = []
-        away_probs: List[float] = []
-
-        books = {p["book"] for p in prices}
-        for book in books:
-            book_prices = [p for p in prices if p["book"] == book]
-            home_p = next((p for p in book_prices if p["name"] == home), None)
-            away_p = next((p for p in book_prices if p["name"] == away), None)
-            if home_p and away_p and home_p["price"] and away_p["price"]:
-                raw = [
-                    american_to_implied_prob(home_p["price"]),
-                    american_to_implied_prob(away_p["price"]),
-                ]
-                devigged = multiplicative_devig(raw)
-                home_probs.append(devigged[0])
-                away_probs.append(devigged[1])
-
+        home_probs, away_probs = self._devig_two_way_prices(prices, home, away)
         if not home_probs:
             return None
-
         return {
             f"{home} spread": float(np.mean(home_probs)),
             f"{away} spread": float(np.mean(away_probs)),
