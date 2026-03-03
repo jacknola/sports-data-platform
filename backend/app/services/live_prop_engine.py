@@ -173,10 +173,12 @@ class LivePropProjection:
             return f'LEAN {self.best_side.upper()}'
         elif edge >= 0.05:
             return f'MARGINAL {self.best_side.upper()}'
+        elif edge >= 0.03:
+            return f'SMALL {self.best_side.upper()}'
         elif abs(edge) < 0.03:
             return 'PASS'
         else:
-            return f'FADE {("under" if self.best_side == "over" else "over").upper()}'
+            return f'FADE {self.best_side.upper()}'
 
     def to_dict(self) -> Dict:
         return {
@@ -324,18 +326,22 @@ class LivePropEngine:
         true_p_over = max(0.01, min(0.99, true_p_over))
         true_p_under = 1.0 - true_p_over
 
-        # 8. Market probabilities
+        # 8. Market probabilities — derive each side independently from its own odds
         implied_p_over = PropAnalyzer._american_to_implied(live_line.over_odds)
-        implied_p_under = 1.0 - implied_p_over
+        implied_p_under = PropAnalyzer._american_to_implied(live_line.under_odds)
         devig_p_over, _ = PropAnalyzer.devig_prop(live_line.over_odds, live_line.under_odds)
 
         # 9. Edge
         edge_over = true_p_over - implied_p_over
         edge_under = true_p_under - implied_p_under
 
-        # 10. Half-Kelly sizing, capped at 10%
-        decimal_odds = american_to_decimal(live_line.over_odds)
-        raw_kelly = max(0.0, (true_p_over * decimal_odds - 1.0) / (decimal_odds - 1.0))
+        # 10. Half-Kelly sizing for the best side, capped at 10%
+        if edge_over >= edge_under:
+            decimal_odds = american_to_decimal(live_line.over_odds)
+            raw_kelly = max(0.0, (true_p_over * decimal_odds - 1.0) / (decimal_odds - 1.0))
+        else:
+            decimal_odds = american_to_decimal(live_line.under_odds)
+            raw_kelly = max(0.0, (true_p_under * decimal_odds - 1.0) / (decimal_odds - 1.0))
         kelly_fraction = min(raw_kelly * 0.5, 0.10)
 
         projection = LivePropProjection(
