@@ -117,6 +117,8 @@ class CBBEdgeCalculator:
     Fetches live NCAAB odds and calculates edge for each game/market.
     """
 
+    BASE_URL = "https://api.the-odds-api.com/v4"
+
     def __init__(self) -> None:
         self.api_key: Optional[str] = getattr(settings, "THE_ODDS_API_KEY", None) or \
                                       getattr(settings, "ODDSAPI_API_KEY", None)
