@@ -234,7 +234,7 @@ class LivePropEngine:
     Usage:
         engine = LivePropEngine()
         projection = engine.analyze(player, game_state, player_season_data, live_line)
-        print(projection.verdict)  # e.g., "STRONG OVER"
+        logger.info(projection.verdict)  # e.g., "STRONG OVER"
     """
 
     def analyze(

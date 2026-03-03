@@ -31,7 +31,7 @@ from loguru import logger
 import pandas as pd
 
 # Import our services
-from app.services.sharp_money_detector import SharpMoneyDetector
+from app.services.line_movement_analyzer import LineMovementAnalyzer
 from app.services.multivariate_kelly import (
     MultivariateKellyOptimizer,
     BettingOpportunity,
@@ -634,7 +634,7 @@ def run_analysis() -> Dict[str, Any]:
     scored_plays: List[Dict[str, Any]] = []
     game_analyses: List[Dict[str, Any]] = []
 
-    detector = SharpMoneyDetector()
+    detector = LineMovementAnalyzer()
     optimizer = MultivariateKellyOptimizer(
         kelly_scale=0.5,  # Half-Kelly
         max_single_fraction=0.05,  # Max 5% per bet
@@ -671,30 +671,29 @@ def run_analysis() -> Dict[str, Any]:
         blended_home_prob = 0.60 * true_home_prob + 0.40 * game["model_home_prob"]
         blended_away_prob = 1.0 - blended_home_prob
 
-        # --- Sharp Signal Detection ---
-        sharp_analysis = SharpMoneyDetector.analyze_game(
+        # --- Line Movement & Market Consensus Analysis ---
+        sharp_analysis = LineMovementAnalyzer.analyze_game(
             game_id=game["game_id"],
             market="spread",
             home_team=game["home"],
             away_team=game["away"],
             open_line=game["open_spread"],
             current_line=game["spread"],
-            home_ticket_pct=game["home_ticket_pct"],
-            home_money_pct=game["home_money_pct"],
             pinnacle_home_odds=game["pinnacle_home_odds"],
             retail_home_odds=game["retail_home_odds"],
+            home_ticket_pct=game["home_ticket_pct"],
+            home_money_pct=game["home_money_pct"],
         )
 
         sharp_side = sharp_analysis["sharp_side"]
         signals = sharp_analysis["sharp_signals"]
         signal_confidence = sharp_analysis["signal_confidence"]
 
-        # Determine if sharp signal confirms the bet
-        # RLM/FREEZE signals raise confidence; sharp_side identifies the value side
+        # Line-movement and consensus signals raise confidence
         sharp_boost = 0.0
-        if "RLM" in signals:
+        if "LINE_MOVE" in signals:
             sharp_boost = signal_confidence * 0.5
-        elif "FREEZE" in signals:
+        elif "CONSENSUS" in signals:
             sharp_boost = signal_confidence * 0.4
 
         # --- EV Calculation for both sides against retail ---

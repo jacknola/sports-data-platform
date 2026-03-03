@@ -1318,7 +1318,7 @@ class GoogleSheetsService:
 
                 # ── Section 2: Color Key ──
                 ["🎨 COLOR CODE", "Meaning", "Action", ""],
-                ["🟢 Strong Play",  "Edge ≥ 7% + High confidence",    "BET — Full Kelly recommendation", ""],
+                ["🟢 Strong Play",  "Edge ≥ 7% + High confidence",    "BET — Half Kelly recommendation", ""],
                 ["🟩 Good Play",    "Edge 5–7% + Medium confidence",  "BET — Half Kelly recommended", ""],
                 ["🟡 Lean",         "Edge 3–5% — Lower confidence",   "SMALL BET or pass", ""],
                 ["🔴 Pass",         "Edge < 3% or negative",          "SKIP — no value", ""],

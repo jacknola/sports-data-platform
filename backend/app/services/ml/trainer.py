@@ -240,12 +240,12 @@ class ModelTrainer:
         # Log loss and AUC (handle edge cases)
         try:
             ll = log_loss(y, y_pred_proba)
-        except:
+        except Exception:
             ll = float("inf")
 
         try:
             auc = roc_auc_score(y, y_pred_proba)
-        except:
+        except Exception:
             auc = 0.5
 
         metrics = {

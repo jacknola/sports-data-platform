@@ -1,12 +1,13 @@
 """
-Sharp Money Detection Service
+Sharp Money Detection Service  (DEPRECATED)
 
-Identifies professional syndicate activity through market signal analysis:
-- Reverse Line Movement (RLM)
-- Steam Moves (coordinated multi-book shifts)
-- Line Freeze detection
-- Head Fake / Market Manipulation filtering
-- Closing Line Value (CLV) tracking
+This module is preserved for backward compatibility.  New code should import
+from ``app.services.line_movement_analyzer`` instead, which replaces
+signal-detection heuristics (RLM, Steam, Freeze) with practical
+line-movement and multi-book consensus analysis.
+
+Re-exported symbols:
+    CLVRecord, SharpMoneyDetector (thin wrapper around LineMovementAnalyzer)
 """
 
 import time
@@ -15,6 +16,13 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 import numpy as np
 from loguru import logger
+
+# Re-export the new canonical types so existing ``from sharp_money_detector
+# import CLVRecord`` still works.
+from app.services.line_movement_analyzer import (  # noqa: F401
+    CLVRecord as _CLVRecord,
+    LineMovementAnalyzer,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -58,19 +66,8 @@ class SharpSignal:
             return "LOW"
 
 
-@dataclass
-class CLVRecord:
-    """Closing Line Value tracking record"""
-    game_id: str
-    market: str
-    side: str
-    bet_odds: float          # Odds at time of bet
-    closing_odds: float      # Pinnacle closing line odds
-    clv_pct: float           # CLV in percentage points
-    implied_at_bet: float    # Implied probability at bet time
-    implied_closing: float   # Implied probability at close
-    bet_timestamp: float
-    game_start: float
+# Re-export CLVRecord from the new module for backward compatibility
+CLVRecord = _CLVRecord
 
 
 # ---------------------------------------------------------------------------
@@ -79,13 +76,11 @@ class CLVRecord:
 
 class SharpMoneyDetector:
     """
-    Analyzes market data streams to detect professional betting activity.
+    DEPRECATED — use ``LineMovementAnalyzer`` from
+    ``app.services.line_movement_analyzer`` for new code.
 
-    Based on three primary signals:
-    1. Reverse Line Movement (RLM) — line moves against public tickets
-    2. Steam Moves — sudden coordinated multi-book shifts
-    3. Line Freeze — line static despite heavy public support on one side
-    4. Head Fake Filter — identifies and discards manipulation attempts
+    This class is preserved for backward compatibility.  Key public methods
+    now delegate to ``LineMovementAnalyzer``.
     """
 
     # Minimum public ticket % to be considered "one-sided"
@@ -111,11 +106,10 @@ class SharpMoneyDetector:
     HEAD_FAKE_VOLATILITY_MULTIPLIER = 2.0  # ≥ 2σ move
 
     def __init__(self):
-        # Stores historical snapshots per game+market key
+        self._delegate = LineMovementAnalyzer()
+        # Legacy stores kept for any remaining callers
         self._snapshots: Dict[str, List[MarketSnapshot]] = {}
-        # Tracks historical volatility per game+market
         self._volatility_history: Dict[str, List[float]] = {}
-        # CLV records
         self._clv_records: List[CLVRecord] = []
 
     # ------------------------------------------------------------------
@@ -288,63 +282,20 @@ class SharpMoneyDetector:
         game_start: float,
         bet_timestamp: Optional[float] = None
     ) -> CLVRecord:
-        """
-        Record and return CLV for a placed bet.
-
-        CLV > 0 means the bet was placed at better-than-closing odds (positive result).
-        CLV is measured in implied probability percentage points.
-
-        Args:
-            game_id: Game identifier
-            market: Market type
-            side: Side bet was placed on
-            bet_odds: American odds at time of bet placement
-            closing_odds: Pinnacle closing American odds (ground truth)
-            game_start: Unix timestamp of game start
-            bet_timestamp: When the bet was placed (defaults to now)
-
-        Returns:
-            CLVRecord with calculated CLV
-        """
-        bet_ts = bet_timestamp or time.time()
-        implied_bet = self._american_to_implied(bet_odds)
-        implied_close = self._american_to_implied(closing_odds)
-        clv_pct = (implied_close - implied_bet) * 100  # positive = we got better price
-
-        record = CLVRecord(
+        """DEPRECATED — delegates to LineMovementAnalyzer.record_clv."""
+        return self._delegate.record_clv(
             game_id=game_id,
             market=market,
             side=side,
             bet_odds=bet_odds,
             closing_odds=closing_odds,
-            clv_pct=clv_pct,
-            implied_at_bet=implied_bet,
-            implied_closing=implied_close,
-            bet_timestamp=bet_ts,
-            game_start=game_start
+            game_start=game_start,
+            bet_timestamp=bet_timestamp,
         )
-        self._clv_records.append(record)
-
-        logger.info(
-            f"CLV recorded: {game_id} {market} {side} "
-            f"bet={bet_odds:+.0f} close={closing_odds:+.0f} CLV={clv_pct:+.2f}%"
-        )
-        return record
 
     def clv_summary(self) -> Dict:
-        """Return summary statistics of all CLV records"""
-        if not self._clv_records:
-            return {'count': 0, 'avg_clv': 0.0, 'pct_positive': 0.0}
-
-        clvs = [r.clv_pct for r in self._clv_records]
-        return {
-            'count': len(clvs),
-            'avg_clv': round(np.mean(clvs), 3),
-            'median_clv': round(float(np.median(clvs)), 3),
-            'std_clv': round(float(np.std(clvs)), 3),
-            'pct_positive': round(sum(1 for c in clvs if c > 0) / len(clvs), 3),
-            'cumulative_clv': round(sum(clvs), 3)
-        }
+        """DEPRECATED — delegates to LineMovementAnalyzer.clv_summary."""
+        return self._delegate.clv_summary()
 
     # ------------------------------------------------------------------
     # Standalone Analysis (for use without streaming)
@@ -366,82 +317,20 @@ class SharpMoneyDetector:
         """
         Static analysis for a single game given snapshot data.
 
-        Returns a dict with signals, edge, and recommendation.
+        DEPRECATED — delegates to ``LineMovementAnalyzer.analyze_game``.
         """
-        signals = []
-        sharp_side = None
-        confidence_scores = []
-
-        # --- RLM Check ---
-        home_is_public_fave = home_ticket_pct >= 0.65
-        away_is_public_fave = (1 - home_ticket_pct) >= 0.65
-
-        if home_is_public_fave:
-            line_moved_against_home = current_line < open_line  # home got fewer points
-            if line_moved_against_home:
-                ticket_gap = home_ticket_pct - home_money_pct
-                if ticket_gap >= 0.10:
-                    conf = min(0.90, 0.55 + ticket_gap * 2.0)
-                    signals.append('RLM')
-                    sharp_side = away_team
-                    confidence_scores.append(conf)
-
-        if away_is_public_fave:
-            away_ticket_pct = 1 - home_ticket_pct
-            away_money_pct = 1 - home_money_pct
-            line_moved_against_away = current_line > open_line
-            if line_moved_against_away:
-                ticket_gap = away_ticket_pct - away_money_pct
-                if ticket_gap >= 0.10:
-                    conf = min(0.90, 0.55 + ticket_gap * 2.0)
-                    signals.append('RLM')
-                    sharp_side = home_team
-                    confidence_scores.append(conf)
-
-        # --- Freeze Check ---
-        line_unchanged = abs(current_line - open_line) <= 0.25
-        heavy_public = home_ticket_pct >= 0.80 or (1 - home_ticket_pct) >= 0.80
-        if heavy_public and line_unchanged:
-            signals.append('FREEZE')
-            sharp_side = away_team if home_ticket_pct >= 0.80 else home_team
-            confidence_scores.append(0.70)
-
-        # --- +EV Calculation ---
-        # Infer the other side of Pinnacle odds for devigging.
-        # Pinnacle spreads typically carry ~2.5% total overround.
-        # When we only have one side, use the multiplicative devig formula:
-        #   true_prob = implied / (1 + overround)
-        # This correctly removes the vig baked into the single-sided implied prob.
-        pinnacle_home_implied = SharpMoneyDetector._american_to_implied_static(pinnacle_home_odds)
-        total_vig_estimate = 0.025  # Pinnacle typical ~2.5% total overround
-        devigged_home = pinnacle_home_implied / (1.0 + total_vig_estimate)
-
-        retail_implied = SharpMoneyDetector._american_to_implied_static(retail_home_odds)
-
-        # True edge = Pinnacle devigged prob vs retail implied
-        edge = devigged_home - retail_implied
-
-        avg_confidence = float(np.mean(confidence_scores)) if confidence_scores else 0.0
-
-        return {
-            'game_id': game_id,
-            'market': market,
-            'home_team': home_team,
-            'away_team': away_team,
-            'open_line': open_line,
-            'current_line': current_line,
-            'home_ticket_pct': home_ticket_pct,
-            'home_money_pct': home_money_pct,
-            'line_move': current_line - open_line,
-            'sharp_signals': signals,
-            'sharp_side': sharp_side,
-            'signal_confidence': round(avg_confidence, 3),
-            'pinnacle_implied': round(pinnacle_home_implied, 4),
-            'retail_implied': round(retail_implied, 4),
-            'ev_edge': round(edge, 4),
-            'ev_edge_pct': round(edge * 100, 2),
-            'is_positive_ev': edge > 0.03,
-        }
+        return LineMovementAnalyzer.analyze_game(
+            game_id=game_id,
+            market=market,
+            home_team=home_team,
+            away_team=away_team,
+            open_line=open_line,
+            current_line=current_line,
+            pinnacle_home_odds=pinnacle_home_odds,
+            retail_home_odds=retail_home_odds,
+            home_ticket_pct=home_ticket_pct,
+            home_money_pct=home_money_pct,
+        )
 
     # ------------------------------------------------------------------
     # Private Helpers
@@ -543,28 +432,13 @@ class SharpMoneyDetector:
 
     @staticmethod
     def _american_to_implied(american_odds: float) -> float:
-        return SharpMoneyDetector._american_to_implied_static(american_odds)
+        return LineMovementAnalyzer._american_to_implied(american_odds)
 
     @staticmethod
     def _american_to_implied_static(american_odds: float) -> float:
-        if american_odds > 0:
-            return 100 / (american_odds + 100)
-        else:
-            return abs(american_odds) / (abs(american_odds) + 100)
+        return LineMovementAnalyzer._american_to_implied(american_odds)
 
     @staticmethod
     def devig_odds(odds_side1: float, odds_side2: float) -> Tuple[float, float]:
-        """
-        Remove the bookmaker vig from a two-sided market.
-
-        Args:
-            odds_side1: American odds for side 1 (e.g., home team)
-            odds_side2: American odds for side 2 (e.g., away team)
-
-        Returns:
-            Tuple of (true_prob_side1, true_prob_side2)
-        """
-        imp1 = SharpMoneyDetector._american_to_implied_static(odds_side1)
-        imp2 = SharpMoneyDetector._american_to_implied_static(odds_side2)
-        total = imp1 + imp2
-        return imp1 / total, imp2 / total
+        """DEPRECATED — delegates to LineMovementAnalyzer.devig_odds."""
+        return LineMovementAnalyzer.devig_odds(odds_side1, odds_side2)
