@@ -65,9 +65,18 @@ def american_to_prob(american_odds: int) -> float:
 
 
 def _normalize_team_name(s: Optional[str]) -> str:
-    """Lowercase and normalise common NCAAB team name variants for matching."""
+    """Lowercase and normalise common NCAAB team name variants for matching.
+
+    Applies St./State/Saint normalisation *before* stripping remaining dots so
+    that "St. John's" correctly becomes "state johns" and can be compared to
+    "Saint Johns".
+    """
     t = (s or "").strip().lower()
-    return t.replace(".", "").replace("st.", "state").replace(" saint ", " state ").replace(" st ", " state ").replace("  ", " ")
+    # Handle "St." and "Saint" variants before dot removal
+    t = t.replace("st.", "state").replace(" saint ", " state ").replace(" st ", " state ")
+    # Remove any remaining dots (e.g. from abbreviations like "u.c.l.a.")
+    t = t.replace(".", "")
+    return t.replace("  ", " ")
 
 
 _TEAM_ABBREVIATIONS: Dict[str, str] = {
@@ -134,9 +143,10 @@ def _lookup_team_stats(
         if n_lower in t_lower or t_lower in n_lower:
             return data
 
-    # 4. Normalised St./State match
+    # 4. Normalised St./State match (t_lower already computed above)
     for name, data in team_stats.items():
-        if _normalize_team_name(name) in _normalize_team_name(team_name) or _normalize_team_name(team_name) in _normalize_team_name(name):
+        n_lower = _normalize_team_name(name)
+        if n_lower in t_lower or t_lower in n_lower:
             return data
 
     return None

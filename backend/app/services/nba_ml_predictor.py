@@ -47,6 +47,17 @@ def _american_to_decimal(odds: float) -> float:
     return 100.0 / abs(odds) + 1.0
 
 
+# Priority order for bookmaker selection (sharp books first, then retail)
+PRIORITY_BOOKS = ["pinnacle", "fanduel", "draftkings", "circa", "bovada"]
+
+# NBA advanced stats columns sourced from nba_api LeagueDashTeamStats
+_TEAM_STAT_COLS = ("OFF_RATING", "DEF_RATING", "W_PCT", "PACE")
+
+# Default values used when live team stats are unavailable
+_DEFAULT_RATING = 110.0
+_DEFAULT_WIN_PCT = 0.5
+
+
 class NBAMLPredictor:
     """NBA betting predictions using machine learning"""
 
@@ -188,8 +199,8 @@ class NBAMLPredictor:
                 season_w_pct_away = None
 
             if season_w_pct_home is None or season_w_pct_away is None:
-                season_w_pct_home = features.get("home_win_pct", 0.5)  # type: ignore
-                season_w_pct_away = features.get("away_win_pct", 0.5)  # type: ignore
+                season_w_pct_home = features.get("home_win_pct", _DEFAULT_WIN_PCT)  # type: ignore
+                season_w_pct_away = features.get("away_win_pct", _DEFAULT_WIN_PCT)  # type: ignore
 
             return {
                 "home_team": home_team,
@@ -204,12 +215,12 @@ class NBAMLPredictor:
                 "season_w_pct_away": season_w_pct_away,
                 # Core feature snapshot used for this prediction (for traceability)
                 "features": {
-                    "home_off_rating": features.get("home_off_rating", 110.0),
-                    "home_def_rating": features.get("home_def_rating", 110.0),
-                    "away_off_rating": features.get("away_off_rating", 110.0),
-                    "away_def_rating": features.get("away_def_rating", 110.0),
-                    "home_win_pct": features.get("home_win_pct", 0.5),
-                    "away_win_pct": features.get("away_win_pct", 0.5),
+                    "home_off_rating": features.get("home_off_rating", _DEFAULT_RATING),
+                    "home_def_rating": features.get("home_def_rating", _DEFAULT_RATING),
+                    "away_off_rating": features.get("away_off_rating", _DEFAULT_RATING),
+                    "away_def_rating": features.get("away_def_rating", _DEFAULT_RATING),
+                    "home_win_pct": features.get("home_win_pct", _DEFAULT_WIN_PCT),
+                    "away_win_pct": features.get("away_win_pct", _DEFAULT_WIN_PCT),
                 },
                 # Market data – populated by predict_today_games(); empty by default
                 "spread": {},
@@ -244,12 +255,12 @@ class NBAMLPredictor:
                     logger.warning(f"Stats feature engineering failed: {e}")
 
         feature_dict = {
-            "home_off_rating": features.get("home_off_rating", 110.0),
-            "home_def_rating": features.get("home_def_rating", 110.0),
-            "away_off_rating": features.get("away_off_rating", 110.0),
-            "away_def_rating": features.get("away_def_rating", 110.0),
-            "home_win_pct": features.get("home_win_pct", 0.5),
-            "away_win_pct": features.get("away_win_pct", 0.5),
+            "home_off_rating": features.get("home_off_rating", _DEFAULT_RATING),
+            "home_def_rating": features.get("home_def_rating", _DEFAULT_RATING),
+            "away_off_rating": features.get("away_off_rating", _DEFAULT_RATING),
+            "away_def_rating": features.get("away_def_rating", _DEFAULT_RATING),
+            "home_win_pct": features.get("home_win_pct", _DEFAULT_WIN_PCT),
+            "away_win_pct": features.get("away_win_pct", _DEFAULT_WIN_PCT),
             "home_recent_form": features.get("home_recent_form", [1, 1, 1, 0, 1]),
             "away_recent_form": features.get("away_recent_form", [1, 1, 0, 1, 0]),
             "home_pace": features.get("home_pace", 100.0),
@@ -460,12 +471,11 @@ class NBAMLPredictor:
         home_odds = -110
         away_odds = -110
 
-        target_books = ["pinnacle", "fanduel", "draftkings", "circa", "bovada"]
         spread_data: Dict[str, Any] = {}
         total_data: Dict[str, Any] = {}
         best_book_used = ""
 
-        for book in target_books:
+        for book in PRIORITY_BOOKS:
             b_data = next((b for b in bookmakers if b["key"] == book), None)
             if not b_data:
                 continue
@@ -513,21 +523,19 @@ class NBAMLPredictor:
             home_id = self._get_team_id(str(home_team)) if home_team else None
             away_id = self._get_team_id(str(away_team)) if away_team else None
 
-            if home_id:
-                h_stats = stats_df[stats_df["TEAM_ID"] == home_id]
-                if not h_stats.empty:
-                    features["home_off_rating"] = float(h_stats.iloc[0]["OFF_RATING"])
-                    features["home_def_rating"] = float(h_stats.iloc[0]["DEF_RATING"])
-                    features["home_win_pct"] = float(h_stats.iloc[0]["W_PCT"])
-                    features["home_pace"] = float(h_stats.iloc[0]["PACE"])
-
-            if away_id:
-                a_stats = stats_df[stats_df["TEAM_ID"] == away_id]
-                if not a_stats.empty:
-                    features["away_off_rating"] = float(a_stats.iloc[0]["OFF_RATING"])
-                    features["away_def_rating"] = float(a_stats.iloc[0]["DEF_RATING"])
-                    features["away_win_pct"] = float(a_stats.iloc[0]["W_PCT"])
-                    features["away_pace"] = float(a_stats.iloc[0]["PACE"])
+            # Column → feature-key prefixes for home and away
+            stat_prefixes = (("home", home_id, stats_df), ("away", away_id, stats_df))
+            for prefix, team_id, df in stat_prefixes:
+                if not team_id:
+                    continue
+                row = df[df["TEAM_ID"] == team_id]
+                if row.empty:
+                    continue
+                r = row.iloc[0]
+                features[f"{prefix}_off_rating"] = float(r["OFF_RATING"])
+                features[f"{prefix}_def_rating"] = float(r["DEF_RATING"])
+                features[f"{prefix}_win_pct"] = float(r["W_PCT"])
+                features[f"{prefix}_pace"] = float(r["PACE"])
 
         return {
             "home_team": home_team,
