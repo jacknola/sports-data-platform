@@ -57,7 +57,7 @@ class BayesianAnalyzer:
         """
         devig_prob = data.get("devig_prob")
         model_prob = data.get("model_prob")
-        implied_prob = data.get("implied_prob", 0.5)
+        implied_prob = data.get("implied_prob")  # None when no real market price
         features = data.get("features", {})
 
         logger.info(
@@ -98,7 +98,7 @@ class BayesianAnalyzer:
         # Update Beta parameters with pseudo-observations from the model projection.
         # pseudo_obs controls how strongly the likelihood (adjusted_prob) updates
         # the posterior. Higher = tighter posterior, but we want it responsive.
-        pseudo_obs = 8  # was 20 — reduced so posterior tracks adjusted_prob closely
+        pseudo_obs = 15  # responsive but not over-fitted to noisy inputs
         alpha_post = alpha_prior + adjusted_prob * pseudo_obs
         beta_post = beta_prior + (1 - adjusted_prob) * pseudo_obs
 

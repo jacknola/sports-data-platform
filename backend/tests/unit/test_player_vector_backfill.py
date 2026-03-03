@@ -11,7 +11,8 @@ def test_backfill_all_player_vectors(db_session):
     # Setup test data
     player = Player(external_player_id="9999", name="Test Player", sport="nba")
     db_session.add(player)
-    
+    db_session.flush()
+
     log = PlayerGameLog(
         player_id=player.id,
         external_log_id="NBA_LOG_VECTOR_TEST",
@@ -19,7 +20,8 @@ def test_backfill_all_player_vectors(db_session):
         pra=40
     )
     db_session.add(log)
-    
+    db_session.flush()
+
     # Mock VectorStore
     vector_mock = MagicMock()
     

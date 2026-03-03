@@ -587,8 +587,10 @@ class NBADvPAnalyzer:
                 mod = modifiers.get(stat, 1.0)
                 projected = self.project_player_line(baseline, mod)
 
-                # Use mock sportsbook line if provided, else use baseline
-                sb_line = player.get(f"line_{stat}", baseline)
+                # Only flag discrepancy if a real sportsbook line exists; skip self-comparison
+                sb_line = player.get(f"line_{stat}")
+                if sb_line is None:
+                    continue
 
                 recommendation, dvp_pct = self.flag_discrepancy(projected, sb_line)
 

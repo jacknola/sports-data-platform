@@ -395,8 +395,13 @@ class GoogleSheetsService:
 
             today = datetime.now().strftime("%Y-%m-%d")
             rows: List[List[Any]] = []
+            player_prop_counts: Dict[str, int] = {}
 
             for p in all_props:
+                player_key = p.get("player_name", "")
+                if player_prop_counts.get(player_key, 0) >= MAX_PROPS_PER_PLAYER:
+                    continue
+                player_prop_counts[player_key] = player_prop_counts.get(player_key, 0) + 1
                 stat_type = p.get("stat_type", "")
                 stat_label = _STAT_DISPLAY.get(stat_type, stat_type.upper())
                 best_side = p.get("best_side", "over").upper()
@@ -1182,8 +1187,13 @@ class GoogleSheetsService:
 
             today = datetime.now().strftime("%Y-%m-%d")
             rows: List[List[Any]] = []
+            player_prop_counts: Dict[str, int] = {}
 
             for p in filtered_props:
+                player_key = p.get("player_name", "")
+                if player_prop_counts.get(player_key, 0) >= MAX_PROPS_PER_PLAYER:
+                    continue
+                player_prop_counts[player_key] = player_prop_counts.get(player_key, 0) + 1
                 stat_type = p.get("stat_type", "")
                 stat_label = _STAT_DISPLAY.get(stat_type, stat_type.upper())
                 best_side = p.get("best_side", "over").upper()

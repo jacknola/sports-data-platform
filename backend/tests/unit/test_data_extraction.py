@@ -19,6 +19,7 @@ def test_fetch_historical_data(db_session):
         away_score=105
     )
     db_session.add(game1)
+    db_session.flush()
     
     bet1 = Bet(
         selection_id="bet_1",

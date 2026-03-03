@@ -117,7 +117,7 @@ async def _get_live_props(sport: str) -> List[Dict]:
     #   - Require >= 2 books offering the prop (single-book lines are unreliable)
     #   - Diversify across stat types (not just threes)
     #   - Cap at MAX_ENRICHED to avoid 200+ NBA.com calls
-    MIN_DEVIG_EDGE = 0.01  # Very permissive — let model decide, not devig
+    MIN_DEVIG_EDGE = 0.03  # Minimum 3% EV required before enrichment
     MAX_PER_STAT = (
         30  # Max props per stat type (raised to support alternate lines)
     )
