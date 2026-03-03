@@ -406,7 +406,7 @@ async def _get_live_props(sport: str) -> List[Dict]:
             player_info = research.get("player", {})
             player_team = player_info.get("team", "") or ""
 
-            # Fallback: derive team from game logs matchup when balldontlie 429'd
+            # Fallback: derive team from game logs matchup
             if not player_team:
                 logs = research.get("game_logs", [])
                 if logs:
@@ -842,7 +842,7 @@ async def get_props(sport: str) -> Dict[str, Any]:
 
     Returns the full slate including model projection, sharp signals,
     and Bayesian posterior for each prop line. Uses LIVE data from
-    The Odds API + balldontlie.io player stats.
+    The Odds API and NBA.com player stats via nba_api.
     """
     logger.info(f"Fetching live props for {sport}")
     try:

@@ -52,7 +52,7 @@ class HistoricalPlayerProp(Base):
 
     # Source metadata
     sportsbook = Column(String, index=True)  # 'draftkings', 'fanduel', 'pinnacle', etc.
-    source = Column(String)  # 'balldontlie', 'sportsgamesodds', 'scraper'
+    source = Column(String)  # 'sportsgamesodds', 'scraper'
     external_prop_id = Column(String, unique=True)
 
     # Raw data storage

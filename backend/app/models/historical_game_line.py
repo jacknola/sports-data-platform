@@ -49,7 +49,7 @@ class HistoricalGameLine(Base):
     clv_ml = Column(Integer, nullable=True)
 
     # Source metadata
-    source = Column(String)  # 'balldontlie', 'kaggle', 'covers', 'sportsgamesodds'
+    source = Column(String)  # 'kaggle', 'covers', 'sportsgamesodds'
     external_game_id = Column(String, index=True)
     external_line_id = Column(String, unique=True)
 

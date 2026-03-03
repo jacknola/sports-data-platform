@@ -1,6 +1,6 @@
 """
 NBA Stats Service - Fetches player stats, game logs, matchup data, and injury reports
-from public APIs (balldontlie.io, the-odds-api.com) for prop bet analysis.
+from public APIs (nba_api / NBA.com, the-odds-api.com) for prop bet analysis.
 """
 
 import asyncio
@@ -78,7 +78,7 @@ class TTLCache:
 # Stat-key mappings
 # ---------------------------------------------------------------------------
 
-# Map from prop-type shorthand to the balldontlie field names
+# Map from prop-type shorthand to stat field names
 PROP_STAT_KEYS: Dict[str, List[str]] = {
     "points": ["pts"],
     "rebounds": ["reb"],
@@ -121,11 +121,10 @@ class NBAStatsService:
     Service for fetching NBA player statistics, game logs, matchup data,
     and injury reports from public APIs.
 
-    Primary data source: balldontlie.io (free NBA stats API)
+    Primary data source: nba_api / NBA.com (no API key required)
     Secondary data source: the-odds-api.com (odds / prop lines)
     """
 
-    BALLDONTLIE_BASE = "https://api.balldontlie.io/v1"
     ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 
     # Cache TTLs in seconds
@@ -137,11 +136,6 @@ class NBAStatsService:
     CACHE_TTL_MATCHUP = 600  # 10 minutes
 
     def __init__(self) -> None:
-        # Accept both env var naming conventions
-        self.balldontlie_api_key: Optional[str] = (
-            settings.BALLDONTLIE_API_KEY
-            or getattr(settings, "BALL_DONT_LIE_API_KEY", None)
-        )
         self.odds_api_key: Optional[str] = settings.THE_ODDS_API_KEY
         self._cache = TTLCache(default_ttl=300)
         self._current_season: int = self._resolve_current_season()
@@ -158,18 +152,6 @@ class NBAStatsService:
         # NBA season starts in October; if we are before October, the
         # "current" season started last calendar year.
         return today.year if today.month >= 10 else today.year - 1
-
-    def _bdl_headers(self) -> Dict[str, str]:
-        """Return headers for balldontlie.io requests."""
-        headers: Dict[str, str] = {"Accept": "application/json"}
-        if self.balldontlie_api_key:
-            headers["Authorization"] = self.balldontlie_api_key
-        return headers
-
-    @property
-    def is_available(self) -> bool:
-        """Whether balldontlie.io API is configured (has API key)."""
-        return bool(self.balldontlie_api_key)
 
     @staticmethod
     def _nba_season_str(season_year: int) -> str:
@@ -498,132 +480,6 @@ class NBAStatsService:
             logger.error(f"nba_api team stats failed: {exc}")
             return {}
 
-    async def _bdl_get(
-        self,
-        client: httpx.AsyncClient,
-        path: str,
-        params: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        """Execute a GET against the balldontlie API with standard error handling.
-
-        Returns empty dict if no API key is configured (graceful degradation).
-        """
-        if not self.balldontlie_api_key:
-            logger.debug(f"Skipping balldontlie request {path} — no API key configured")
-            return {"data": []}
-
-        url = f"{self.BALLDONTLIE_BASE}{path}"
-        response = await client.get(
-            url,
-            params=params or {},
-            headers=self._bdl_headers(),
-            timeout=30.0,
-        )
-        response.raise_for_status()
-        return response.json()
-
-    # ------------------------------------------------------------------
-    # Player search
-    # ------------------------------------------------------------------
-
-    async def search_player(self, name: str) -> Optional[Dict[str, Any]]:
-        """
-        Search for an NBA player by name.
-
-        Strategy: Search by last name (balldontlie partial match works best
-        on single tokens), then filter results by first name to find the
-        exact player.  Falls back to first-name search if last-name yields
-        nothing.
-
-        Args:
-            name: Player name (e.g. "LeBron James", "Cade Cunningham")
-
-        Returns:
-            Player dict with id, first_name, last_name, team, position, etc.
-            or None if not found.
-        """
-        cache_key = f"player_search:{name.lower().strip()}"
-        cached = self._cache.get(cache_key)
-        if cached is not None:
-            return cached
-
-        parts = name.strip().split()
-        if not parts:
-            return None
-
-        # Determine first/last name tokens for filtering
-        first_token = parts[0].lower()
-        last_token = parts[-1].lower() if len(parts) > 1 else ""
-
-        # Search by last name first (more unique), fallback to first name
-        search_terms = []
-        if last_token:
-            search_terms.append(last_token)
-        search_terms.append(first_token)
-
-        try:
-            async with httpx.AsyncClient() as client:
-                for term in search_terms:
-                    data = await self._bdl_get(
-                        client, "/players", {"search": term, "per_page": 25}
-                    )
-                    players = data.get("data", [])
-
-                    if not players:
-                        continue
-
-                    # If we have both first and last, filter for exact match
-                    if first_token and last_token:
-                        for p in players:
-                            p_first = (p.get("first_name") or "").lower()
-                            p_last = (p.get("last_name") or "").lower()
-                            if p_first == first_token and p_last == last_token:
-                                self._cache.set(
-                                    cache_key, p, self.CACHE_TTL_PLAYER_SEARCH
-                                )
-                                logger.info(
-                                    f"Found player: {p.get('first_name')} "
-                                    f"{p.get('last_name')} (id={p.get('id')})"
-                                )
-                                return p
-
-                        # Relaxed match: first name starts with token
-                        for p in players:
-                            p_first = (p.get("first_name") or "").lower()
-                            p_last = (p.get("last_name") or "").lower()
-                            if (
-                                p_first.startswith(first_token[:3])
-                                and p_last == last_token
-                            ):
-                                self._cache.set(
-                                    cache_key, p, self.CACHE_TTL_PLAYER_SEARCH
-                                )
-                                logger.info(
-                                    f"Found player (relaxed): "
-                                    f"{p.get('first_name')} {p.get('last_name')} "
-                                    f"(id={p.get('id')})"
-                                )
-                                return p
-                    else:
-                        # Single name — return first result
-                        player = players[0]
-                        self._cache.set(cache_key, player, self.CACHE_TTL_PLAYER_SEARCH)
-                        return player
-
-            logger.debug(f"No player found for: {name}")
-            # Cache the miss to avoid repeated lookups
-            self._cache.set(cache_key, None, 300)
-            return None
-
-        except httpx.HTTPStatusError as exc:
-            logger.error(
-                f"HTTP error searching player '{name}': {exc.response.status_code}"
-            )
-            return None
-        except Exception as exc:
-            logger.error(f"Error searching player '{name}': {exc}")
-            return None
-
     # ------------------------------------------------------------------
     # Season averages
     # ------------------------------------------------------------------
@@ -634,56 +490,23 @@ class NBAStatsService:
         season: Optional[int] = None,
         nba_api_id: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Fetch season averages for a player.
-
-        Waterfall:
-            1. balldontlie (Primary - using new API key)
-            2. nba_api / NBA.com (Fallback)
+        """Fetch season averages for a player via nba_api / NBA.com.
 
         Args:
-            player_id: balldontlie player id
+            player_id: Unused legacy parameter kept for API compatibility.
             season: Season year (defaults to current)
-            nba_api_id: NBA.com player_id for nba_api fallback
+            nba_api_id: NBA.com player_id
 
         Returns:
             Dict with: pts, reb, ast, stl, blk, fg3m, turnover, min,
             fg_pct, fg3_pct, ft_pct, games_played. Or None.
         """
-        season = season or self._current_season
-
-        # Try balldontlie first (Primary)
-        if self.balldontlie_api_key:
-            try:
-                # Conservative rate limit
-                await asyncio.sleep(1.0)
-                async with httpx.AsyncClient() as client:
-                    data = await self._bdl_get(
-                        client,
-                        "/season_averages",
-                        {"season": season, "player_ids[]": player_id},
-                    )
-                averages = data.get("data", [])
-                if averages:
-                    result = averages[0]
-                    self._cache.set(
-                        f"season_avg:{player_id}:{season}",
-                        result,
-                        self.CACHE_TTL_SEASON_AVERAGES,
-                    )
-                    logger.info(
-                        f"balldontlie season averages for player_id={player_id} ({season})"
-                    )
-                    return result
-            except Exception as e:
-                logger.debug(f"balldontlie season averages fallback: {e}")
-
-        # nba_api fallback
         if nba_api_id:
             return await self._nba_api_season_averages(nba_api_id)
 
         logger.warning(
             f"No season averages available for player_id={player_id} "
-            f"(balldontlie failed, no nba_api_id)"
+            f"(no nba_api_id)"
         )
         return None
 
@@ -698,82 +521,21 @@ class NBAStatsService:
         last_n: Optional[int] = None,
         nba_api_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        """Fetch game logs for a player.
-
-        Waterfall:
-            1. balldontlie (Primary - using new API key)
-            2. nba_api / NBA.com (Fallback)
+        """Fetch game logs for a player via nba_api / NBA.com.
 
         Args:
-            player_id: balldontlie player id
-            season: NBA season year (defaults to current)
+            player_id: Unused legacy parameter kept for API compatibility.
+            season: NBA season year (defaults to current; unused by nba_api path)
             last_n: If set, return only the most recent N games
-            nba_api_id: NBA.com player_id (fallback source)
+            nba_api_id: NBA.com player_id
 
         Returns:
             List of per-game dicts sorted most-recent first.
         """
-        season = season or self._current_season
-
-        # Primary: balldontlie (paid/new key)
-        if self.balldontlie_api_key:
-            logs = await self._fetch_all_game_logs_bdl(player_id, season)
-            if logs:
-                logs.sort(key=lambda g: g.get("game", {}).get("date", ""), reverse=True)
-                return logs[:last_n] if last_n else logs
-
-        # Fallback: nba_api
         if nba_api_id:
             return await self._nba_api_game_logs(nba_api_id, last_n)
 
         return []
-
-    async def _fetch_all_game_logs_bdl(
-        self, player_id: int, season: int
-    ) -> List[Dict[str, Any]]:
-        """Paginate balldontlie /stats endpoint with conservative rate limiting."""
-        all_logs: List[Dict[str, Any]] = []
-        page = 1
-        per_page = 100
-
-        try:
-            async with httpx.AsyncClient() as client:
-                while True:
-                    # Conservative delay between pages
-                    await asyncio.sleep(1.5)
-                    data = await self._bdl_get(
-                        client,
-                        "/stats",
-                        {
-                            "seasons[]": season,
-                            "player_ids[]": player_id,
-                            "per_page": per_page,
-                            "page": page,
-                        },
-                    )
-                    page_data = data.get("data", [])
-                    all_logs.extend(page_data)
-                    meta = data.get("meta", {})
-                    next_page = meta.get("next_page")
-                    if next_page is None or not page_data:
-                        break
-                    page = next_page
-
-            logger.info(
-                f"balldontlie: {len(all_logs)} game logs for "
-                f"player_id={player_id} ({season})"
-            )
-        except httpx.HTTPStatusError as exc:
-            logger.debug(
-                f"balldontlie game logs HTTP {exc.response.status_code} "
-                f"for player_id={player_id}"
-            )
-        except Exception as exc:
-            logger.error(
-                f"balldontlie game logs error for player_id={player_id}: {exc}"
-            )
-
-        return all_logs
 
     # ------------------------------------------------------------------
     # Rolling averages & splits
@@ -949,12 +711,10 @@ class NBAStatsService:
     ) -> Optional[Dict[str, Any]]:
         """Fetch team-level advanced stats: pace, off_rating, def_rating.
 
-        Waterfall:
-            1. nba_api LeagueDashTeamStats (real pace/ratings from NBA.com)
-            2. balldontlie /teams/{id} (basic info only, no advanced stats)
+        Uses nba_api LeagueDashTeamStats (real pace/ratings from NBA.com).
 
         Args:
-            team_id: balldontlie team id
+            team_id: Team id (used for lookup in nba_api results)
             team_abbreviation: Optional abbreviation e.g. "DET" for faster lookup
 
         Returns:
@@ -965,7 +725,7 @@ class NBAStatsService:
         if cached is not None:
             return cached
 
-        # Primary: nba_api advanced stats (all teams in one call)
+        # nba_api advanced stats (all teams in one call)
         all_team_stats = await self._nba_api_all_team_stats()
         if all_team_stats:
             # Look up by abbreviation if provided
@@ -980,25 +740,7 @@ class NBAStatsService:
                     self._cache.set(cache_key, stats, self.CACHE_TTL_TEAM_STATS)
                     return stats
 
-        # Fallback: balldontlie basic team info (no advanced stats)
-        try:
-            async with httpx.AsyncClient() as client:
-                data = await self._bdl_get(client, f"/teams/{team_id}")
-            team_info = data if "id" in data else data.get("data", data)
-            result = {
-                "team_id": team_info.get("id"),
-                "team_name": team_info.get("full_name"),
-                "abbreviation": team_info.get("abbreviation"),
-                "conference": team_info.get("conference"),
-                "pace": 100.0,  # default league average
-                "off_rating": 113.0,
-                "def_rating": 113.0,
-            }
-            self._cache.set(cache_key, result, self.CACHE_TTL_TEAM_STATS)
-            return result
-        except Exception as exc:
-            logger.error(f"get_team_stats failed for team_id={team_id}: {exc}")
-            return None
+        return None
 
     # ------------------------------------------------------------------
     # Matchup / defensive data
@@ -1199,27 +941,20 @@ class NBAStatsService:
         """
         stat_keys = PROP_STAT_KEYS.get(prop_type, [prop_type])
 
-        # Resolve both IDs in parallel: balldontlie (team/position) + NBA.com (stats)
-        player, nba_api_id = await asyncio.gather(
-            self.search_player(player_name),
-            self._nba_api_player_id(player_name),
-        )
+        # Resolve NBA.com player_id via nba_api (local lookup, no HTTP)
+        nba_api_id = await self._nba_api_player_id(player_name)
 
-        if player is None and nba_api_id is None:
+        if nba_api_id is None:
             return {"error": f"Player not found: {player_name}"}
 
-        # Use balldontlie metadata if available, else minimal stub
-        player_id: int = player["id"] if player else 0
-        player_team = (player or {}).get("team", {}) or {}
-        player_team_id: Optional[int] = player_team.get("id") if player_team else None
-        player_position: Optional[str] = (player or {}).get("position")
-        team_abbreviation: Optional[str] = (
-            player_team.get("abbreviation") if player_team else None
-        )
+        # Fetch season averages + game logs via nba_api
+        season_avg = await self.get_season_averages(0, nba_api_id=nba_api_id)
+        game_logs = await self.get_game_logs(0, nba_api_id=nba_api_id)
 
-        # Fetch season averages + game logs — nba_api primary, balldontlie fallback
-        season_avg = await self.get_season_averages(player_id, nba_api_id=nba_api_id)
-        game_logs = await self.get_game_logs(player_id, nba_api_id=nba_api_id)
+        # Team/position info not available from nba_api; derive from game logs if possible
+        player_team_id: Optional[int] = None
+        player_position: Optional[str] = None
+        team_abbreviation: Optional[str] = None
 
         # Rolling averages
         rolling = self.compute_rolling_averages(game_logs, stat_keys)
@@ -1245,19 +980,11 @@ class NBAStatsService:
         # Injuries for player's team
         injuries = await self.get_injury_report(team_abbreviation)
 
-        # Determine display name
-        if player:
-            display_name = f"{player.get('first_name', '')} {player.get('last_name', '')}".strip()
-        elif nba_api_id:
-            display_name = player_name # Use passed in name as fallback
-        else:
-            display_name = "Unknown Player"
-
         return {
             "player": {
-                "id": player_id,
-                "name": display_name,
-                "team": player_team.get("full_name") if player_team else None,
+                "id": nba_api_id,
+                "name": player_name,
+                "team": None,
                 "team_abbreviation": team_abbreviation,
                 "position": player_position,
             },
