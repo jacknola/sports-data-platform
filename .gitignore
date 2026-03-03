@@ -88,6 +88,9 @@ worktrees/
 # gemini-cli settings
 .gemini/
 
+# opencode user-specific config (personal, not shared)
+.opencode/oh-my-opencode.jsonc
+
 # GitHub App credentials
 gha-creds-*.json
 
