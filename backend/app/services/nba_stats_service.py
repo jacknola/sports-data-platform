@@ -4,6 +4,7 @@ from public APIs (nba_api / NBA.com, the-odds-api.com) for prop bet analysis.
 """
 
 import asyncio
+import re
 import time
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime, timedelta
@@ -486,15 +487,15 @@ class NBAStatsService:
 
     async def get_season_averages(
         self,
-        player_id: int,
+        player_id: Optional[int] = None,
         season: Optional[int] = None,
         nba_api_id: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
         """Fetch season averages for a player via nba_api / NBA.com.
 
         Args:
-            player_id: Unused legacy parameter kept for API compatibility.
-            season: Season year (defaults to current)
+            player_id: Unused; kept for API compatibility.
+            season: Unused; nba_api always returns the current season.
             nba_api_id: NBA.com player_id
 
         Returns:
@@ -504,10 +505,7 @@ class NBAStatsService:
         if nba_api_id:
             return await self._nba_api_season_averages(nba_api_id)
 
-        logger.warning(
-            f"No season averages available for player_id={player_id} "
-            f"(no nba_api_id)"
-        )
+        logger.warning("No season averages available: no nba_api_id provided")
         return None
 
     # ------------------------------------------------------------------
@@ -516,7 +514,7 @@ class NBAStatsService:
 
     async def get_game_logs(
         self,
-        player_id: int,
+        player_id: Optional[int] = None,
         season: Optional[int] = None,
         last_n: Optional[int] = None,
         nba_api_id: Optional[int] = None,
@@ -524,8 +522,8 @@ class NBAStatsService:
         """Fetch game logs for a player via nba_api / NBA.com.
 
         Args:
-            player_id: Unused legacy parameter kept for API compatibility.
-            season: NBA season year (defaults to current; unused by nba_api path)
+            player_id: Unused; kept for API compatibility.
+            season: Unused; nba_api always returns the current season.
             last_n: If set, return only the most recent N games
             nba_api_id: NBA.com player_id
 
@@ -948,13 +946,18 @@ class NBAStatsService:
             return {"error": f"Player not found: {player_name}"}
 
         # Fetch season averages + game logs via nba_api
-        season_avg = await self.get_season_averages(0, nba_api_id=nba_api_id)
-        game_logs = await self.get_game_logs(0, nba_api_id=nba_api_id)
+        season_avg = await self.get_season_averages(nba_api_id=nba_api_id)
+        game_logs = await self.get_game_logs(nba_api_id=nba_api_id)
 
-        # Team/position info not available from nba_api; derive from game logs if possible
+        # Derive team abbreviation from the first game log matchup (e.g. "BOS vs. LAL")
         player_team_id: Optional[int] = None
         player_position: Optional[str] = None
         team_abbreviation: Optional[str] = None
+        if game_logs:
+            first_matchup = game_logs[0].get("matchup", "")
+            m = re.match(r"^([A-Z]{2,4})\s+(?:vs\.?|@)", first_matchup)
+            if m:
+                team_abbreviation = m.group(1)
 
         # Rolling averages
         rolling = self.compute_rolling_averages(game_logs, stat_keys)
