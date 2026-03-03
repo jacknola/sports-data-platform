@@ -681,8 +681,6 @@ def run_analysis() -> Dict[str, Any]:
             current_line=game["spread"],
             pinnacle_home_odds=game["pinnacle_home_odds"],
             retail_home_odds=game["retail_home_odds"],
-            home_ticket_pct=game["home_ticket_pct"],
-            home_money_pct=game["home_money_pct"],
         )
 
         sharp_side = sharp_analysis["sharp_side"]
