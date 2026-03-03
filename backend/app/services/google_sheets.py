@@ -21,6 +21,17 @@ from loguru import logger
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Alternate-line sanity thresholds
+# Props where OVER odds are positive but line < SUSPECT_OVER_RATIO × projected_mean
+# are flagged as data errors (e.g. Jokic PTS OVER 9.5 at +180 when avg=26).
+# ═══════════════════════════════════════════════════════════════════════
+SUSPECT_OVER_LINE_RATIO: float = 0.65   # line / projected_mean < 0.65 + positive OVER odds → skip
+SUSPECT_UNDER_LINE_RATIO: float = 1.75  # line / projected_mean > 1.75 + positive UNDER odds → skip
+
+# Maximum number of props from the same player allowed in Top10 tab
+MAX_PROPS_PER_PLAYER: int = 2
+
+# ═══════════════════════════════════════════════════════════════════════
 # Stat display labels (mirrors slack_formatter)
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -535,13 +546,32 @@ class GoogleSheetsService:
                 # Implied spread from probability
                 proj_spread = round((home_prob - 0.5) * -26, 1) if home_prob else ""
 
-                # Best bet
+                # Best bet with explicit market label
                 best_bet = ev.get("best_bet", "")
                 best_side = home if best_bet == "home" else away
                 home_edge = ev.get("home_ev", 0)
                 away_edge = ev.get("away_ev", 0)
                 best_edge = home_edge if best_bet == "home" else away_edge
                 kelly = p.get("kelly_criterion", 0)
+
+                # Build explicit pick label: prefer spread when available, else ML
+                if best_bet:
+                    if spread_val:
+                        side_spread = spread_val if best_bet == "home" else (
+                            -float(spread_val) if spread_val != "" else ""
+                        )
+                        try:
+                            best_bet_label = f"{best_side} {float(side_spread):+.1f} SPREAD"
+                        except (ValueError, TypeError):
+                            best_bet_label = f"{best_side} ML"
+                    else:
+                        best_bet_label = f"{best_side} ML"
+                else:
+                    best_bet_label = ""
+
+                # Total recommendation label
+                ou_rec = uo.get("recommendation", "").upper() if uo else ""
+                total_label = f"{ou_rec} {total_val}".strip() if (ou_rec and total_val) else ou_rec
 
                 # Match to bets list
                 gid = f"NBA_{home}_{away}_{today.replace('-', '')}".replace(" ", "")
@@ -569,8 +599,8 @@ class GoogleSheetsService:
                         round(away_prob * 100, 1),
                         proj_spread,
                         uo.get("total_points", "") if uo else "",
-                        uo.get("recommendation", "").upper() if uo else "",
-                        f"{best_side} ({best_bet.upper()})" if best_bet else "",
+                        total_label,
+                        best_bet_label,
                         round(best_edge * 100, 2) if best_edge else "",
                         round(kelly * 100, 2) if kelly else "",
                         round(bet_size, 2) if bet_size else "",
@@ -705,14 +735,48 @@ class GoogleSheetsService:
                     s.get("game", "")[:60] for s in a.get("historical_context", [])[:2]
                 )
 
+                # ── Build explicit pick label ──
+                # Priority: bet from portfolio optimizer → derived from edge
+                spread = game.get("spread", 0) or 0
+                total = game.get("total", "")
+                if bet:
+                    side = bet.get("side", "")
+                    market = (bet.get("market") or "spread").lower()
+                    if market == "spread":
+                        # Show team with spread value (home spread is negative = home favored)
+                        if side == home:
+                            spread_label = f"{spread:+.1f}" if spread else ""
+                        else:
+                            spread_label = f"{-spread:+.1f}" if spread else ""
+                        pick_label = f"{side} {spread_label} SPREAD".strip()
+                    elif market in ("moneyline", "ml"):
+                        pick_label = f"{side} ML"
+                    elif market in ("total", "over", "under"):
+                        pick_label = f"{side} {total}"
+                    else:
+                        pick_label = side
+                elif confidence in ("HIGH", "MEDIUM") and (abs(he) >= 5.0 or abs(ae) >= 5.0):
+                    # Derive pick from edge analysis when no bet in portfolio
+                    if he >= ae:
+                        side = home
+                        edge_val = he
+                        spread_label = f"{spread:+.1f}" if spread else ""
+                    else:
+                        side = away
+                        edge_val = ae
+                        spread_label = f"{-spread:+.1f}" if spread else ""
+                    pick_label = f"{side} {spread_label} SPREAD ({edge_val*100:+.1f}%)".strip()
+                else:
+                    pick_label = ""
+
                 rows.append(
                     [
                         today,
                         home,
                         away,
                         game.get("conference", ""),
-                        game.get("spread", 0),
-                        game.get("total", ""),
+                        spread,
+                        total,
                         _fmt_odds(game.get("pinnacle_home_odds", 0)),
                         _fmt_odds(game.get("pinnacle_away_odds", 0)),
                         _fmt_odds(game.get("retail_home_odds", 0)),
@@ -732,7 +796,7 @@ class GoogleSheetsService:
                         a_eff.get("AdjDE", ""),
                         h_eff.get("BPI", ""),
                         a_eff.get("BPI", ""),
-                        bet.get("side", "") if bet else "",
+                        pick_label,
                         round(bet.get("portfolio_fraction_pct", 0), 2) if bet else "",
                         round(bet.get("bet_size_$", 0), 2) if bet else "",
                         confidence,
@@ -1081,9 +1145,28 @@ class GoogleSheetsService:
                 except (ValueError, TypeError):
                     odds_int = -110
 
-                # High Value Logic: Edge < 30% OR "Even Odds" (-110 to +110)
+                # High Value Logic: Edge 0–30% AND "Even Odds" (-110 to +110) OR odds are realistic
+                # Also guard against alternate lines where odds direction doesn't match projection:
+                #   If OVER odds are positive (+money) but line << projected_mean, it's a data error
                 is_low_edge = (edge > 0.0) and (edge < 0.30)
                 is_even_odds = -110 <= odds_int <= 110
+
+                # Alternate-line sanity check: skip props where the offered odds are
+                # implausibly positive for a near-certain outcome
+                projected_mean = float(p.get("projected_mean", 0) or 0)
+                line_val = float(p.get("line", 0) or 0)
+                is_suspect_alt_line = False
+                if projected_mean > 0 and line_val > 0:
+                    ratio = line_val / projected_mean
+                    # Flag: OVER odds are positive but line is < 65% of projection (e.g. Jokic PTS OVER 9.5 when avg=26)
+                    if best_side == "OVER" and odds_int >= 0 and ratio < SUSPECT_OVER_LINE_RATIO:
+                        is_suspect_alt_line = True
+                    # Flag: UNDER odds are positive but line is > 175% of projection
+                    elif best_side == "UNDER" and odds_int >= 0 and ratio > SUSPECT_UNDER_LINE_RATIO:
+                        is_suspect_alt_line = True
+
+                if is_suspect_alt_line:
+                    continue
 
                 if is_low_edge or is_even_odds:
                     filtered_props.append(p)
@@ -1496,7 +1579,23 @@ class GoogleSheetsService:
             score = edge * ev_w * conf_w
 
             best_side = (p.get("best_side", "over") or "over").upper()
-            odds = p.get("over_odds", -110) if best_side == "OVER" else p.get("under_odds", -110)
+            odds_val = p.get("over_odds", -110) if best_side == "OVER" else p.get("under_odds", -110)
+            odds = odds_val
+            try:
+                odds_int = int(odds_val)
+            except (ValueError, TypeError):
+                odds_int = -110
+
+            # Sanity check: skip suspect alternate lines where positive odds defy projection
+            projected_mean = float(p.get("projected_mean", 0) or 0)
+            line_val = float(p.get("line", 0) or 0)
+            if projected_mean > 0 and line_val > 0:
+                ratio = line_val / projected_mean
+                if best_side == "OVER" and odds_int >= 0 and ratio < SUSPECT_OVER_LINE_RATIO:
+                    continue
+                if best_side == "UNDER" and odds_int >= 0 and ratio > SUSPECT_UNDER_LINE_RATIO:
+                    continue
+
             book = (p.get("best_over_book", "") if best_side == "OVER" else p.get("best_under_book", "")) or ""
             home = p.get("home_team", "")
             away = p.get("away_team", "")
@@ -1539,14 +1638,26 @@ class GoogleSheetsService:
             ev_class = "strong_play" if edge >= 0.07 else ("good_play" if edge >= 0.05 else "lean")
             score = edge * EV_WEIGHTS.get(ev_class, 0.3) * CONF_WEIGHTS.get(conf, 0.4)
             pick = home if best_bet == "home" else away
+            # Build explicit NBA market label
+            nba_spread = p.get("spread", {})
+            nba_spread_val = nba_spread.get("home_point", "") if nba_spread else ""
+            if nba_spread_val != "":
+                try:
+                    sv = float(nba_spread_val)
+                    side_sv = sv if best_bet == "home" else -sv
+                    nba_market = f"{'Spread'} {side_sv:+.1f}"
+                except (ValueError, TypeError):
+                    nba_market = "Moneyline"
+            else:
+                nba_market = "Moneyline"
             candidates.append({
                 "score": score,
                 "type": "NBA Game",
                 "source": "NBA",
                 "game": f"{away} @ {home}",
                 "pick": pick,
-                "market": "Moneyline",
-                "line": "",
+                "market": nba_market,
+                "line": nba_spread_val,
                 "odds": _fmt_odds(ev.get(f"{best_bet}_odds", 0)) if ev.get(f"{best_bet}_odds") else "",
                 "edge_pct": round(edge * 100, 2),
                 "ev_class": ev_class.replace("_", " ").title(),
@@ -1569,15 +1680,28 @@ class GoogleSheetsService:
             conf = a.get("confidence_level", "LOW")
             ev_class = "strong_play" if edge >= 0.07 else ("good_play" if edge >= 0.05 else "lean")
             score = edge * EV_WEIGHTS.get(ev_class, 0.3) * CONF_WEIGHTS.get(conf, 0.4)
-            pick = sharp_side or (home if he > ae else away)
+            # Determine which team we're picking and build explicit label
+            pick_team = (
+                home if (sharp_side == "HOME" or (not sharp_side and he > ae))
+                else away
+            )
+            ncaab_spread = game_d.get("spread", 0) or 0
+            if pick_team == home:
+                spread_label = f"{ncaab_spread:+.1f}" if ncaab_spread else ""
+            else:
+                spread_label = f"{-ncaab_spread:+.1f}" if ncaab_spread else ""
+            ncaab_market = f"SPREAD {spread_label}".strip() if spread_label else "SPREAD"
+            signals = a.get("sharp_signals", [])
+            if signals:
+                ncaab_market = f"{', '.join(signals)} → {ncaab_market}"
             candidates.append({
                 "score": score,
                 "type": "NCAAB Game",
                 "source": "NCAAB",
                 "game": f"{away} @ {home}",
-                "pick": pick,
-                "market": "Sharp Side",
-                "line": game_d.get("spread", ""),
+                "pick": pick_team,
+                "market": ncaab_market,
+                "line": ncaab_spread,
                 "odds": "",
                 "edge_pct": round(edge * 100, 2),
                 "ev_class": ev_class.replace("_", " ").title(),
@@ -1586,9 +1710,19 @@ class GoogleSheetsService:
                 "composite": round(score * 1000, 1),
             })
 
-        # Sort and take top N
+        # Sort and take top N with per-player prop cap (max 2 props per player)
         candidates.sort(key=lambda x: x["score"], reverse=True)
-        top_plays = candidates[:top_n]
+        player_prop_counts: Dict[str, int] = {}
+        top_plays: List[Dict[str, Any]] = []
+        for c in candidates:
+            if c.get("type") == "Player Prop":
+                player_key = c.get("pick", "")
+                if player_prop_counts.get(player_key, 0) >= MAX_PROPS_PER_PLAYER:
+                    continue  # cap: no more than 2 props per player in Top 10
+                player_prop_counts[player_key] = player_prop_counts.get(player_key, 0) + 1
+            top_plays.append(c)
+            if len(top_plays) >= top_n:
+                break
 
         try:
             sheet = self.client.open_by_key(spreadsheet_id)
