@@ -20,9 +20,8 @@ This fills the gap between the pre-game PropProbabilityModel and actual
 live-betting decisions — the same math done manually when analyzing live lines.
 """
 
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
-import numpy as np
+from dataclasses import dataclass
+from typing import Dict, List, Tuple
 from scipy import stats
 from loguru import logger
 
@@ -199,6 +198,7 @@ class LivePropProjection:
             'true_p_over':          round(self.true_p_over, 4),
             'true_p_under':         round(self.true_p_under, 4),
             'implied_p_over':       round(self.implied_p_over, 4),
+            'implied_p_under':      round(self.implied_p_under, 4),
             'devig_p_over':         round(self.devig_p_over, 4),
             'edge_over':            round(self.edge_over, 4),
             'edge_under':           round(self.edge_under, 4),
@@ -294,7 +294,6 @@ class LivePropEngine:
             game_state.score_diff,
             game_state.minutes_remaining,
             player.is_star,
-            sport,
         )
         foul_discount = self._foul_discount(player.fouls, game_state.minutes_remaining, sport)
 
@@ -397,8 +396,8 @@ class LivePropEngine:
             live_line: LivePropLine
 
         Returns:
-            List of projection dicts sorted by best_edge descending,
-            filtered to positive EV (edge >= 0.05)
+            List of projection dicts sorted by best_edge descending.
+            Each dict includes is_positive_ev=true when edge >= 0.05.
         """
         results = []
         for entry in live_props:
@@ -425,7 +424,6 @@ class LivePropEngine:
         score_diff: int,
         minutes_remaining: float,
         is_star: bool,
-        sport: str,
     ) -> float:
         """
         Discount effective minutes for blowout garbage time risk.
