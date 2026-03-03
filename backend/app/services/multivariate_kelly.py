@@ -219,7 +219,7 @@ class MultivariateKellyOptimizer:
     Usage:
         optimizer = MultivariateKellyOptimizer(kelly_scale=0.5)
         result = optimizer.optimize(opportunities, bankroll=10000)
-        print(result.summary())
+        logger.info(result.summary())
     """
 
     def __init__(

@@ -169,5 +169,5 @@ class OddsApiIoService:
                 return int(round((d - 1) * 100))
             else:
                 return int(round(-100 / (d - 1)))
-        except:
+        except Exception:
             return -110

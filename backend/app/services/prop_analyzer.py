@@ -1,15 +1,12 @@
 """
 Player Prop Sharp Money Detection
 
-Applies the same signal detection logic as SharpMoneyDetector to player
-prop markets (over/under totals):
+Applies line-movement and consensus analysis to player prop markets
+(over/under totals):
 
-- Reverse Line Movement (RLM)  — line moves against public over/under tickets
-- Steam Moves               — coordinated multi-book prop line shifts
-- Line Freeze               — line static despite heavy public action
-- Juice Shift               — vig swings without line move (sharp-side pressure)
-- Head Fake Filter          — discards manipulation / overreaction reversals
-- CLV tracking              — reuses CLVRecord from sharp_money_detector
+- Line movement tracking      — magnitude and direction of prop line moves
+- Juice Shift                  — vig swings without line move (sharp-side pressure)
+- CLV tracking                 — reuses CLVRecord from line_movement_analyzer
 """
 
 import time
@@ -19,7 +16,7 @@ from datetime import datetime
 import numpy as np
 from loguru import logger
 
-from app.services.sharp_money_detector import CLVRecord, SharpMoneyDetector
+from app.services.line_movement_analyzer import CLVRecord, LineMovementAnalyzer
 
 
 # ---------------------------------------------------------------------------
@@ -77,15 +74,12 @@ class PropAnalyzer:
     """
     Detects professional betting activity in player prop markets.
 
-    Mirrors SharpMoneyDetector exactly, adapted for over/under prop lines:
-    - RLM: line moves against public side (e.g., public hammers over, line drops)
-    - Steam: ≥ 3 books shift the prop line within 60 seconds
-    - Freeze: line static despite 80%+ public on one side
+    Adapted for over/under prop lines with line-movement analysis:
+    - Line movement tracking: magnitude and direction of prop line moves
     - Juice Shift: vig moves ≥ 10 cents without line change (market maker signal)
-    - Head Fake Filter: reversal within 15 minutes discards the signal
     """
 
-    # --- Thresholds — kept identical to SharpMoneyDetector ---
+    # --- Thresholds ---
     RLM_TICKET_THRESHOLD = 0.65
     RLM_GAP_THRESHOLD = 0.10
     RLM_HIGH_CONFIDENCE_GAP = 0.20
@@ -273,7 +267,7 @@ class PropAnalyzer:
 
         CLV > 0 means the bet was placed at better-than-closing odds.
         """
-        record = SharpMoneyDetector().record_clv(
+        record = LineMovementAnalyzer().record_clv(
             game_id=prop_id,
             market=f"prop_{stat_type}",
             side=side,
@@ -599,12 +593,12 @@ class PropAnalyzer:
         """
         Remove bookmaker vig from a two-sided prop market.
 
-        Wrapper around SharpMoneyDetector.devig_odds() for clarity.
+        Wrapper around LineMovementAnalyzer.devig_odds() for clarity.
 
         Returns:
             (true_over_prob, true_under_prob)
         """
-        return SharpMoneyDetector.devig_odds(over_odds, under_odds)
+        return LineMovementAnalyzer.devig_odds(over_odds, under_odds)
 
     @staticmethod
     def _american_to_implied(american_odds: float) -> float:
