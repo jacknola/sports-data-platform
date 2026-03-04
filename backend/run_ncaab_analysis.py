@@ -1084,7 +1084,47 @@ def run_analysis() -> Dict[str, Any]:
     print(f"  Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 76 + "\n")
 
-    # Save detailed analysis with advanced metrics to a local CSV file', '    if game_analyses:', '        try:', '            df = pd.DataFrame(game_analyses)', '            # Flatten nested dicts for better CSV readability', '            for col in ["game", "home_eff", "away_eff", "home_opp", "away_opp"]:', '                if col in df.columns:', '                    df = pd.concat([df.drop([col], axis=1), df[col].apply(pd.Series).add_prefix(f"{col}_")], axis=1)', '            df.to_csv("sheets/ncaab_predictions.csv", index=False)', '            logger.info("NCAAB analysis with advanced metrics saved to sheets/ncaab_predictions.csv")', '        except Exception as e:', '            logger.error(f"Failed to save NCAAB analysis to CSV: {e}")', '
+    # Save detailed analysis with advanced metrics to a local CSV file
+    if game_analyses:
+        try:
+            df = pd.DataFrame(game_analyses)
+            # Flatten nested dicts for better CSV readability
+            for col in ["game", "home_eff", "away_eff", "home_opp", "away_opp"]:
+                if col in df.columns:
+                    df = pd.concat(
+                        [df.drop([col], axis=1), df[col].apply(pd.Series).add_prefix(f"{col}_")],
+                        axis=1,
+                    )
+            os.makedirs("sheets", exist_ok=True)
+            df.to_csv("sheets/ncaab_predictions.csv", index=False)
+            logger.info("NCAAB analysis with advanced metrics saved to sheets/ncaab_predictions.csv")
+        except Exception as e:
+            logger.error(f"Failed to save NCAAB analysis to CSV: {e}")
+
+    # Export to Google Sheets if configured
+    try:
+        from app.config import settings as _settings
+        from app.services.google_sheets import GoogleSheetsService
+
+        spreadsheet_id = getattr(_settings, "GOOGLE_SPREADSHEET_ID", None)
+        if spreadsheet_id:
+            sheets_svc = GoogleSheetsService()
+            ncaab_result = {
+                "sport": "ncaab",
+                "game_count": len(games_to_analyze),
+                "scored_plays": scored_plays,
+                "bets": bets,
+                "game_analyses": game_analyses,
+            }
+            export_result = sheets_svc.export_ncaab(spreadsheet_id, ncaab_result)
+            if export_result.get("status") == "success":
+                logger.info(
+                    f"Exported {export_result.get('rows_written', 0)} NCAAB rows to Google Sheets"
+                )
+            else:
+                logger.warning(f"Sheets NCAAB export issue: {export_result.get('error')}")
+    except Exception as exc:
+        logger.warning(f"Google Sheets NCAAB export skipped: {exc}")
     return {
         "sport": "ncaab",
         "game_count": len(games_to_analyze),

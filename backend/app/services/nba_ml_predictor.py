@@ -40,6 +40,16 @@ except ImportError:
     logger.warning("XGBoost not installed, ML predictions disabled")
 
 
+def _form_to_pct(form: Any) -> float:
+    """Convert a recent-form list (e.g. [1,1,0,1,0]) to a win-rate float."""
+    if isinstance(form, (list, tuple)) and len(form) > 0:
+        return float(sum(form)) / len(form)
+    try:
+        return float(form)
+    except (TypeError, ValueError):
+        return 0.6  # league-average default
+
+
 class NBAMLPredictor:
     """NBA betting predictions using machine learning"""
 
@@ -230,8 +240,8 @@ class NBAMLPredictor:
             "away_def_rating": features.get("away_def_rating", 110.0),
             "home_win_pct": features.get("home_win_pct", 0.5),
             "away_win_pct": features.get("away_win_pct", 0.5),
-            "home_recent_form": features.get("home_recent_form", [1, 1, 1, 0, 1]),
-            "away_recent_form": features.get("away_recent_form", [1, 1, 0, 1, 0]),
+            "home_recent_form": _form_to_pct(features.get("home_recent_form", [1, 1, 1, 0, 1])),
+            "away_recent_form": _form_to_pct(features.get("away_recent_form", [1, 1, 0, 1, 0])),
             "home_pace": features.get("home_pace", 100.0),
             "away_pace": features.get("away_pace", 100.0),
         }
@@ -364,28 +374,51 @@ class NBAMLPredictor:
     def _calculate_expected_value(
         self, moneyline_pred: Dict[str, Any], odds: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Calculate expected value for bets"""
+        """Calculate expected value blending market and model probabilities.
+
+        NBA markets are highly efficient. We use 80% devigged market probability
+        + 20% model signal (capped at [0.35, 0.65]) to prevent placeholder models
+        from generating extreme EVs against heavy favorites/underdogs.
+        """
 
         home_odds = odds.get("home", -110)
         away_odds = odds.get("away", 110)
 
-        # Convert American odds to decimal
-        def american_to_decimal(odds):
-            if odds > 0:
-                return odds / 100 + 1
-            else:
-                return 100 / abs(odds) + 1
+        def american_to_decimal(o: int) -> float:
+            return o / 100 + 1 if o > 0 else 100 / abs(o) + 1
 
         home_decimal = american_to_decimal(home_odds)
         away_decimal = american_to_decimal(away_odds)
 
-        # Calculate EV
-        home_ev = (moneyline_pred["home_win_prob"] * (home_decimal - 1)) - (
-            1 - moneyline_pred["home_win_prob"]
-        )
-        away_ev = (moneyline_pred["away_win_prob"] * (away_decimal - 1)) - (
-            1 - moneyline_pred["away_win_prob"]
-        )
+        # Devig market implied probabilities
+        raw_home_implied = 1.0 / home_decimal
+        raw_away_implied = 1.0 / away_decimal
+        overround = raw_home_implied + raw_away_implied
+        market_home_prob = raw_home_implied / overround
+        market_away_prob = raw_away_implied / overround
+
+        # Suppress model edge when one side is a very heavy favourite (>83% market).
+        # At these extremes the market is far more accurate than any statistical model.
+        EXTREME_THRESHOLD = 0.83
+        if market_home_prob > EXTREME_THRESHOLD or market_away_prob > EXTREME_THRESHOLD:
+            return {
+                "home_ev": 0.0,
+                "away_ev": 0.0,
+                "best_bet": None,
+                "home_odds": home_odds,
+                "away_odds": away_odds,
+            }
+
+        # Cap model probability to [0.35, 0.65] to prevent Pythagorean extremes
+        capped_model_home = min(0.65, max(0.35, moneyline_pred["home_win_prob"]))
+
+        # Blend: 80% devigged market + 20% model
+        blended_home = 0.80 * market_home_prob + 0.20 * capped_model_home
+        blended_away = 1.0 - blended_home
+
+        # Calculate EV using blended probability
+        home_ev = blended_home * (home_decimal - 1) - blended_away
+        away_ev = blended_away * (away_decimal - 1) - blended_home
 
         best_bet: Optional[str] = None
         if home_ev > away_ev and home_ev > 0:
