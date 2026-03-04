@@ -135,6 +135,8 @@ async def _get_live_props(sport: str) -> List[Dict]:
         #     continue
         devig_over = raw.get("devigged_over_prob", 0.5)
         devig_under = raw.get("devigged_under_prob", 0.5)
+        # Detect whether real devigging was performed (non-default probs)
+        has_real_devig = (devig_over != 0.5 or devig_under != 0.5)
         # Score by EV magnitude instead of distance-from-50/50 to handle long odds correctly
         # For long odds (+150, +200), use (devigged_prob * decimal_odds) - 1 as the score
         over_am = raw.get("over_odds", -110)
@@ -143,8 +145,14 @@ async def _get_live_props(sport: str) -> List[Dict]:
         under_decimal = american_to_decimal(under_am) if under_am else 1.91
         ev_over = (devig_over * over_decimal) - 1
         ev_under = (devig_under * under_decimal) - 1
-        # Use max absolute EV as the sorting score (handles both short and long odds fairly)
-        edge_magnitude = max(abs(ev_over), abs(ev_under))
+        # When no real devigging: require positive EV and at least 2 books (not just abs magnitude)
+        if not has_real_devig:
+            if raw.get("books_offering", 1) < 2:
+                continue
+            edge_magnitude = max(ev_over, ev_under)  # positive EV only — no abs() inflation
+        else:
+            # Use max absolute EV as the sorting score (handles both short and long odds fairly)
+            edge_magnitude = max(abs(ev_over), abs(ev_under))
         is_long_odds = over_am >= 200 or under_am >= 200
         if edge_magnitude < MIN_DEVIG_EDGE and not is_long_odds:
             continue
@@ -729,6 +737,17 @@ async def run_prop_analysis(sport: str = "nba") -> Dict[str, Any]:
             "props": [],
             "best_props": [],
         }
+
+    # Guard: if >90% of props have no real devigged odds, data source is unreliable
+    default_prob_count = sum(
+        1 for p in raw_props
+        if p.get("devigged_over_prob", 0.5) == 0.5 and p.get("devigged_under_prob", 0.5) == 0.5
+    )
+    if raw_props and default_prob_count / len(raw_props) > 0.90:
+        logger.warning(
+            f"Odds quality warning: {default_prob_count}/{len(raw_props)} props have default 0.5 "
+            "devigged probs — odds API may be returning fallback/stale data"
+        )
 
     analyzed: List[Dict[str, Any]] = []
     for p in raw_props:
