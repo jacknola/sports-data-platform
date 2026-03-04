@@ -639,7 +639,7 @@ def run_analysis() -> Dict[str, Any]:
         kelly_scale=0.5,  # Half-Kelly
         max_single_fraction=0.05,  # Max 5% per bet
         max_total_exposure=0.25,  # Max 25% total exposure
-        min_edge=0.025,  # 2.5% minimum edge
+        min_edge=0.05,  # 5% minimum edge (raised from 2.5% to reduce noise)
     )
 
     # Phase 4: Data source tag in output
@@ -667,8 +667,12 @@ def run_analysis() -> Dict[str, Any]:
             game["pinnacle_home_odds"], game["pinnacle_away_odds"]
         )
 
-        # --- Blend with model probability (60% market, 40% KenPom model) ---
-        blended_home_prob = 0.60 * true_home_prob + 0.40 * game["model_home_prob"]
+        # --- Blend with model probability (80% market / 20% KenPom model) ---
+        # Pinnacle is the sharpest book in the world — it dominates the signal.
+        # Model adds marginal value only when it meaningfully diverges from the market.
+        # Cap model at [0.30, 0.70] to prevent Pythagorean extremes from dominating.
+        capped_model_prob = min(0.70, max(0.30, game["model_home_prob"]))
+        blended_home_prob = 0.80 * true_home_prob + 0.20 * capped_model_prob
         blended_away_prob = 1.0 - blended_home_prob
 
         # --- Line Movement & Market Consensus Analysis ---
@@ -736,9 +740,9 @@ def run_analysis() -> Dict[str, Any]:
         setattr(away_opp, "line", -game["spread"])  # For settlement tracking
 
         # Only add the better edge side (or both if both are positive)
-        if home_edge > 0.025:
+        if home_edge > 0.05:
             opportunities.append(home_opp)
-        if away_edge > 0.025:
+        if away_edge > 0.05:
             opportunities.append(away_opp)
 
         # Qdrant: find similar historical games for context
