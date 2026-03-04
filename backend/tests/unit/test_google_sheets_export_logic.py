@@ -64,9 +64,10 @@ def test_export_props_handles_string_odds_without_crashing() -> None:
     assert result.get("status") == "success"
     args, kwargs = mock_ws.update.call_args
     rows = kwargs["values"]
-    assert rows[1][8] == "+105"
-    assert rows[1][19] == "+105"
-    assert rows[1][20] == "-120"
+    # rows[0] = headers, rows[1] = stat section header, rows[2] = data
+    assert rows[2][8] == "+105"
+    assert rows[2][19] == "+105"
+    assert rows[2][20] == "-120"
 
 
 def test_export_parlays_writes_correct_columns() -> None:
@@ -344,4 +345,3 @@ def test_export_daily_picks_skips_dvp_when_no_data() -> None:
 
     assert "dvp" not in results
     service.export_dvp.assert_not_called()
-

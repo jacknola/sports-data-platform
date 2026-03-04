@@ -395,9 +395,10 @@ class NBAMLPredictor:
 
         return {
             "total_points": round(projected_total, 1),
-            "over_prob": 0.52,
-            "under_prob": 0.48,
-            "recommendation": "over",
+            "over_prob": 0.5,
+            "under_prob": 0.5,
+            "recommendation": "hold",
+            "method": "fallback",
         }
 
     def _calculate_expected_value(
@@ -645,6 +646,29 @@ class NBAMLPredictor:
             pred["spread"] = game.get("spread", {})
             pred["total"] = game.get("total", {})
             pred["book"] = game.get("book", "")
+
+            # Reconcile O/U recommendation using projected total vs market line
+            uo_pred = pred.get("underover_prediction", {})
+            market_total = pred["total"].get("point")
+            proj_total = uo_pred.get("total_points")
+            if uo_pred.get("method") == "fallback" and market_total and proj_total:
+                diff = float(proj_total) - float(market_total)
+                # Scale confidence by how far the projection is from the line
+                # ~10 pts diff → ~0.67 prob; cap at 0.80
+                edge_prob = min(0.5 + abs(diff) / 30.0, 0.80)
+                if diff > 0:
+                    uo_pred["recommendation"] = "over"
+                    uo_pred["over_prob"] = round(edge_prob, 3)
+                    uo_pred["under_prob"] = round(1.0 - edge_prob, 3)
+                elif diff < 0:
+                    uo_pred["recommendation"] = "under"
+                    uo_pred["under_prob"] = round(edge_prob, 3)
+                    uo_pred["over_prob"] = round(1.0 - edge_prob, 3)
+                else:
+                    uo_pred["recommendation"] = "hold"
+                    uo_pred["over_prob"] = 0.5
+                    uo_pred["under_prob"] = 0.5
+
             predictions.append(pred)
 
         return predictions

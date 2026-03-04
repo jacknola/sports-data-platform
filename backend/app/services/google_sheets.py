@@ -417,69 +417,92 @@ class GoogleSheetsService:
                 "Under Odds",
             ]
 
-            # Use ALL analyzed props, sorted by edge descending
+            # Use ALL analyzed props, grouped by stat type, sorted by edge within each group
             all_props = prop_data.get("props", [])
             all_props.sort(key=lambda x: x.get("bayesian_edge", 0), reverse=True)
+
+            # Group by stat type (category) for organized output
+            _STAT_ORDER = [
+                "points", "rebounds", "assists", "threes",
+                "pts+reb+ast", "pts+reb", "pts+ast", "reb+ast",
+                "blocks", "steals", "stl+blk", "turnovers",
+            ]
+            from collections import defaultdict
+            stat_groups: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+            for p in all_props:
+                stat_groups[p.get("stat_type", "other")].append(p)
 
             today = datetime.now().strftime("%Y-%m-%d")
             rows: List[List[Any]] = []
             player_prop_counts: Dict[str, int] = {}
+            num_cols = len(headers)
 
-            for p in all_props:
-                player_key = p.get("player_name", "")
-                if player_prop_counts.get(player_key, 0) >= MAX_PROPS_PER_PLAYER:
-                    continue
-                player_prop_counts[player_key] = player_prop_counts.get(player_key, 0) + 1
-                stat_type = p.get("stat_type", "")
-                stat_label = _STAT_DISPLAY.get(stat_type, stat_type.upper())
-                best_side = p.get("best_side", "over").upper()
-                odds = (
-                    p.get("over_odds", -110)
-                    if best_side == "OVER"
-                    else p.get("under_odds", -110)
-                )
-                edge = p.get("bayesian_edge", 0)
-                ev_class = p.get("ev_classification", "")
-                best_book = (
-                    p.get("best_over_book", "")
-                    if best_side == "OVER"
-                    else p.get("best_under_book", "")
-                )
-                home = p.get("home_team", "")
-                away = p.get("away_team", "")
-                game = f"{away} @ {home}" if home and away else ""
-                signals = ", ".join(p.get("sharp_signals", []))
+            # Emit rows grouped by stat category
+            ordered_stat_types = [s for s in _STAT_ORDER if s in stat_groups]
+            ordered_stat_types += [s for s in stat_groups if s not in _STAT_ORDER]
 
-                # Extract situational RAG context
-                situational_context = p.get(
-                    "situational_context", "No historical analogs found."
-                )
+            for stat_key in ordered_stat_types:
+                group = stat_groups[stat_key]
+                section_label = _STAT_DISPLAY.get(stat_key, stat_key.upper())
+                # Section header row
+                section_row = [f"━━ {section_label} ━━"] + [""] * (num_cols - 1)
+                rows.append(section_row)
 
-                rows.append(
-                    [
-                        today,
-                        p.get("player_name", ""),
-                        p.get("team", ""),
-                        p.get("opponent", ""),
-                        game,
-                        stat_label,
-                        p.get("line", 0),
-                        best_side,
-                        _fmt_odds(odds),
-                        round(p.get("projected_mean", 0), 1),
-                        round(edge * 100, 2),
-                        round(p.get("posterior_p", 0), 4),
-                        ev_class.replace("_", " ").title() if ev_class else "",
-                        _confidence_label(edge, ev_class),
-                        round(p.get("kelly_fraction", 0) * 100, 2),
-                        signals,
-                        situational_context,
-                        best_book,
-                        p.get("books_offering", 0),
-                        _fmt_odds(p.get("over_odds", -110)),
-                        _fmt_odds(p.get("under_odds", -110)),
-                    ]
-                )
+                for p in group:
+                    player_key = p.get("player_name", "")
+                    if player_prop_counts.get(player_key, 0) >= MAX_PROPS_PER_PLAYER:
+                        continue
+                    player_prop_counts[player_key] = player_prop_counts.get(player_key, 0) + 1
+                    stat_type = p.get("stat_type", "")
+                    stat_label = _STAT_DISPLAY.get(stat_type, stat_type.upper())
+                    best_side = p.get("best_side", "over").upper()
+                    odds = (
+                        p.get("over_odds", -110)
+                        if best_side == "OVER"
+                        else p.get("under_odds", -110)
+                    )
+                    edge = p.get("bayesian_edge", 0)
+                    ev_class = p.get("ev_classification", "")
+                    best_book = (
+                        p.get("best_over_book", "")
+                        if best_side == "OVER"
+                        else p.get("best_under_book", "")
+                    )
+                    home = p.get("home_team", "")
+                    away = p.get("away_team", "")
+                    game = f"{away} @ {home}" if home and away else ""
+                    signals = ", ".join(p.get("sharp_signals", []))
+
+                    # Extract situational RAG context
+                    situational_context = p.get(
+                        "situational_context", "No historical analogs found."
+                    )
+
+                    rows.append(
+                        [
+                            today,
+                            p.get("player_name", ""),
+                            p.get("team", ""),
+                            p.get("opponent", ""),
+                            game,
+                            stat_label,
+                            p.get("line", 0),
+                            best_side,
+                            _fmt_odds(odds),
+                            round(p.get("projected_mean", 0), 1),
+                            round(edge * 100, 2),
+                            round(p.get("posterior_p", 0), 4),
+                            ev_class.replace("_", " ").title() if ev_class else "",
+                            _confidence_label(edge, ev_class),
+                            round(p.get("kelly_fraction", 0) * 100, 2),
+                            signals,
+                            situational_context,
+                            best_book,
+                            p.get("books_offering", 0),
+                            _fmt_odds(p.get("over_odds", -110)),
+                            _fmt_odds(p.get("under_odds", -110)),
+                        ]
+                    )
 
             written = self._batch_write(ws, headers, rows)
 
@@ -617,6 +640,8 @@ class GoogleSheetsService:
 
                 # Total recommendation label
                 ou_rec = uo.get("recommendation", "").upper() if uo else ""
+                if ou_rec == "HOLD":
+                    ou_rec = ""
                 total_label = f"{ou_rec} {total_val}".strip() if (ou_rec and total_val) else ou_rec
 
                 # Match to bets list
@@ -1513,6 +1538,10 @@ class GoogleSheetsService:
                 spreadsheet_id,
                 prop_data,
             )
+            results["fanduel_props"] = self.export_fanduel_props(
+                spreadsheet_id,
+                prop_data,
+            )
 
         if nba_predictions:
             results["nba"] = self.export_nba(
@@ -1645,56 +1674,252 @@ class GoogleSheetsService:
 
             filtered_props: List[Dict[str, Any]] = []
             for p in all_props:
-                edge = float(p.get("bayesian_edge", 0) or 0)
-                kelly = float(p.get("kelly_fraction", 0) or 0)
-                ev_class = (p.get("ev_classification", "") or "").lower()
-
-                # Exclude purely bad bets first
-                if ev_class == "pass" and kelly <= 0:
-                    continue
-                if edge <= 0 and kelly <= 0:
-                    continue
-
                 best_side = p.get("best_side", "over").upper()
                 odds_val = (
                     p.get("over_odds", -110)
                     if best_side == "OVER"
                     else p.get("under_odds", -110)
                 )
-
                 try:
                     odds_int = int(odds_val)
                 except (ValueError, TypeError):
-                    odds_int = -110
+                    continue
 
                 # High Value Logic: Edge 0–30% AND "Even Odds" (-110 to +110) OR odds are realistic
-                # Also guard against alternate lines where odds direction doesn't match projection:
+                # Also guard against alternate lines where odds direction defies projection:
                 #   If OVER odds are positive (+money) but line << projected_mean, it's a data error
-                is_low_edge = (edge > 0.0) and (edge < 0.30)
-                is_even_odds = -110 <= odds_int <= 110
-
-                # Alternate-line sanity check: skip props where the offered odds are
-                # implausibly positive for a near-certain outcome
-                projected_mean = float(p.get("projected_mean", 0) or 0)
-                line_val = float(p.get("line", 0) or 0)
                 is_suspect_alt_line = False
-                if projected_mean > 0 and line_val > 0:
-                    ratio = line_val / projected_mean
-                    # Flag: OVER odds are positive but line is < 65% of projection (e.g. Jokic PTS OVER 9.5 when avg=26)
-                    if best_side == "OVER" and odds_int >= 0 and ratio < SUSPECT_OVER_LINE_RATIO:
+                if odds_int >= 0:
+                    projected_mean = float(p.get("projected_mean", 0) or 0)
+                    line_val = float(p.get("line", 0) or 0)
+                    if best_side == "OVER" and line_val < projected_mean * SUSPECT_OVER_LINE_RATIO:
                         is_suspect_alt_line = True
-                    # Flag: UNDER odds are positive but line is > 175% of projection
-                    elif best_side == "UNDER" and odds_int >= 0 and ratio > SUSPECT_UNDER_LINE_RATIO:
+                    elif best_side == "UNDER" and line_val > projected_mean * SUSPECT_UNDER_LINE_RATIO:
                         is_suspect_alt_line = True
 
                 if is_suspect_alt_line:
                     continue
 
-                if is_low_edge or is_even_odds:
+                if odds_int >= -110 and odds_int <= 110:
                     filtered_props.append(p)
 
             filtered_props.sort(
                 key=lambda x: (
+                    float(x.get("posterior_p", 0) or 0),
+                    float(x.get("kelly_fraction", 0) or 0),
+                    float(x.get("bayesian_edge", 0) or 0),
+                ),
+                reverse=True,
+            )
+            filtered_props = filtered_props[:max_rows]
+
+            # Group by stat type for organized output
+            _STAT_ORDER = [
+                "points", "rebounds", "assists", "threes",
+                "pts+reb+ast", "pts+reb", "pts+ast", "reb+ast",
+                "blocks", "steals", "stl+blk", "turnovers",
+            ]
+            from collections import defaultdict
+            hv_stat_groups: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+            for p in filtered_props:
+                hv_stat_groups[p.get("stat_type", "other")].append(p)
+
+            today = datetime.now().strftime("%Y-%m-%d")
+            rows: List[List[Any]] = []
+            player_prop_counts: Dict[str, int] = {}
+            num_cols = len(headers)
+
+            ordered_stat_types = [s for s in _STAT_ORDER if s in hv_stat_groups]
+            ordered_stat_types += [s for s in hv_stat_groups if s not in _STAT_ORDER]
+
+            for stat_key in ordered_stat_types:
+                group = hv_stat_groups[stat_key]
+                section_label = _STAT_DISPLAY.get(stat_key, stat_key.upper())
+                rows.append([f"━━ {section_label} ━━"] + [""] * (num_cols - 1))
+
+                for p in group:
+                    player_key = p.get("player_name", "")
+                    if player_prop_counts.get(player_key, 0) >= MAX_PROPS_PER_PLAYER:
+                        continue
+                    player_prop_counts[player_key] = player_prop_counts.get(player_key, 0) + 1
+                    stat_type = p.get("stat_type", "")
+                    stat_label = _STAT_DISPLAY.get(stat_type, stat_type.upper())
+                    best_side = p.get("best_side", "over").upper()
+                    odds = (
+                        p.get("over_odds", -110)
+                        if best_side == "OVER"
+                        else p.get("under_odds", -110)
+                    )
+                    # FanDuel-specific odds — show "—" when FD doesn't offer this line
+                    fd_raw = (
+                        p.get("fanduel_over_odds")
+                        if best_side == "OVER"
+                        else p.get("fanduel_under_odds")
+                    )
+                    fd_odds_str = _fmt_odds(int(fd_raw)) if fd_raw is not None else "—"
+
+                    edge = p.get("bayesian_edge", 0)
+                    ev_class = p.get("ev_classification", "")
+                    best_book = (
+                        p.get("best_over_book", "")
+                        if best_side == "OVER"
+                        else p.get("best_under_book", "")
+                    )
+                    home = p.get("home_team", "")
+                    away = p.get("away_team", "")
+                    game = f"{away} @ {home}" if home and away else ""
+                    signals = ", ".join(p.get("sharp_signals", []))
+                    best_line_mark = "✓" if p.get("best_alt_line") else ""
+
+                    situational_context = p.get(
+                        "situational_context", "No historical analogs found."
+                    )
+
+                    rows.append(
+                        [
+                            today,
+                            p.get("player_name", ""),
+                            p.get("team", ""),
+                            p.get("opponent", ""),
+                            game,
+                            stat_label,
+                            p.get("line", 0),
+                            best_side,
+                            _fmt_odds(odds),          # Best Odds (col I)
+                            fd_odds_str,               # FD Odds (col J)
+                            best_book,                 # Best Book (col K)
+                            round(p.get("projected_mean", 0), 1),
+                            round(edge * 100, 2),
+                            round(p.get("posterior_p", 0), 4),
+                            ev_class.replace("_", " ").title() if ev_class else "",
+                            _confidence_label(edge, ev_class),
+                            round(p.get("kelly_fraction", 0) * 100, 2),
+                            best_line_mark,            # Best Line? (col R)
+                            signals,
+                            situational_context,
+                            p.get("books_offering", 0),
+                            _fmt_odds(p.get("over_odds", -110)),
+                            _fmt_odds(p.get("under_odds", -110)),
+                        ]
+                    )
+
+            written = self._batch_write(ws, headers, rows)
+
+            # --- Advanced Formatting ---
+            try:
+                # Dark green header
+                self._format_tab_header(ws, "#0D3B1F", len(headers))
+                # EV class row colors — EV Class is now col O (index 14)
+                self._apply_ev_row_colors(sheet, ws, written, 14, len(headers))
+                # Confidence column (P = index 15) color
+                self._apply_column_conditional(sheet, ws, 15, [
+                    {"type": "TEXT_EQ", "value": "High",   "bg": "#C6EFCE", "fg": "#276221", "bold": True},
+                    {"type": "TEXT_EQ", "value": "Medium", "bg": "#FFEB9C", "fg": "#9C6500", "bold": True},
+                    {"type": "TEXT_EQ", "value": "Low",    "bg": "#FFC7CE", "fg": "#9C0006", "bold": False},
+                ], written, index_offset=4)
+                # Column widths: Date|Player|Team|Opp|Game|Stat|Line|Side|BestOdds|FDOdds|BestBook|Proj|Edge%|BayesP|EVClass|Conf|Kelly%|BestLine?|Signals|Context|Books#|OvOdds|UnOdds
+                self._set_column_widths(sheet, ws, [80, 160, 70, 100, 180, 50, 50, 55, 65, 65, 90, 60, 60, 70, 90, 75, 60, 70, 160, 200, 55, 60, 60])
+                logger.info("Applied conditional formatting to HighValueProps")
+
+            except Exception as fmt_err:
+                logger.warning(
+                    f"Failed to apply formatting to HighValueProps: {fmt_err}"
+                )
+
+            logger.info(f"Exported {written} props to Google Sheets tab '{tab_name}'")
+            return {"status": "success", "tab": tab_name, "rows_written": written}
+
+        except Exception as e:
+            logger.error(f"High-value props export failed: {e}")
+            return {"error": str(e)}
+
+    # ───────────────────────────────────────────────────────────────
+    # FanDuel Best Bets export
+    # ───────────────────────────────────────────────────────────────
+
+    def export_fanduel_props(
+        self,
+        spreadsheet_id: str,
+        prop_data: Dict[str, Any],
+        tab_name: str = "FanDuelBets",
+    ) -> Dict[str, Any]:
+        """Export the best +EV props available on FanDuel."""
+        if not self.client:
+            return {"error": "Google Sheets not configured"}
+
+        try:
+            sheet = self.client.open_by_key(spreadsheet_id)
+            ws = self._get_or_create_worksheet(sheet, tab_name)
+
+            headers = [
+                "Date",
+                "Player",
+                "Team",
+                "Opponent",
+                "Game",
+                "Stat",
+                "Line",
+                "Side",
+                "FD Odds",        # FanDuel-specific odds
+                "Best Odds",      # best across all books
+                "Best Book",
+                "Projected",
+                "Edge %",
+                "Bayesian P",
+                "EV Class",
+                "Confidence",
+                "Kelly %",
+                "Best Line?",
+                "Sharp Signals",
+                "Situational Context",
+            ]
+
+            all_props = prop_data.get("props", [])
+            max_rows = int((prop_data or {}).get("export_max_rows", 120) or 120)
+
+            filtered_props: List[Dict[str, Any]] = []
+            for p in all_props:
+                best_side = p.get("best_side", "over").upper()
+                fd_raw = (
+                    p.get("fanduel_over_odds")
+                    if best_side == "OVER"
+                    else p.get("fanduel_under_odds")
+                )
+                
+                # Only include props that are actually offered on FanDuel
+                if fd_raw is None:
+                    continue
+                    
+                edge = float(p.get("bayesian_edge", 0) or 0)
+                kelly_frac = float(p.get("kelly_fraction", 0) or 0)
+                kelly_dollars = round(kelly_frac * 100, 2)  # $100 bankroll
+                try:
+                    fd_odds_int = int(fd_raw)
+                except (ValueError, TypeError):
+                    continue
+
+                # Exclude purely bad bets
+                ev_class = (p.get("ev_classification", "") or "").lower()
+                if ev_class == "pass" and kelly_frac <= 0:
+                    continue
+                if edge <= 0 and kelly_frac <= 0:
+                    continue
+
+                # Alternate-line sanity check
+                projected_mean = float(p.get("projected_mean", 0) or 0)
+                line_val = float(p.get("line", 0) or 0)
+                if projected_mean > 0 and line_val > 0:
+                    ratio = line_val / projected_mean
+                    if best_side == "OVER" and fd_odds_int >= 0 and ratio < SUSPECT_OVER_LINE_RATIO:
+                        continue
+                    elif best_side == "UNDER" and fd_odds_int >= 0 and ratio > SUSPECT_UNDER_LINE_RATIO:
+                        continue
+
+                filtered_props.append(p)
+
+            filtered_props.sort(
+                key=lambda x: (
+                    float(x.get("posterior_p", 0) or 0),
                     float(x.get("kelly_fraction", 0) or 0),
                     float(x.get("bayesian_edge", 0) or 0),
                 ),
@@ -1711,22 +1936,24 @@ class GoogleSheetsService:
                 if player_prop_counts.get(player_key, 0) >= MAX_PROPS_PER_PLAYER:
                     continue
                 player_prop_counts[player_key] = player_prop_counts.get(player_key, 0) + 1
+                
                 stat_type = p.get("stat_type", "")
                 stat_label = _STAT_DISPLAY.get(stat_type, stat_type.upper())
                 best_side = p.get("best_side", "over").upper()
-                odds = (
-                    p.get("over_odds", -110)
-                    if best_side == "OVER"
-                    else p.get("under_odds", -110)
-                )
-                # FanDuel-specific odds — show "—" when FD doesn't offer this line
+                
                 fd_raw = (
                     p.get("fanduel_over_odds")
                     if best_side == "OVER"
                     else p.get("fanduel_under_odds")
                 )
                 fd_odds_str = _fmt_odds(int(fd_raw)) if fd_raw is not None else "—"
-
+                
+                best_odds = (
+                    p.get("over_odds", -110)
+                    if best_side == "OVER"
+                    else p.get("under_odds", -110)
+                )
+                
                 edge = p.get("bayesian_edge", 0)
                 ev_class = p.get("ev_classification", "")
                 # Win probability: use posterior_p (model's win probability for the pick side)
@@ -1757,46 +1984,42 @@ class GoogleSheetsService:
                         round(p.get("projected_mean", 0), 1),
                         round(edge * 100, 2),
                         round(p.get("posterior_p", 0), 4),
-                        ev_class.replace("_", " ").title() if ev_class else "",
+                        ev_class,
                         _confidence_label(edge, ev_class),
                         round(p.get("kelly_fraction", 0) * 100, 2),
-                        best_line_mark,            # Best Line? (col R)
+                        best_line_mark,
                         signals,
                         situational_context,
-                        p.get("books_offering", 0),
-                        _fmt_odds(p.get("over_odds", -110)),
-                        _fmt_odds(p.get("under_odds", -110)),
                     ]
                 )
 
             written = self._batch_write(ws, headers, rows)
 
-            # --- Advanced Formatting ---
+            # --- Formatting ---
             try:
-                # Dark green header
-                self._format_tab_header(ws, "#0D3B1F", len(headers))
-                # EV class row colors — EV Class is now col O (index 14)
+                # FanDuel Blue header
+                self._format_tab_header(ws, "#0091EA", len(headers))
+                # EV class row colors — EV Class is col O (index 14)
                 self._apply_ev_row_colors(sheet, ws, written, 14, len(headers))
                 # Confidence column (P = index 15) color
                 self._apply_column_conditional(sheet, ws, 15, [
-                    {"type": "TEXT_EQ", "value": "HIGH",   "bg": "#C6EFCE", "fg": "#276221", "bold": True},
-                    {"type": "TEXT_EQ", "value": "MEDIUM", "bg": "#FFEB9C", "fg": "#9C6500", "bold": True},
-                    {"type": "TEXT_EQ", "value": "LOW",    "bg": "#FFC7CE", "fg": "#9C0006", "bold": False},
+                    {"type": "TEXT_EQ", "value": "High",   "bg": "#C6EFCE", "fg": "#276221", "bold": True},
+                    {"type": "TEXT_EQ", "value": "Medium", "bg": "#FFEB9C", "fg": "#9C6500", "bold": True},
+                    {"type": "TEXT_EQ", "value": "Low",    "bg": "#FFC7CE", "fg": "#9C0006", "bold": False},
                 ], written, index_offset=4)
                 # Column widths: Date|Player|Team|Opp|Game|Stat|Line|Side|BestOdds|FDOdds|WinProb%|Proj|Edge%|BayesP|EVClass|Conf|Kelly%|BestLine?|Signals|Context|Books#|OvOdds|UnOdds
                 self._set_column_widths(sheet, ws, [80, 160, 70, 100, 180, 50, 50, 55, 65, 65, 90, 60, 60, 70, 90, 75, 60, 70, 160, 200, 55, 60, 60])
                 logger.info("Applied conditional formatting to HighValueProps")
 
+
             except Exception as fmt_err:
-                logger.warning(
-                    f"Failed to apply formatting to HighValueProps: {fmt_err}"
-                )
+                logger.warning(f"Failed to apply formatting to FanDuelBets: {fmt_err}")
 
             logger.info(f"Exported {written} props to Google Sheets tab '{tab_name}'")
             return {"status": "success", "tab": tab_name, "rows_written": written}
 
         except Exception as e:
-            logger.error(f"High-value props export failed: {e}")
+            logger.error(f"FanDuel props export failed: {e}")
             return {"error": str(e)}
 
     # ───────────────────────────────────────────────────────────────
@@ -1943,6 +2166,7 @@ class GoogleSheetsService:
                 ["📋 TAB GUIDE", "What it shows", "", ""],
                 ["🔥 Top 10 Plays",  "Best ranked bets across all sports — start here",             "", ""],
                 ["HighValueProps",   "Player props with realistic odds (-110 to +110) or ≤30% edge","", ""],
+                ["FanDuelBets",      "Best +EV player props available on FanDuel",                  "", ""],
                 ["Props",            "All analyzed player props sorted by Bayesian edge",           "", ""],
                 ["NBA",              "NBA game picks: spreads, totals, ML probabilities",           "", ""],
                 ["NCAAB",            "College basketball sharp money analysis",                     "", ""],
@@ -1996,8 +2220,8 @@ class GoogleSheetsService:
                         "fontSize": 13,
                     },
                 })
-                # Section headers (rows 4, 11, 17, 27, 38, 47, 54)
-                section_rows = [4, 11, 17, 27, 38, 47, 54]
+                # Section headers (row 3, 9, 15, 19)
+                section_rows = [3, 9, 15, 19]
                 for r in section_rows:
                     ws.format(f"A{r}:D{r}", {
                         "backgroundColor": self._hex_to_rgb("#E8E8E8"),
@@ -2033,6 +2257,7 @@ class GoogleSheetsService:
                         ("🔥 Top 10 Plays", "Top 10 Plays"),
                         ("🎰 Parlays", "Parlays"),
                         ("📊 HighValueProps", "HighValueProps"),
+                        ("🔵 FanDuelBets", "FanDuelBets"),
                         ("📋 Props", "Props"),
                         ("🏀 NBA", "NBA"),
                         ("🏈 NCAAB", "NCAAB"),
@@ -2078,7 +2303,7 @@ class GoogleSheetsService:
         """Rank and export the top N plays of the day across all sports/markets.
 
         Composite score = bayesian_edge × ev_weight × confidence_weight
-        ev_weight:    Strong Play=1.0, Good Play=0.75, Lean=0.5, other=0.3
+        ev_weight:    Strong Play=1.0, Good Play=0.75, Lean=0.5
         conf_weight:  MAX=1.3, HIGH=1.0, MEDIUM=0.8, LOW=0.6, SPECULATIVE=0.4
         """
         if not self.client:
@@ -2101,14 +2326,17 @@ class GoogleSheetsService:
             score = edge * ev_w * conf_w
 
             best_side = (p.get("best_side", "over") or "over").upper()
-            odds_val = p.get("over_odds", -110) if best_side == "OVER" else p.get("under_odds", -110)
-            odds = odds_val
+            odds_val = (
+                p.get("over_odds", -110)
+                if best_side == "OVER"
+                else p.get("under_odds", -110)
+            )
             try:
                 odds_int = int(odds_val)
             except (ValueError, TypeError):
                 odds_int = -110
 
-            # Sanity check: skip suspect alternate lines where positive odds defy projection
+            # Sanity check: skip suspect alternate lines where odds direction defies projection
             projected_mean = float(p.get("projected_mean", 0) or 0)
             line_val = float(p.get("line", 0) or 0)
             if projected_mean > 0 and line_val > 0:
@@ -2118,7 +2346,11 @@ class GoogleSheetsService:
                 if best_side == "UNDER" and odds_int >= 0 and ratio > SUSPECT_UNDER_LINE_RATIO:
                     continue
 
-            book = (p.get("best_over_book", "") if best_side == "OVER" else p.get("best_under_book", "")) or ""
+            book = (
+                p.get("best_over_book", "")
+                if best_side == "OVER"
+                else p.get("best_under_book", "")
+            ) or ""
             home = p.get("home_team", "")
             away = p.get("away_team", "")
             game = f"{away} @ {home}" if home and away else ""
@@ -2132,7 +2364,7 @@ class GoogleSheetsService:
                 "pick": p.get("player_name", ""),
                 "market": f"{stat_label} {best_side}",
                 "line": p.get("line", ""),
-                "odds": _fmt_odds(odds),
+                "odds": _fmt_odds(odds_int),
                 "edge_pct": round(edge * 100, 2),
                 "ev_class": ev_class.title(),
                 "confidence": conf,
@@ -2480,8 +2712,8 @@ class GoogleSheetsService:
                     {"type": "TEXT_EQ", "value": "push",    "bg": "#EEEEEE", "fg": "#555555", "bold": False},
                     {"type": "TEXT_EQ", "value": "pending", "bg": "#FFEB9C", "fg": "#9C6500", "bold": False},
                 ], written)
-                # Column widths: Date|Game|Player|Stat|Line|Side|Odds|Book|Edge%|Kelly$|EVClass|Placed?|BetID|Status|P/L|Notes
-                self._set_column_widths(sheet, ws, [80, 180, 160, 130, 55, 55, 60, 90, 60, 65, 90, 75, 120, 80, 65, 140])
+                # Column widths
+                self._set_column_widths(sheet, ws, [80, 180, 160, 130, 55, 55, 55, 90, 60, 65, 90, 75, 120, 80, 65, 140])
 
                 # ── Data validation: checkboxes + dropdowns ──
                 ws_id = ws.id

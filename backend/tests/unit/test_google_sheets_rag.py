@@ -43,5 +43,5 @@ def test_export_props_with_rag_context():
         
         # Headers should contain Situational Context
         assert "Situational Context" in rows[0]
-        # Data row should contain the mock context
-        assert "Analog similarity: 70% Over" in rows[1]
+        # rows[1] = stat section header, rows[2] = data row
+        assert "Analog similarity: 70% Over" in rows[2]
