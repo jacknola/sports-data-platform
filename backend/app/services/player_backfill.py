@@ -6,7 +6,12 @@ from datetime import datetime
 import time
 from sqlalchemy.orm import Session
 from sqlalchemy import select
-from nba_api.stats.endpoints import playergamelog
+try:
+    from nba_api.stats.endpoints import playergamelog
+    _NBA_API_AVAILABLE = True
+except ImportError:
+    playergamelog = None  # type: ignore[assignment]
+    _NBA_API_AVAILABLE = False
 from app.models.player import Player
 from app.models.player_game_log import PlayerGameLog
 from loguru import logger

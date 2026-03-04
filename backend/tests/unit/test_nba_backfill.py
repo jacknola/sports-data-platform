@@ -30,7 +30,9 @@ def test_backfill_nba_data(db_session):
         ])
     ]
     
-    with patch("app.services.nba_backfill.leaguegamefinder.LeagueGameFinder", return_value=mock_game_finder):
+    mock_module = MagicMock()
+    mock_module.LeagueGameFinder = MagicMock(return_value=mock_game_finder)
+    with patch("app.services.nba_backfill.leaguegamefinder", mock_module):
         service = NBABackfillService(db_session)
         count = service.backfill_season("2023-24")
         

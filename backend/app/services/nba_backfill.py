@@ -5,7 +5,12 @@ from typing import List, Dict, Any
 from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from nba_api.stats.endpoints import leaguegamefinder
+try:
+    from nba_api.stats.endpoints import leaguegamefinder
+    _NBA_API_AVAILABLE = True
+except ImportError:
+    leaguegamefinder = None  # type: ignore[assignment]
+    _NBA_API_AVAILABLE = False
 from app.models.game import Game
 from loguru import logger
 
