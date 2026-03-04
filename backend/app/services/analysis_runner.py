@@ -470,12 +470,29 @@ def run_sheets_export_pipeline(
         nba_predictions = (nba_data or {}).get("predictions", [])
         nba_bets = (nba_data or {}).get("bets", [])
 
+        # Generate parlay suggestions from today's props + NBA/NCAAB bets
+        # (lazy import — consistent with other service imports in this function
+        #  to avoid circular dependency at module load time)
+        parlay_suggestions: List[Dict[str, Any]] = []
+        try:
+            from app.services.parlay_engine import generate_suggestions as _gen_parlays
+
+            parlay_suggestions = _gen_parlays(
+                props=(prop_data or {}).get("best_props", []),
+                ncaab_analyses=(ncaab_data or {}).get("game_analyses", []),
+                nba_bets=nba_bets,
+            )
+            logger.info(f"Parlay engine: {len(parlay_suggestions)} suggestions generated")
+        except Exception as _parlay_err:
+            logger.warning(f"Parlay engine failed (non-fatal): {_parlay_err}")
+
         result = sheets.export_daily_picks(
             spreadsheet_id=sid,
             ncaab_data=ncaab_data,
             nba_predictions=nba_predictions,
             nba_bets=nba_bets,
             prop_data=prop_data,
+            parlay_suggestions=parlay_suggestions,
         )
 
         tabs_ok = sum(
