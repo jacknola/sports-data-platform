@@ -90,13 +90,19 @@ def client():
     """
     import os
     os.environ["ENVIRONMENT"] = "test"
-    injected = _inject_stubs()
 
-    # Remove cached main / app modules so a fresh import happens with stubs
+    # Purge only `main` and `app.routers.*` so stub routers take effect on a
+    # fresh import of main.py.  Do NOT purge app.models.*, app.services.*, or
+    # app.database — those share global state (SQLAlchemy Base.metadata,
+    # module-level globals) that other tests depend on; re-importing them
+    # corrupts that state in ways that break later tests.
+    _purge_prefixes = ("app.routers.",)
     for key in list(sys.modules.keys()):
-        if key in ("main", "app") or key.startswith("app."):
-            if key not in injected:
-                sys.modules.pop(key, None)
+        if key == "main" or any(key.startswith(p) for p in _purge_prefixes):
+            sys.modules.pop(key, None)
+
+    # Inject stubs AFTER the purge so router stubs land in sys.modules
+    _inject_stubs()
 
     # Now safely import (stubs already in sys.modules)
     from fastapi.testclient import TestClient

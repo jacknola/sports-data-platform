@@ -34,7 +34,9 @@ def test_backfill_player_logs(db_session):
         ]))
     ]
     
-    with patch("app.services.player_backfill.playergamelog.PlayerGameLog", return_value=mock_gamelog):
+    mock_module = MagicMock()
+    mock_module.PlayerGameLog = MagicMock(return_value=mock_gamelog)
+    with patch("app.services.player_backfill.playergamelog", mock_module):
         service = NBAPlayerBackfillService(db_session)
         count = service.backfill_player(player.id, "2023-24")
         

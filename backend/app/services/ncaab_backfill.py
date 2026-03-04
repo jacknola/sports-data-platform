@@ -30,7 +30,7 @@ class NCAABBackfillService:
             resp = httpx.get(url)
             resp.raise_for_status()
             
-            soup = BeautifulSoup(resp.text, "lxml")
+            soup = BeautifulSoup(resp.text, "html.parser")
             count = 0
             
             # Simple card-based scraping logic

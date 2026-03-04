@@ -1,22 +1,36 @@
 """
 Google Sheets Export Service — Daily Picks
 
-Exports NCAAB, NBA, and Player Prop analysis to Google Sheets with
-separate tabs per sport. Uses gspread + service account auth.
+Exports NCAAB, NBA, Player Prop, Parlay, and Live Prop analysis to
+Google Sheets with separate tabs per sport/feature. Uses gspread +
+service account auth.
 
 Tabs:
   - Props        — All player props ranked by confidence/edge
+  - HighValueProps — Filtered props (even odds or edge < 30%)
   - NBA          — NBA game picks with spreads, totals, ML
   - NCAAB        — NCAAB sharp money picks
+  - Parlays      — Parlay picks with per-leg detail and performance
+  - LiveProps    — In-game live prop projections with edge/verdict
   - Summary      — Daily overview (auto-generated)
+  - BetSlip      — Interactive tracker
 """
+from __future__ import annotations
 
 import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-import gspread
-from google.oauth2.service_account import Credentials
+try:
+    import gspread
+    from google.oauth2.service_account import Credentials
+    _SHEETS_AVAILABLE = True
+    _WorksheetNotFound = gspread.WorksheetNotFound
+except ImportError:
+    gspread = None  # type: ignore[assignment]
+    Credentials = None  # type: ignore[assignment,misc]
+    _SHEETS_AVAILABLE = False
+    _WorksheetNotFound = Exception  # fallback so except clause still parses
 from loguru import logger
 
 
@@ -65,6 +79,20 @@ def _coerce_odds(odds: Any, default: int = -110) -> int:
 def _fmt_odds(odds: Any) -> str:
     odds_int = _coerce_odds(odds)
     return f"+{odds_int}" if odds_int > 0 else str(odds_int)
+
+
+def _american_to_implied_prob(odds: int) -> float:
+    """Convert American moneyline odds to raw (vigged) implied probability."""
+    if not odds:
+        return 0.5
+    if odds > 0:
+        return 100.0 / (odds + 100.0)
+    return abs(odds) / (abs(odds) + 100.0)
+
+
+def _delta_pct(model: float, market: float) -> float:
+    """Return (model − market) in percentage points, rounded to 1 decimal."""
+    return round((model - market) * 100, 1)
 
 
 def _confidence_label(edge: float, ev_class: str) -> str:
@@ -130,7 +158,7 @@ class GoogleSheetsService:
             ws = spreadsheet.worksheet(name)
             ws.clear()
             return ws
-        except gspread.WorksheetNotFound:
+        except _WorksheetNotFound:
             return spreadsheet.add_worksheet(title=name, rows=rows, cols=cols)
 
     def _batch_write(
@@ -506,6 +534,8 @@ class GoogleSheetsService:
                 "Under Odds",
                 "Home Win %",
                 "Away Win %",
+                "Market Home %",
+                "Δ Model−Market",
                 "Proj Spread",
                 "Proj Total",
                 "O/U Rec",
@@ -546,6 +576,17 @@ class GoogleSheetsService:
                 )
                 under_odds = (
                     _fmt_odds(total_data.get("under_odds", -110)) if total_data else ""
+                )
+
+                # Market-implied probability from moneyline odds (raw, vigged)
+                home_ml_odds = ev.get("home_odds", 0)
+                market_home_pct = (
+                    round(_american_to_implied_prob(home_ml_odds) * 100, 1)
+                    if home_ml_odds else ""
+                )
+                delta_model_market = (
+                    _delta_pct(home_prob, _american_to_implied_prob(home_ml_odds))
+                    if home_ml_odds else ""
                 )
 
                 # Implied spread from probability
@@ -602,6 +643,8 @@ class GoogleSheetsService:
                         under_odds,
                         round(home_prob * 100, 1),
                         round(away_prob * 100, 1),
+                        market_home_pct,
+                        delta_model_market,
                         proj_spread,
                         uo.get("total_points", "") if uo else "",
                         total_label,
@@ -691,6 +734,8 @@ class GoogleSheetsService:
                 "True Away %",
                 "Blend Home %",
                 "Blend Away %",
+                "Δ Home (Model−Market)",
+                "Δ Away (Model−Market)",
                 "Home Edge %",
                 "Away Edge %",
                 "Sharp Side",
@@ -740,6 +785,11 @@ class GoogleSheetsService:
                     s.get("game", "")[:60] for s in a.get("historical_context", [])[:2]
                 )
 
+                true_hp = a.get("true_home_prob", 0)
+                true_ap = a.get("true_away_prob", 0)
+                blend_hp = a.get("blended_home_prob", 0)
+                blend_ap = a.get("blended_away_prob", 0)
+
                 # ── Build explicit pick label ──
                 # Priority: bet from portfolio optimizer → derived from edge
                 spread = game.get("spread", 0) or 0
@@ -786,10 +836,12 @@ class GoogleSheetsService:
                         _fmt_odds(game.get("pinnacle_away_odds", 0)),
                         _fmt_odds(game.get("retail_home_odds", 0)),
                         _fmt_odds(game.get("retail_away_odds", 0)),
-                        round(a.get("true_home_prob", 0) * 100, 1),
-                        round(a.get("true_away_prob", 0) * 100, 1),
-                        round(a.get("blended_home_prob", 0) * 100, 1),
-                        round(a.get("blended_away_prob", 0) * 100, 1),
+                        round(true_hp * 100, 1),
+                        round(true_ap * 100, 1),
+                        round(blend_hp * 100, 1),
+                        round(blend_ap * 100, 1),
+                        _delta_pct(blend_hp, true_hp),
+                        _delta_pct(blend_ap, true_ap),
                         round(he * 100, 2),
                         round(ae * 100, 2),
                         a.get("sharp_side", ""),
@@ -860,6 +912,178 @@ class GoogleSheetsService:
 
         except Exception as e:
             logger.error(f"NCAAB export failed: {e}")
+            return {"error": str(e)}
+
+    # ───────────────────────────────────────────────────────────────
+    # Predictions comparison tab
+    # ───────────────────────────────────────────────────────────────
+
+    def export_predictions_comparison(
+        self,
+        spreadsheet_id: str,
+        ncaab_data: Optional[Dict[str, Any]] = None,
+        nba_predictions: Optional[List[Dict[str, Any]]] = None,
+        tab_name: str = "Predictions",
+    ) -> Dict[str, Any]:
+        """Export a unified model-vs-market comparison across all sports.
+
+        Each row represents one game side with three probability columns:
+
+        * Market %   — what the sharp market implies (devigged Pinnacle for NCAAB;
+                       raw implied from moneyline odds for NBA)
+        * Model %    — our model's estimate (KenPom blend for NCAAB; XGBoost for NBA)
+        * Δ          — Model % − Market %  (positive = model more bullish than market)
+
+        This lets you instantly see where the model and market most disagree.
+        """
+        if not self.client:
+            return {"error": "Google Sheets not configured"}
+
+        try:
+            sheet = self.client.open_by_key(spreadsheet_id)
+            ws = self._get_or_create_worksheet(sheet, tab_name, rows=300, cols=14)
+
+            headers = [
+                "Date", "Sport", "Home", "Away",
+                "Side",           # "Home" or "Away"
+                "Market %",       # Sharp-market implied probability for that side
+                "Model %",        # Our model's probability for that side
+                "Δ (Model−Mkt)",  # Difference in percentage points
+                "Edge %",         # Edge vs retail / best available line
+                "Best Bet",       # Which side the model recommends
+                "Confidence",     # HIGH / MEDIUM / LOW / SPECULATIVE
+                "Signals",        # Sharp signals (NCAAB) or model confidence (NBA)
+                "Kelly %",        # Fractional Kelly sizing
+                "Notes",
+            ]
+
+            today = datetime.now().strftime("%Y-%m-%d")
+            rows: List[List[Any]] = []
+
+            # ── NCAAB ───────────────────────────────────────────────────────
+            for a in (ncaab_data or {}).get("game_analyses", []):
+                game = a.get("game", {})
+                home = game.get("home", "")
+                away = game.get("away", "")
+                signals_str = ", ".join(a.get("sharp_signals", []))
+                confidence = a.get("confidence_level", "SPECULATIVE")
+
+                # Bets lookup for Kelly sizing
+                bets = (ncaab_data or {}).get("bets", [])
+                gid = game.get("game_id", "")
+                bet = next(
+                    (b for b in bets if b.get("game_id", "") == gid), {}
+                )
+                kelly_pct = round(bet.get("portfolio_fraction_pct", 0), 2) if bet else ""
+
+                true_hp = a.get("true_home_prob", 0)
+                true_ap = a.get("true_away_prob", 0)
+                blend_hp = a.get("blended_home_prob", 0)
+                blend_ap = a.get("blended_away_prob", 0)
+                he = a.get("home_edge", 0)
+                ae = a.get("away_edge", 0)
+                sharp_side = a.get("sharp_side", "") or ""
+
+                best_bet = (
+                    home if he >= ae else away
+                ) if (he or ae) else ""
+
+                # Home side row
+                rows.append([
+                    today, "NCAAB", home, away,
+                    "Home",
+                    round(true_hp * 100, 1),
+                    round(blend_hp * 100, 1),
+                    _delta_pct(blend_hp, true_hp),
+                    round(he * 100, 2),
+                    best_bet,
+                    confidence,
+                    signals_str,
+                    kelly_pct,
+                    f"Sharp: {sharp_side}" if sharp_side else "",
+                ])
+                # Away side row
+                rows.append([
+                    today, "NCAAB", home, away,
+                    "Away",
+                    round(true_ap * 100, 1),
+                    round(blend_ap * 100, 1),
+                    _delta_pct(blend_ap, true_ap),
+                    round(ae * 100, 2),
+                    best_bet,
+                    confidence,
+                    signals_str,
+                    kelly_pct,
+                    f"Sharp: {sharp_side}" if sharp_side else "",
+                ])
+
+            # ── NBA ─────────────────────────────────────────────────────────
+            for p in (nba_predictions or []):
+                if "error" in p:
+                    continue
+
+                ev = p.get("expected_value", {})
+                home = p.get("home_team", "")
+                away = p.get("away_team", "")
+                home_prob = p.get("home_win_probability", 0.5)
+                away_prob = 1.0 - home_prob
+                home_ml = ev.get("home_odds", 0)
+                away_ml = ev.get("away_odds", 0)
+                market_hp = _american_to_implied_prob(home_ml) if home_ml else 0.5
+                market_ap = 1.0 - market_hp
+                best_bet = ev.get("best_bet", "")
+                best_side = home if best_bet == "home" else away
+                home_ev = ev.get("home_ev", 0)
+                away_ev = ev.get("away_ev", 0)
+                kelly = p.get("kelly_criterion", 0)
+                kelly_pct = round(kelly * 100, 2) if kelly else ""
+                conf_val = p.get("confidence", 0)
+                confidence = (
+                    "HIGH" if conf_val >= 0.7
+                    else "MEDIUM" if conf_val >= 0.5
+                    else "LOW"
+                )
+
+                # Home side row
+                rows.append([
+                    today, "NBA", home, away,
+                    "Home",
+                    round(market_hp * 100, 1),
+                    round(home_prob * 100, 1),
+                    _delta_pct(home_prob, market_hp),
+                    round(home_ev * 100, 2) if home_ev else "",
+                    best_side,
+                    confidence,
+                    f"XGBoost conf={conf_val:.2f}" if conf_val else "XGBoost",
+                    kelly_pct,
+                    "",
+                ])
+                # Away side row
+                rows.append([
+                    today, "NBA", home, away,
+                    "Away",
+                    round(market_ap * 100, 1),
+                    round(away_prob * 100, 1),
+                    _delta_pct(away_prob, market_ap),
+                    round(away_ev * 100, 2) if away_ev else "",
+                    best_side,
+                    confidence,
+                    f"XGBoost conf={conf_val:.2f}" if conf_val else "XGBoost",
+                    kelly_pct,
+                    "",
+                ])
+
+            # Sort by absolute delta descending so biggest divergences appear first
+            rows.sort(key=lambda r: abs(r[7]) if isinstance(r[7], (int, float)) else 0, reverse=True)
+
+            written = self._batch_write(ws, headers, rows)
+            logger.info(
+                f"Exported {written} prediction rows to Google Sheets tab '{tab_name}'"
+            )
+            return {"status": "success", "tab": tab_name, "rows_written": written}
+
+        except Exception as e:
+            logger.error(f"Predictions comparison export failed: {e}")
             return {"error": str(e)}
 
     # ───────────────────────────────────────────────────────────────
@@ -961,6 +1185,173 @@ class GoogleSheetsService:
             return {"error": str(e)}
 
     # ───────────────────────────────────────────────────────────────
+    # Parlays export
+    # ───────────────────────────────────────────────────────────────
+
+    def export_db_parlays(
+        self,
+        spreadsheet_id: str,
+        parlays: List[Dict[str, Any]],
+        tab_name: str = "Parlays",
+    ) -> Dict[str, Any]:
+        """Export parlay picks from database with per-leg detail to Google Sheets."""
+        if not self.client:
+            return {"error": "Google Sheets not configured"}
+
+        try:
+            sheet = self.client.open_by_key(spreadsheet_id)
+            ws = self._get_or_create_worksheet(sheet, tab_name, cols=16)
+
+            headers = [
+                "Date",
+                "Title",
+                "Sport",
+                "Legs",
+                "Confidence",
+                "Score",
+                "Total Odds",
+                "Payout",
+                "Unit Size",
+                "Status",
+                "P/L",
+                "ROI",
+                "Tags",
+                "Leg Detail",
+                "Risks",
+                "Tweet",
+            ]
+
+            rows = []
+            for p in parlays:
+                legs = p.get("legs") or []
+                leg_detail = " | ".join(
+                    f"{lg.get('pick', '?')} ({_fmt_odds(lg.get('odds', 0))})"
+                    for lg in legs
+                ) if isinstance(legs, list) else str(legs)
+
+                risks = p.get("risks") or []
+                risk_str = "; ".join(risks) if isinstance(risks, list) else str(risks)
+
+                tags = p.get("tags") or []
+                tag_str = ", ".join(tags) if isinstance(tags, list) else str(tags)
+
+                rows.append([
+                    str(p.get("event_date") or p.get("created_at") or "")[:10],
+                    p.get("title", ""),
+                    p.get("sport", ""),
+                    len(legs) if isinstance(legs, list) else 0,
+                    p.get("confidence_level", ""),
+                    round(p.get("confidence_score") or 0, 1),
+                    _fmt_odds(p.get("total_odds")),
+                    round(p.get("potential_payout_multiplier") or 0, 2),
+                    round(p.get("suggested_unit_size") or 0, 2),
+                    p.get("status", "pending"),
+                    round(p.get("profit_loss") or 0, 2),
+                    f"{round(p.get('roi') or 0, 1)}%",
+                    tag_str,
+                    leg_detail,
+                    risk_str,
+                    (p.get("tweet_text") or "")[:100],
+                ])
+
+            count = self._batch_write(ws, headers, rows)
+            logger.info(f"Exported {count} parlays to Google Sheets tab '{tab_name}'")
+            return {"status": "success", "tab": tab_name, "rows": count}
+
+        except Exception as e:
+            logger.error(f"Parlay export failed: {e}")
+            return {"error": str(e)}
+
+    # ───────────────────────────────────────────────────────────────
+    # Live Props export
+    # ───────────────────────────────────────────────────────────────
+
+    def export_live_props(
+        self,
+        spreadsheet_id: str,
+        projections: List[Dict[str, Any]],
+        tab_name: str = "LiveProps",
+    ) -> Dict[str, Any]:
+        """Export live in-game prop projections to Google Sheets."""
+        if not self.client:
+            return {"error": "Google Sheets not configured"}
+
+        try:
+            sheet = self.client.open_by_key(spreadsheet_id)
+            ws = self._get_or_create_worksheet(sheet, tab_name, cols=18)
+
+            headers = [
+                "Player",
+                "Stat",
+                "Line",
+                "Current",
+                "Min Rem",
+                "Projected",
+                "Hot Hand",
+                "Pace",
+                "Garbage Disc",
+                "Foul Disc",
+                "True P(Over)",
+                "Implied P(Over)",
+                "Edge Over",
+                "Edge Under",
+                "Best Side",
+                "Kelly %",
+                "Verdict",
+                "+EV?",
+            ]
+
+            rows = []
+            for p in projections:
+                edge_over = p.get("edge_over", 0)
+                edge_under = p.get("edge_under", 0)
+                best_side = "OVER" if edge_over >= edge_under else "UNDER"
+                best_edge = max(edge_over, edge_under)
+                is_positive_ev = best_edge > 0
+
+                verdict = p.get("verdict", "")
+                if not verdict:
+                    if best_edge >= 0.20:
+                        verdict = f"STRONG {best_side}"
+                    elif best_edge >= 0.10:
+                        verdict = f"LEAN {best_side}"
+                    elif best_edge >= 0.05:
+                        verdict = f"MARGINAL {best_side}"
+                    elif abs(best_edge) < 0.03:
+                        verdict = "PASS"
+                    else:
+                        verdict = "FADE"
+
+                rows.append([
+                    p.get("player_name", ""),
+                    _STAT_DISPLAY.get(p.get("stat_type", ""), p.get("stat_type", "")),
+                    p.get("threshold", 0),
+                    p.get("current_stat", 0),
+                    round(p.get("minutes_remaining", 0), 1),
+                    round(p.get("projected_final", 0), 1),
+                    round(p.get("hot_hand_factor", 1.0), 2),
+                    round(p.get("pace_factor", 1.0), 2),
+                    round(p.get("garbage_time_discount", 1.0), 2),
+                    round(p.get("foul_discount", 1.0), 2),
+                    f"{round(p.get('true_p_over', 0) * 100, 1)}%",
+                    f"{round(p.get('implied_p_over', 0) * 100, 1)}%",
+                    f"{round(edge_over * 100, 1)}%",
+                    f"{round(edge_under * 100, 1)}%",
+                    best_side,
+                    f"{round(p.get('kelly_fraction', 0) * 100, 2)}%",
+                    verdict,
+                    "✅" if is_positive_ev else "❌",
+                ])
+
+            count = self._batch_write(ws, headers, rows)
+            logger.info(f"Exported {count} live props to Google Sheets tab '{tab_name}'")
+            return {"status": "success", "tab": tab_name, "rows": count}
+
+        except Exception as e:
+            logger.error(f"Live props export failed: {e}")
+            return {"error": str(e)}
+
+    # ───────────────────────────────────────────────────────────────
     # Full daily export (all tabs)
     # ───────────────────────────────────────────────────────────────
 
@@ -972,8 +1363,9 @@ class GoogleSheetsService:
         nba_bets: Optional[List[Dict[str, Any]]] = None,
         prop_data: Optional[Dict[str, Any]] = None,
         parlay_suggestions: Optional[List[Dict[str, Any]]] = None,
+        live_props_data: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        """Export all daily picks to Google Sheets (Props + NBA + NCAAB + Summary).
+        """Export all daily picks to Google Sheets (Props + NBA + NCAAB + Parlays + LiveProps + Summary).
 
         Args:
             spreadsheet_id: Target Google Sheets ID
@@ -981,6 +1373,8 @@ class GoogleSheetsService:
             nba_predictions: NBA predictions list
             nba_bets: NBA qualifying bets
             prop_data: Result from run_prop_analysis()
+            parlay_data: List of parlay dicts from the Parlay model
+            live_props_data: List of LivePropProjection dicts
 
         Returns:
             Dict with per-tab results
@@ -1031,6 +1425,14 @@ class GoogleSheetsService:
                 )
             results["ncaab"] = self.export_ncaab(spreadsheet_id, ncaab_data)
 
+        # Unified model-vs-market comparison tab (any sport with data)
+        if ncaab_data or nba_predictions:
+            results["predictions"] = self.export_predictions_comparison(
+                spreadsheet_id,
+                ncaab_data=ncaab_data,
+                nba_predictions=nba_predictions,
+            )
+
         results["summary"] = self.export_summary(
             spreadsheet_id,
             ncaab_data=ncaab_data,
@@ -1049,6 +1451,12 @@ class GoogleSheetsService:
 
         # BetTracker — full history with P&L, CLV, status for primary book
         results["bet_tracker"] = self.export_bet_tracker(spreadsheet_id)
+
+        # Live Props — in-game prop projections
+        if live_props_data:
+            results["live_props"] = self.export_live_props(
+                spreadsheet_id, live_props_data
+            )
 
         # Log overall result
         tabs_ok = sum(

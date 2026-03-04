@@ -1,15 +1,18 @@
 """
 Export Daily Picks to Google Sheets
 
-Runs NCAAB, NBA, and Player Prop analysis, then writes results to
-Google Sheets with separate tabs: Props, NBA, NCAAB, Summary.
+Runs NCAAB, NBA, Player Prop, and Parlay analysis, then writes results to
+Google Sheets with separate tabs: Props, HighValueProps, NBA, NCAAB, Parlays,
+LiveProps, Predictions, Summary, BetSlip.
 
 Usage:
-    python backend/export_to_sheets.py              # Full export
-    python backend/export_to_sheets.py --props-only # Props tab only
-    python backend/export_to_sheets.py --nba-only   # NBA tab only
-    python backend/export_to_sheets.py --ncaab-only # NCAAB tab only
-    python backend/export_to_sheets.py --test       # Test connection
+    python backend/export_to_sheets.py                   # Full export
+    python backend/export_to_sheets.py --props-only      # Props tab only
+    python backend/export_to_sheets.py --nba-only        # NBA tab only
+    python backend/export_to_sheets.py --ncaab-only      # NCAAB tab only
+    python backend/export_to_sheets.py --parlays-only    # Parlays tab only
+    python backend/export_to_sheets.py --predictions-only# Predictions tab only
+    python backend/export_to_sheets.py --test            # Test connection
 """
 
 import sys
@@ -101,6 +104,45 @@ async def _run_props() -> Optional[Dict[str, Any]]:
         return None
 
 
+def _fetch_parlays() -> List[Dict[str, Any]]:
+    """Fetch all parlays from the database."""
+    try:
+        from app.database import SessionLocal
+        from app.models.parlay import Parlay
+
+        db = SessionLocal()
+        try:
+            parlays = db.query(Parlay).order_by(Parlay.created_at.desc()).all()
+            result = []
+            for p in parlays:
+                result.append({
+                    "parlay_id": p.parlay_id,
+                    "title": p.title,
+                    "sport": p.sport,
+                    "confidence_level": p.confidence_level,
+                    "confidence_score": p.confidence_score,
+                    "legs": p.legs or [],
+                    "total_odds": p.total_odds,
+                    "potential_payout_multiplier": p.potential_payout_multiplier,
+                    "suggested_unit_size": p.suggested_unit_size,
+                    "status": p.status,
+                    "profit_loss": p.profit_loss,
+                    "roi": p.roi,
+                    "tags": p.tags or [],
+                    "risks": p.risks or [],
+                    "tweet_text": p.tweet_text,
+                    "event_date": str(p.event_date) if p.event_date else "",
+                    "created_at": str(p.created_at) if p.created_at else "",
+                })
+            logger.info(f"Fetched {len(result)} parlays from database")
+            return result
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Failed to fetch parlays: {e}")
+        return []
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -110,6 +152,10 @@ async def run_and_export(
     include_ncaab: bool = True,
     include_nba: bool = True,
     include_props: bool = True,
+    predictions_only: bool = False,
+    include_parlays: bool = True,
+    include_live_props: bool = False,
+    live_props_data: Optional[List[Dict[str, Any]]] = None,
 ) -> bool:
     """Run all pipelines and export to Google Sheets."""
     spreadsheet_id = (
@@ -129,6 +175,12 @@ async def run_and_export(
     nba_predictions: List[Dict[str, Any]] = []
     nba_bets: List[Dict[str, Any]] = []
     prop_data: Optional[Dict[str, Any]] = None
+    parlay_data: List[Dict[str, Any]] = []
+
+    # Predictions-only: run NCAAB + NBA (no props needed), export just that tab
+    if predictions_only:
+        include_ncaab = include_nba = True
+        include_props = False
 
     # Run pipelines
     if include_ncaab:
@@ -140,12 +192,17 @@ async def run_and_export(
     if include_props:
         prop_data = await _run_props()
 
+    if include_parlays:
+        parlay_data = _fetch_parlays()
+
     # Check if we have anything
     has_ncaab = ncaab_data and ncaab_data.get("game_analyses")
     has_nba = bool(nba_predictions)
     has_props = prop_data and prop_data.get("props")
+    has_parlays = bool(parlay_data)
+    has_live_props = bool(live_props_data)
 
-    if not has_ncaab and not has_nba and not has_props:
+    if not has_ncaab and not has_nba and not has_props and not has_parlays and not has_live_props:
         logger.warning("No data from any pipeline — nothing to export")
         return False
 
@@ -163,14 +220,24 @@ async def run_and_export(
         logger.warning(f"Parlay engine failed (non-fatal): {parlay_err}")
 
     # Export
-    results = sheets.export_daily_picks(
-        spreadsheet_id=spreadsheet_id,
-        ncaab_data=ncaab_data if has_ncaab else None,
-        nba_predictions=nba_predictions if has_nba else None,
-        nba_bets=nba_bets,
-        prop_data=prop_data if has_props else None,
-        parlay_suggestions=parlay_suggestions,
-    )
+    if predictions_only:
+        results = {
+            "predictions": sheets.export_predictions_comparison(
+                spreadsheet_id=spreadsheet_id,
+                ncaab_data=ncaab_data if has_ncaab else None,
+                nba_predictions=nba_predictions if has_nba else None,
+            )
+        }
+    else:
+        results = sheets.export_daily_picks(
+            spreadsheet_id=spreadsheet_id,
+            ncaab_data=ncaab_data if has_ncaab else None,
+            nba_predictions=nba_predictions if has_nba else None,
+            nba_bets=nba_bets,
+            prop_data=prop_data if has_props else None,
+            parlay_suggestions=parlay_suggestions,
+            live_props_data=live_props_data if has_live_props else None,
+        )
 
     # Report
     errors = [k for k, v in results.items() if isinstance(v, dict) and v.get("error")]
@@ -193,6 +260,12 @@ def main():
     parser.add_argument("--props-only", action="store_true", help="Props tab only")
     parser.add_argument("--nba-only", action="store_true", help="NBA tab only")
     parser.add_argument("--ncaab-only", action="store_true", help="NCAAB tab only")
+    parser.add_argument("--parlays-only", action="store_true", help="Parlays tab only")
+    parser.add_argument(
+        "--predictions-only",
+        action="store_true",
+        help="Predictions comparison tab only (model vs market, all sports)",
+    )
     args = parser.parse_args()
 
     if args.test:
@@ -214,19 +287,26 @@ def main():
         print(f"   Tabs: {', '.join(info['worksheets'])}")
         sys.exit(0)
 
-    if args.props_only:
-        include_ncaab, include_nba, include_props = False, False, True
+    predictions_only = args.predictions_only
+    if predictions_only:
+        include_ncaab, include_nba, include_props, include_parlays = True, True, False, False
+    elif args.props_only:
+        include_ncaab, include_nba, include_props, include_parlays = False, False, True, False
     elif args.nba_only:
-        include_ncaab, include_nba, include_props = False, True, False
+        include_ncaab, include_nba, include_props, include_parlays = False, True, False, False
     elif args.ncaab_only:
-        include_ncaab, include_nba, include_props = True, False, False
+        include_ncaab, include_nba, include_props, include_parlays = True, False, False, False
+    elif args.parlays_only:
+        include_ncaab, include_nba, include_props, include_parlays = False, False, False, True
     else:
-        include_ncaab, include_nba, include_props = True, True, True
+        include_ncaab, include_nba, include_props, include_parlays = True, True, True, True
 
     ok = asyncio.run(run_and_export(
         include_ncaab=include_ncaab,
         include_nba=include_nba,
         include_props=include_props,
+        predictions_only=predictions_only,
+        include_parlays=include_parlays,
     ))
     sys.exit(0 if ok else 1)
 
