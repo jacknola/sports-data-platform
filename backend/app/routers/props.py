@@ -370,8 +370,8 @@ async def _get_live_props(sport: str) -> List[Dict]:
             matchup = research.get("matchup_data", {})
 
             if matchup:
-                opp_def_rating = float(matchup.get("def_rating", 113.5))
-                opp_pace = float(matchup.get("pace", 100.0))
+                opp_def_rating = float(matchup.get("def_rating") or 113.5)
+                opp_pace = float(matchup.get("pace") or 100.0)
 
             # Resolve player's own team pace from pre-fetched all-team stats
             if player_team_abbrev and all_team_stats:
@@ -636,9 +636,16 @@ def _build_prop_analysis(prop: Dict) -> Dict:
     # 5. Situational RAG (Similarity search in Qdrant)
     situational_context = "No historical analogs found."
     try:
+        # Build search description matching the stored PlayerProfiler format
+        _is_home_str = "home" if prop.get("is_home") else "away"
+        _search_desc = (
+            f"{prop['player_name']} playing at {_is_home_str} vs {prop.get('opponent', 'Opponent')}. "
+            f"Rest: {prop.get('rest_days', 1)} days. "
+            f"Opponent pace: {prop.get('opponent_pace', 100.0):.1f}."
+        )
         # Use player-specific collection for props
         analogs = _similarity.vector_store.search_similar_scenarios(
-            description=f"{prop['player_name']} vs {prop['opponent']} {prop['stat_type']}",
+            description=_search_desc,
             collection=settings.QDRANT_COLLECTION_PLAYERS,
             limit=3,
         )
