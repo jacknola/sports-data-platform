@@ -5,7 +5,7 @@ Integrated with kyleskom/NBA-Machine-Learning-Sports-Betting approach
 
 import os
 import pickle
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 import numpy as np
 import pandas as pd
@@ -48,6 +48,24 @@ def _form_to_pct(form: Any) -> float:
         return float(form)
     except (TypeError, ValueError):
         return 0.6  # league-average default
+
+
+def _american_to_decimal(odds: float) -> float:
+    """Convert American odds to decimal odds."""
+    if odds > 0:
+        return odds / 100.0 + 1.0
+    return 100.0 / abs(odds) + 1.0
+
+
+# Priority order for bookmaker selection (sharp books first, then retail)
+PRIORITY_BOOKS = ["pinnacle", "fanduel", "draftkings", "circa", "bovada"]
+
+# NBA advanced stats columns sourced from nba_api LeagueDashTeamStats
+_TEAM_STAT_COLS = ("OFF_RATING", "DEF_RATING", "W_PCT", "PACE")
+
+# Default values used when live team stats are unavailable
+_DEFAULT_RATING = 110.0
+_DEFAULT_WIN_PCT = 0.5
 
 
 class NBAMLPredictor:
@@ -191,8 +209,8 @@ class NBAMLPredictor:
                 season_w_pct_away = None
 
             if season_w_pct_home is None or season_w_pct_away is None:
-                season_w_pct_home = features.get("home_win_pct", 0.5)  # type: ignore
-                season_w_pct_away = features.get("away_win_pct", 0.5)  # type: ignore
+                season_w_pct_home = features.get("home_win_pct", _DEFAULT_WIN_PCT)  # type: ignore
+                season_w_pct_away = features.get("away_win_pct", _DEFAULT_WIN_PCT)  # type: ignore
 
             return {
                 "home_team": home_team,
@@ -201,10 +219,23 @@ class NBAMLPredictor:
                 "underover_prediction": underover_pred,
                 "expected_value": ev,
                 "kelly_criterion": kelly,
-                "confidence": moneyline_pred.get("confidence", 0.5),
+                "confidence": float(moneyline_pred.get("confidence", 0.5)),
                 # Expose season win percentage data for downstream exports (e.g., Google Sheets)
                 "season_w_pct_home": season_w_pct_home,
                 "season_w_pct_away": season_w_pct_away,
+                # Core feature snapshot used for this prediction (for traceability)
+                "features": {
+                    "home_off_rating": features.get("home_off_rating", _DEFAULT_RATING),
+                    "home_def_rating": features.get("home_def_rating", _DEFAULT_RATING),
+                    "away_off_rating": features.get("away_off_rating", _DEFAULT_RATING),
+                    "away_def_rating": features.get("away_def_rating", _DEFAULT_RATING),
+                    "home_win_pct": features.get("home_win_pct", _DEFAULT_WIN_PCT),
+                    "away_win_pct": features.get("away_win_pct", _DEFAULT_WIN_PCT),
+                },
+                # Market data – populated by predict_today_games(); empty by default
+                "spread": {},
+                "total": {},
+                "book": "",
                 "method": "ml_xgboost"
                 if XGBOOST_AVAILABLE and "moneyline" in self.models
                 else "placeholder",
@@ -234,12 +265,12 @@ class NBAMLPredictor:
                     logger.warning(f"Stats feature engineering failed: {e}")
 
         feature_dict = {
-            "home_off_rating": features.get("home_off_rating", 110.0),
-            "home_def_rating": features.get("home_def_rating", 110.0),
-            "away_off_rating": features.get("away_off_rating", 110.0),
-            "away_def_rating": features.get("away_def_rating", 110.0),
-            "home_win_pct": features.get("home_win_pct", 0.5),
-            "away_win_pct": features.get("away_win_pct", 0.5),
+            "home_off_rating": features.get("home_off_rating", _DEFAULT_RATING),
+            "home_def_rating": features.get("home_def_rating", _DEFAULT_RATING),
+            "away_off_rating": features.get("away_off_rating", _DEFAULT_RATING),
+            "away_def_rating": features.get("away_def_rating", _DEFAULT_RATING),
+            "home_win_pct": features.get("home_win_pct", _DEFAULT_WIN_PCT),
+            "away_win_pct": features.get("away_win_pct", _DEFAULT_WIN_PCT),
             "home_recent_form": _form_to_pct(features.get("home_recent_form", [1, 1, 1, 0, 1])),
             "away_recent_form": _form_to_pct(features.get("away_recent_form", [1, 1, 0, 1, 0])),
             "home_pace": features.get("home_pace", 100.0),
@@ -276,12 +307,12 @@ class NBAMLPredictor:
 
                 return {
                     "winner": "home" if winner_prob > 0.5 else "away",
-                    "home_win_prob": winner_prob,
-                    "away_win_prob": 1 - winner_prob,
-                    "confidence": abs(winner_prob - 0.5) * 2,  # 0 to 1 scale
+                    "home_win_prob": float(winner_prob),
+                    "away_win_prob": float(1 - winner_prob),
+                    "confidence": float(abs(winner_prob - 0.5) * 2),  # 0 to 1 scale
                     # Expose season win percentage data for downstream exports (e.g., Google Sheets)
-                    "home_season_w_pct": home_w_pct,
-                    "away_season_w_pct": away_w_pct,
+                    "home_season_w_pct": float(home_w_pct),
+                    "away_season_w_pct": float(away_w_pct),
                 }
             except Exception as e:
                 logger.error(f"Moneyline prediction error: {e}")
@@ -319,9 +350,9 @@ class NBAMLPredictor:
 
         return {
             "winner": "home" if home_win_prob > 0.5 else "away",
-            "home_win_prob": home_win_prob,
-            "away_win_prob": 1.0 - home_win_prob,
-            "confidence": abs(home_win_prob - 0.5) * 2,
+            "home_win_prob": float(home_win_prob),
+            "away_win_prob": float(1.0 - home_win_prob),
+            "confidence": float(abs(home_win_prob - 0.5) * 2),
         }
 
     def _predict_underover(self, features: pd.DataFrame) -> Dict[str, Any]:
@@ -384,11 +415,8 @@ class NBAMLPredictor:
         home_odds = odds.get("home", -110)
         away_odds = odds.get("away", 110)
 
-        def american_to_decimal(o: int) -> float:
-            return o / 100 + 1 if o > 0 else 100 / abs(o) + 1
-
-        home_decimal = american_to_decimal(home_odds)
-        away_decimal = american_to_decimal(away_odds)
+        home_decimal = _american_to_decimal(home_odds)
+        away_decimal = _american_to_decimal(away_odds)
 
         # Devig market implied probabilities
         raw_home_implied = 1.0 / home_decimal
@@ -463,6 +491,98 @@ class NBAMLPredictor:
         # Cap at global max bet percentage (5% by default)
         return max(0.0, min(kelly_stake, settings.MAX_BET_PERCENTAGE))
 
+    def _parse_game_bookmakers(
+        self,
+        game: Dict[str, Any],
+        stats_df: pd.DataFrame,
+    ) -> Dict[str, Any]:
+        """
+        Parse bookmaker data for a single Odds API game object into a normalised
+        game dict ready for ``predict_game()``.
+
+        Returns a dict with keys: home_team, away_team, features, spread, total, book.
+        """
+        home_team = game.get("home_team")
+        away_team = game.get("away_team")
+        bookmakers = game.get("bookmakers", [])
+        home_odds = -110
+        away_odds = -110
+
+        spread_data: Dict[str, Any] = {}
+        total_data: Dict[str, Any] = {}
+        best_book_used = ""
+
+        for book in PRIORITY_BOOKS:
+            b_data = next((b for b in bookmakers if b["key"] == book), None)
+            if not b_data:
+                continue
+
+            # --- h2h (moneyline) ---
+            h2h = next((m for m in b_data["markets"] if m["key"] == "h2h"), None)
+            if h2h and len(h2h["outcomes"]) == 2:
+                for out in h2h["outcomes"]:
+                    if out["name"] == home_team:
+                        home_odds = round(out["price"])
+                    elif out["name"] == away_team:
+                        away_odds = round(out["price"])
+
+            # --- spreads ---
+            sp = next((m for m in b_data["markets"] if m["key"] == "spreads"), None)
+            if sp and not spread_data:
+                for out in sp.get("outcomes", []):
+                    if out["name"] == home_team:
+                        spread_data["home_point"] = out.get("point", 0)
+                        spread_data["home_odds"] = round(out.get("price", -110))
+                    elif out["name"] == away_team:
+                        spread_data["away_point"] = out.get("point", 0)
+                        spread_data["away_odds"] = round(out.get("price", -110))
+                spread_data["book"] = b_data["key"]
+
+            # --- totals ---
+            tot = next((m for m in b_data["markets"] if m["key"] == "totals"), None)
+            if tot and not total_data:
+                for out in tot.get("outcomes", []):
+                    if out["name"] == "Over":
+                        total_data["over_odds"] = round(out.get("price", -110))
+                        total_data["point"] = out.get("point", 0)
+                    elif out["name"] == "Under":
+                        total_data["under_odds"] = round(out.get("price", -110))
+                total_data["book"] = b_data["key"]
+
+            if not best_book_used:
+                best_book_used = b_data["key"]
+            break
+
+        features: Dict[str, Any] = {"odds": {"home": home_odds, "away": away_odds}}
+
+        # Inject live stats if available
+        if not stats_df.empty:
+            home_id = self._get_team_id(str(home_team)) if home_team else None
+            away_id = self._get_team_id(str(away_team)) if away_team else None
+
+            # Column → feature-key prefixes for home and away
+            stat_prefixes = (("home", home_id, stats_df), ("away", away_id, stats_df))
+            for prefix, team_id, df in stat_prefixes:
+                if not team_id:
+                    continue
+                row = df[df["TEAM_ID"] == team_id]
+                if row.empty:
+                    continue
+                r = row.iloc[0]
+                features[f"{prefix}_off_rating"] = float(r["OFF_RATING"])
+                features[f"{prefix}_def_rating"] = float(r["DEF_RATING"])
+                features[f"{prefix}_win_pct"] = float(r["W_PCT"])
+                features[f"{prefix}_pace"] = float(r["PACE"])
+
+        return {
+            "home_team": home_team,
+            "away_team": away_team,
+            "features": features,
+            "spread": spread_data,
+            "total": total_data,
+            "book": best_book_used,
+        }
+
     async def predict_today_games(self, sport: str = "nba", prediction_only: bool = False) -> List[Dict[str, Any]]:
         """
         Get predictions for today's games using multi-source discovery + live odds.
@@ -497,108 +617,7 @@ class NBAMLPredictor:
             stats_df = self._fetch_live_team_stats()
 
             for game in odds_data:
-                home_team = game.get("home_team")
-                away_team = game.get("away_team")
-
-                # Extract odds
-                bookmakers = game.get("bookmakers", [])
-                home_odds = -110
-                away_odds = -110
-
-                # Try to find pinnacle or fanduel/draftkings
-                target_books = ["pinnacle", "fanduel", "draftkings", "circa", "bovada"]
-                spread_data: Dict[str, Any] = {}
-                total_data: Dict[str, Any] = {}
-                best_book_used = ""
-
-                for book in target_books:
-                    b_data = next((b for b in bookmakers if b["key"] == book), None)
-                    if b_data:
-                        # --- h2h (moneyline) ---
-                        h2h = next(
-                            (m for m in b_data["markets"] if m["key"] == "h2h"), None
-                        )
-                        if h2h and len(h2h["outcomes"]) == 2:
-                            for out in h2h["outcomes"]:
-                                if out["name"] == home_team:
-                                    home_odds = round(out["price"])
-                                elif out["name"] == away_team:
-                                    away_odds = round(out["price"])
-
-                        # --- spreads ---
-                        sp = next(
-                            (m for m in b_data["markets"] if m["key"] == "spreads"),
-                            None,
-                        )
-                        if sp and not spread_data:
-                            for out in sp.get("outcomes", []):
-                                if out["name"] == home_team:
-                                    spread_data["home_point"] = out.get("point", 0)
-                                    spread_data["home_odds"] = round(
-                                        out.get("price", -110)
-                                    )
-                                elif out["name"] == away_team:
-                                    spread_data["away_point"] = out.get("point", 0)
-                                    spread_data["away_odds"] = round(
-                                        out.get("price", -110)
-                                    )
-                            spread_data["book"] = b_data["key"]
-
-                        # --- totals ---
-                        tot = next(
-                            (m for m in b_data["markets"] if m["key"] == "totals"),
-                            None,
-                        )
-                        if tot and not total_data:
-                            for out in tot.get("outcomes", []):
-                                if out["name"] == "Over":
-                                    total_data["over_odds"] = round(
-                                        out.get("price", -110)
-                                    )
-                                    total_data["point"] = out.get("point", 0)
-                                elif out["name"] == "Under":
-                                    total_data["under_odds"] = round(
-                                        out.get("price", -110)
-                                    )
-                            total_data["book"] = b_data["key"]
-
-                        if not best_book_used:
-                            best_book_used = b_data["key"]
-                        break
-
-                features = {"odds": {"home": home_odds, "away": away_odds}}
-
-                # Inject live stats if available
-                if not stats_df.empty:
-                    home_id = self._get_team_id(str(home_team)) if home_team else None
-                    away_id = self._get_team_id(str(away_team)) if away_team else None
-
-                    if home_id:
-                        h_stats = stats_df[stats_df["TEAM_ID"] == home_id]
-                        if not h_stats.empty:
-                            features["home_off_rating"] = h_stats.iloc[0]["OFF_RATING"]
-                            features["home_def_rating"] = h_stats.iloc[0]["DEF_RATING"]
-                            features["home_win_pct"] = h_stats.iloc[0]["W_PCT"]
-                            features["home_pace"] = h_stats.iloc[0]["PACE"]
-
-                    if away_id:
-                        a_stats = stats_df[stats_df["TEAM_ID"] == away_id]
-                        if not a_stats.empty:
-                            features["away_off_rating"] = a_stats.iloc[0]["OFF_RATING"]
-                            features["away_def_rating"] = a_stats.iloc[0]["DEF_RATING"]
-                            features["away_win_pct"] = a_stats.iloc[0]["W_PCT"]
-                            features["away_pace"] = a_stats.iloc[0]["PACE"]
-
-                games.append(
-                    {
-                        "home_team": home_team,
-                        "away_team": away_team,
-                        "features": features,
-                        "spread": spread_data,
-                        "total": total_data,
-                        "book": best_book_used,
-                    }
-                )
+                games.append(self._parse_game_bookmakers(game, stats_df))
 
         elif espn_games:
             logger.warning(

@@ -124,9 +124,12 @@ class NBAStatsService:
 
     Primary data source: nba_api / NBA.com (no API key required)
     Secondary data source: the-odds-api.com (odds / prop lines)
+    Injury data source:   ESPN public API (no API key required)
     """
 
     ODDS_API_BASE = "https://api.the-odds-api.com/v4"
+    # ESPN public injury endpoint — no API key required
+    ESPN_INJURIES_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries"
 
     # Cache TTLs in seconds
     CACHE_TTL_PLAYER_SEARCH = 3600  # 1 hour
@@ -788,67 +791,82 @@ class NBAStatsService:
         team_abbreviation: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Fetch current NBA injury report.
+        Fetch the current NBA injury report from ESPN's public API.
 
-        Uses the-odds-api.com injuries endpoint when available, falling back
-        to an empty list if the key is missing.
+        Uses ``https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries``
+        — no API key required.  Falls back to an empty list if the request
+        fails so callers can treat injury data as optional enrichment.
 
         Args:
-            team_abbreviation: Optional filter (e.g. "LAL").
+            team_abbreviation: Optional 2–4 letter team abbreviation to filter
+                results (e.g. "LAL", "BOS").  When omitted, all teams are
+                returned.
 
         Returns:
-            List of injury dicts with player_name, team, status, description.
+            List of injury dicts, each containing:
+            - ``player_name`` (str)
+            - ``team`` (str) — team abbreviation, e.g. "BOS"
+            - ``status`` (str) — e.g. "Out", "Questionable", "Day-To-Day"
+            - ``description`` (str) — short injury summary
+            - ``injury_type`` (str) — body part / injury type, e.g. "Achilles"
+            - ``return_date`` (str | None) — projected return date if available
+            - ``position`` (str) — player position abbreviation, e.g. "F"
         """
         cache_key = f"injuries:{team_abbreviation or 'all'}"
         cached = self._cache.get(cache_key)
         if cached is not None:
             return cached
 
-        if not self.odds_api_key:
-            logger.warning(
-                "THE_ODDS_API_KEY not configured; cannot fetch injury report"
-            )
-            return []
-
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(
-                    f"{self.ODDS_API_BASE}/sports/basketball_nba/injuries",
-                    params={"apiKey": self.odds_api_key},
-                    timeout=30.0,
+                    self.ESPN_INJURIES_URL,
+                    timeout=15.0,
                 )
                 response.raise_for_status()
-                raw_injuries = response.json()
+                raw = response.json()
 
             injuries: List[Dict[str, Any]] = []
-            for entry in raw_injuries if isinstance(raw_injuries, list) else []:
-                player_injuries = entry.get("injuries", [])
-                team = entry.get("team", "")
-                for inj in player_injuries:
-                    record = {
-                        "player_name": inj.get("player", ""),
-                        "team": team,
-                        "status": inj.get("status", ""),
-                        "description": inj.get("description", ""),
-                    }
+            for team_entry in raw.get("injuries", []):
+                for inj in team_entry.get("injuries", []):
+                    athlete = inj.get("athlete", {})
+                    team_info = athlete.get("team", {})
+                    team_abbr = team_info.get("abbreviation", "")
                     if (
-                        team_abbreviation is None
-                        or team.upper() == team_abbreviation.upper()
+                        team_abbreviation is not None
+                        and team_abbr.upper() != team_abbreviation.upper()
                     ):
-                        injuries.append(record)
+                        continue
+
+                    details = inj.get("details", {})
+                    position_info = athlete.get("position", {})
+                    injuries.append(
+                        {
+                            "player_name": athlete.get("displayName", ""),
+                            "team": team_abbr,
+                            "status": inj.get("status", ""),
+                            "description": inj.get("shortComment", ""),
+                            "injury_type": details.get("type", ""),
+                            "return_date": details.get("returnDate"),
+                            "position": position_info.get("abbreviation", ""),
+                        }
+                    )
 
             self._cache.set(cache_key, injuries, self.CACHE_TTL_INJURY)
             logger.info(
-                f"Fetched {len(injuries)} injury entries"
+                f"ESPN injuries: {len(injuries)} entries"
                 f"{' for ' + team_abbreviation if team_abbreviation else ''}"
             )
             return injuries
 
         except httpx.HTTPStatusError as exc:
-            logger.error(f"HTTP error fetching injuries: {exc.response.status_code}")
+            logger.warning(
+                f"ESPN injuries endpoint returned HTTP {exc.response.status_code}; "
+                "returning empty list"
+            )
             return []
         except Exception as exc:
-            logger.error(f"Error fetching injury report: {exc}")
+            logger.warning(f"Error fetching ESPN injury report: {exc}")
             return []
 
     async def get_team_rotation(self, team_abbr: str) -> List[Dict[str, Any]]:

@@ -64,6 +64,117 @@ def american_to_prob(american_odds: int) -> float:
     return abs(american_odds) / (abs(american_odds) + 100.0)
 
 
+def _normalize_team_name(s: Optional[str]) -> str:
+    """Lowercase and normalise common NCAAB team name variants for matching.
+
+    Applies St./State/Saint normalisation *before* stripping remaining dots so
+    that "St. John's" correctly becomes "state johns" and can be compared to
+    "Saint Johns".
+    """
+    t = (s or "").strip().lower()
+    # Handle "St." and "Saint" variants before dot removal
+    t = t.replace("st.", "state").replace(" saint ", " state ").replace(" st ", " state ")
+    # Remove any remaining dots (e.g. from abbreviations like "u.c.l.a.")
+    t = t.replace(".", "")
+    return t.replace("  ", " ")
+
+
+_TEAM_ABBREVIATIONS: Dict[str, str] = {
+    "UNC": "North Carolina",
+    "UConn": "Connecticut",
+    "UCONN": "Connecticut",
+    "Pitt": "Pittsburgh",
+    "Ole Miss": "Mississippi",
+    "USC": "Southern California",
+    "UCF": "Central Florida",
+    "BYU": "Brigham Young",
+    "VCU": "Virginia Commonwealth",
+    "LSU": "LSU",
+    "SMU": "Southern Methodist",
+    "UNLV": "UNLV",
+    "TCU": "TCU",
+    "UMass": "Massachusetts",
+    "Penn St": "Penn State",
+    "NC State": "North Carolina State",
+    "St. John's": "St. Johns",
+}
+
+
+def _lookup_team_stats(
+    team_name: str, team_stats: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
+    """Fuzzy lookup of a team in the *team_stats* dict.
+
+    Tries (in order):
+    1. Exact match
+    2. Common abbreviation expansion
+    3. Case-insensitive substring match
+    4. Normalised St./State/Saint equivalence
+
+    Args:
+        team_name: Team name from any data source (may use abbreviations).
+        team_stats: Dict keyed by full team name.
+
+    Returns:
+        The stats dict for the matched team, or *None* if no match found.
+    """
+    if not team_stats:
+        return None
+
+    # 1. Exact match
+    if team_name in team_stats:
+        return team_stats[team_name]
+
+    # 2. Abbreviation expansion
+    t_lower = _normalize_team_name(team_name)
+    for abbr, full in _TEAM_ABBREVIATIONS.items():
+        abbr_l = abbr.lower()
+        full_l = full.lower()
+        if t_lower == abbr_l or t_lower == full_l or abbr_l in t_lower or full_l in t_lower:
+            if full in team_stats:
+                return team_stats[full]
+            for name, data in team_stats.items():
+                if _normalize_team_name(name) == full_l:
+                    return data
+
+    # 3. Substring matching (case-insensitive)
+    for name, data in team_stats.items():
+        n_lower = _normalize_team_name(name)
+        if n_lower in t_lower or t_lower in n_lower:
+            return data
+
+    # 4. Normalised St./State match (t_lower already computed above)
+    for name, data in team_stats.items():
+        n_lower = _normalize_team_name(name)
+        if n_lower in t_lower or t_lower in n_lower:
+            return data
+
+    return None
+
+
+def _spread_from_moneyline(spreads: Dict[str, Any]) -> float:
+    """Derive a spread-equivalent from moneyline odds when no spread market exists.
+
+    Uses a linear approximation: a 15-point swing maps to a full probability
+    shift (0 → 1) around the 50/50 midpoint.
+
+    Args:
+        spreads: Dict containing ``pinnacle_home_odds`` and ``pinnacle_away_odds``.
+
+    Returns:
+        Estimated home-team spread (negative = home favoured), or 0.0 if
+        the moneyline odds are missing.
+    """
+    ml_home = spreads.get("pinnacle_home_odds")
+    ml_away = spreads.get("pinnacle_away_odds")
+    if not ml_home or not ml_away:
+        return 0.0
+    p_home = american_to_prob(ml_home)
+    p_away = american_to_prob(ml_away)
+    total_p = p_home + p_away
+    return round((0.5 - p_home / total_p) * 15.0, 1)
+
+
 def compute_confidence(edge: float, signal_confidence: float, blended_prob: float) -> str:
     """Composite confidence: edge + signal strength + model certainty."""
     model_certainty = abs(blended_prob - 0.5) * 2  # 0 = coin flip, 1 = certain
@@ -143,68 +254,8 @@ def calculate_model_prob(home: str, away: str, spread: float, team_stats: Option
     if not team_stats:
         return estimate_model_prob(spread)
 
-    # Fuzzy lookup helper
-    # Fuzzy lookup helper with common abbreviations and fuzzy matching
-    def get_stats(team_name: str) -> Optional[Dict[str, Any]]:
-        if not team_stats:
-            return None
-            
-        # 1. Exact match
-        if team_name in team_stats:
-            return team_stats[team_name]
-            
-        # 2. Common abbreviations mapping
-        abbreviations = {
-            "UNC": "North Carolina",
-            "UConn": "Connecticut",
-            "UCONN": "Connecticut",
-            "Pitt": "Pittsburgh",
-            "Ole Miss": "Mississippi",
-            "USC": "Southern California",
-            "UCF": "Central Florida",
-            "BYU": "Brigham Young",
-            "VCU": "Virginia Commonwealth",
-            "LSU": "LSU",
-            "SMU": "Southern Methodist",
-            "UNLV": "UNLV",
-            "TCU": "TCU",
-            "UMass": "Massachusetts",
-            "Penn St": "Penn State",
-            "NC State": "North Carolina State",
-            "St. John's": "St. Johns",
-        }
-        
-        # Check if team_name starts with or is an abbreviation
-        for abbr, full in abbreviations.items():
-            if team_name.lower() == abbr.lower() or team_name.lower().startswith(abbr.lower() + " "):
-                if full in team_stats:
-                    return team_stats[full]
-        
-        # 3. Substring matching (case-insensitive)
-        t_lower = team_name.lower()
-        for name, data in team_stats.items():
-            n_lower = name.lower()
-            if n_lower in t_lower or t_lower in n_lower:
-                return data
-                
-        # 4. Handle "St." vs "State" and "St" vs "Saint"
-        normalized_t = t_lower.replace("st.", "state").replace("st ", "state ").replace("saint ", "state ")
-        for name, data in team_stats.items():
-            normalized_n = name.lower().replace("st.", "state").replace("st ", "state ").replace("saint ", "state ")
-            if normalized_n in normalized_t or normalized_t in normalized_n:
-                return data
-                
-        return None
-
-        if team_name in team_stats:
-            return team_stats[team_name]
-        for name, data in team_stats.items():
-            if name.lower() in team_name.lower() or team_name.lower() in name.lower():
-                return data
-        return None
-
-    h_stats = get_stats(home)
-    a_stats = get_stats(away)
+    h_stats = _lookup_team_stats(home, team_stats)
+    a_stats = _lookup_team_stats(away, team_stats)
 
     if h_stats and a_stats:
         # League averages from NCAABStatsService
@@ -419,16 +470,7 @@ async def get_live_ncaab_games(team_stats: Optional[Dict[str, Any]] = None) -> T
 
                 if spread_val == 0.0:
                     logger.debug(f"No spread market for {away} @ {home} — using moneyline-implied prob")
-                    # Derive spread-equivalent from moneylines (pinnacle odds on spread market)
-                    ml_home = spreads.get("pinnacle_home_odds")
-                    ml_away = spreads.get("pinnacle_away_odds")
-                    if ml_home and ml_away:
-                        p_home = american_to_prob(ml_home)
-                        p_away = american_to_prob(ml_away)
-                        total_p = p_home + p_away
-                        spread_val = round((0.5 - p_home / total_p) * 15.0, 1)  # ML-implied spread estimate
-                    else:
-                        spread_val = 0.0  # Still unknown but don't skip — fall through with 50/50
+                    spread_val = _spread_from_moneyline(spreads)
 
                 game_id = f"NCAAB_{matched_odds.get('id', espn_game.get('espn_id', ''))}"
                 # TODO: Wire up SportsGameOdds API when implemented
@@ -443,34 +485,14 @@ async def get_live_ncaab_games(team_stats: Optional[Dict[str, Any]] = None) -> T
                     logger.debug(f"Using estimated public splits for {game_id}")
 
                 # Extract efficiency stats for display
-                h_stats = None
-                a_stats = None
-                if team_stats:
-                    def get_stats(team_name):
-                        if team_name in team_stats: return team_stats[team_name]
-                        def _normalize(s):
-                            t = (s or "").strip().lower()
-                            t = t.replace(".", "").replace("st.", "state").replace(" saint ", " state ").replace(" st ", " state ").replace("  ", " ")
-                            return t
-                        abbreviations = {"UNC": "North Carolina", "UConn": "Connecticut", "UCONN": "Connecticut", "Pitt": "Pittsburgh", "Ole Miss": "Mississippi", "USC": "Southern California", "UCF": "Central Florida", "BYU": "Brigham Young", "VCU": "Virginia Commonwealth", "LSU": "LSU", "SMU": "Southern Methodist", "UNLV": "UNLV", "TCU": "TCU", "UMass": "Massachusetts", "Penn St": "Penn State", "NC State": "North Carolina State", "St. John's": "St. Johns"}
-                        t_lower = _normalize(team_name)
-                        for abbr, full in abbreviations.items():
-                            abbr_l, full_l = abbr.lower(), full.lower()
-                            if t_lower == abbr_l or t_lower == full_l or abbr_l in t_lower or full_l in t_lower:
-                                if full in team_stats: return team_stats[full]
-                                for name, data in team_stats.items():
-                                    if _normalize(name) == full_l: return data
-                        for name, data in team_stats.items():
-                            if _normalize(name) in t_lower or t_lower in _normalize(name): return data
-                        for name, data in team_stats.items():
-                            if _normalize(name) in _normalize(team_name) or _normalize(team_name) in _normalize(name): return data
-                        return None
-                    h_stats = get_stats(matched_odds.get("home_team", home))
-                    a_stats = get_stats(matched_odds.get("away_team", away))
+                eff_home = matched_odds.get("home_team", home)
+                eff_away = matched_odds.get("away_team", away)
+                h_stats = _lookup_team_stats(eff_home, team_stats) if team_stats else None
+                a_stats = _lookup_team_stats(eff_away, team_stats) if team_stats else None
 
                 model_prob = calculate_model_prob(
-                    matched_odds.get("home_team", home),
-                    matched_odds.get("away_team", away),
+                    eff_home,
+                    eff_away,
                     spread_val,
                     team_stats
                 )
@@ -483,8 +505,8 @@ async def get_live_ncaab_games(team_stats: Optional[Dict[str, Any]] = None) -> T
                 live_games.append(
                     {
                         "game_id": game_id,
-                        "home": matched_odds.get("home_team", home),
-                        "away": matched_odds.get("away_team", away),
+                        "home": eff_home,
+                        "away": eff_away,
                         "conference": espn_game.get("conference", "NCAAB"),
                         **spreads,
                         "open_spread": cached["open_line"],
@@ -514,15 +536,7 @@ async def get_live_ncaab_games(team_stats: Optional[Dict[str, Any]] = None) -> T
 
             if spread_val == 0.0:
                 logger.debug(f"No spread market for {away} @ {home} — using moneyline-implied prob")
-                ml_home = spreads.get("pinnacle_home_odds")
-                ml_away = spreads.get("pinnacle_away_odds")
-                if ml_home and ml_away:
-                    p_home = american_to_prob(ml_home)
-                    p_away = american_to_prob(ml_away)
-                    total_p = p_home + p_away
-                    spread_val = round((0.5 - p_home / total_p) * 15.0, 1)  # ML-implied spread estimate
-                else:
-                    spread_val = 0.0  # Still unknown but don't skip — fall through with 50/50
+                spread_val = _spread_from_moneyline(spreads)
 
             # TODO: Wire up SportsGameOdds API when implemented
             public_data = None
@@ -535,31 +549,8 @@ async def get_live_ncaab_games(team_stats: Optional[Dict[str, Any]] = None) -> T
                 ticket_pct, money_pct = estimate_public_splits(spread_val)
                 logger.debug(f"Using estimated public splits for {game_id}")
 
-            # Extract efficiency stats for display
-            h_stats = None
-            a_stats = None
-            if team_stats:
-                def get_stats(team_name):
-                    if team_name in team_stats: return team_stats[team_name]
-                    def _normalize(s):
-                        t = (s or "").strip().lower()
-                        t = t.replace(".", "").replace("st.", "state").replace(" saint ", " state ").replace(" st ", " state ").replace("  ", " ")
-                        return t
-                    abbreviations = {"UNC": "North Carolina", "UConn": "Connecticut", "UCONN": "Connecticut", "Pitt": "Pittsburgh", "Ole Miss": "Mississippi", "USC": "Southern California", "UCF": "Central Florida", "BYU": "Brigham Young", "VCU": "Virginia Commonwealth", "LSU": "LSU", "SMU": "Southern Methodist", "UNLV": "UNLV", "TCU": "TCU", "UMass": "Massachusetts", "Penn St": "Penn State", "NC State": "North Carolina State", "St. John's": "St. Johns"}
-                    t_lower = _normalize(team_name)
-                    for abbr, full in abbreviations.items():
-                        abbr_l, full_l = abbr.lower(), full.lower()
-                        if t_lower == abbr_l or t_lower == full_l or abbr_l in t_lower or full_l in t_lower:
-                            if full in team_stats: return team_stats[full]
-                            for name, data in team_stats.items():
-                                if _normalize(name) == full_l: return data
-                    for name, data in team_stats.items():
-                        if _normalize(name) in t_lower or t_lower in _normalize(name): return data
-                    for name, data in team_stats.items():
-                        if _normalize(name) in _normalize(team_name) or _normalize(team_name) in _normalize(name): return data
-                    return None
-                h_stats = get_stats(home)
-                a_stats = get_stats(away)
+            h_stats = _lookup_team_stats(home, team_stats) if team_stats else None
+            a_stats = _lookup_team_stats(away, team_stats) if team_stats else None
 
             model_prob = calculate_model_prob(home, away, spread_val, team_stats)
 
