@@ -42,8 +42,8 @@ class BetSettlementEngine:
 
     async def settle_pending_bets(self, sport: str = "basketball_ncaab"):
         """Find pending bets, fetch final scores, and grade them."""
-        # Note: mapping bet tracker sport 'ncaab' to odds api 'basketball_ncaab'
-        api_sport = "basketball_ncaab" if sport == "ncaab" else sport
+        SPORT_MAP = {"ncaab": "basketball_ncaab", "nba": "basketball_nba"}
+        api_sport = SPORT_MAP.get(sport, sport)
 
         pending_bets = self.tracker.get_pending_bets(sport=sport)
         if not pending_bets:
