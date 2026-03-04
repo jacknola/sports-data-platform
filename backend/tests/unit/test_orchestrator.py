@@ -45,26 +45,27 @@ def mock_dvp_result():
 @pytest.fixture
 def orchestrator(mock_odds_result, mock_analysis_result, mock_dvp_result):
     """Return an OrchestratorAgent with all sub-agents mocked."""
-    with (
-        patch("app.agents.orchestrator.OddsAgent",
-              return_value=_make_async_agent("OddsAgent", mock_odds_result)),
-        patch("app.agents.orchestrator.AnalysisAgent",
-              return_value=_make_async_agent("AnalysisAgent", mock_analysis_result)),
-        patch("app.agents.orchestrator.TwitterAgent",
-              return_value=_make_async_agent("TwitterAgent", {"sentiment": "neutral"})),
-        patch("app.agents.orchestrator.ExpertAgent",
-              return_value=_make_async_agent("ExpertAgent", {"recommendation": "pass"})),
-        patch("app.agents.orchestrator.DvPAgent",
-              return_value=_make_async_agent("DvPAgent", mock_dvp_result)),
-        patch("app.agents.orchestrator.NCAABDvPAgent",
-              return_value=_make_async_agent("NCAABDvPAgent", {"count": 2})),
-        patch("app.agents.orchestrator.AgentMemory", return_value=MagicMock(
-            store_decision=AsyncMock(),
-            get_relevant_context=AsyncMock(return_value=[]),
-        )),
-    ):
-        from app.agents.orchestrator import OrchestratorAgent
-        orch = OrchestratorAgent()
+    odds_agent = _make_async_agent("OddsAgent", mock_odds_result)
+    analysis_agent = _make_async_agent("AnalysisAgent", mock_analysis_result)
+    twitter_agent = _make_async_agent("TwitterAgent", {"sentiment": "neutral"})
+    expert_agent = _make_async_agent("ExpertAgent", {"recommendation": "pass"})
+    dvp_agent = _make_async_agent("DvPAgent", mock_dvp_result)
+    ncaab_dvp_agent = _make_async_agent("NCAABDvPAgent", {"count": 2})
+    memory = MagicMock(
+        store_decision=AsyncMock(),
+        get_relevant_context=AsyncMock(return_value=[]),
+    )
+
+    from app.agents.orchestrator import OrchestratorAgent
+    orch = OrchestratorAgent(
+        odds_agent=odds_agent,
+        analysis_agent=analysis_agent,
+        expert_agent=expert_agent,
+        dvp_agent=dvp_agent,
+        ncaab_dvp_agent=ncaab_dvp_agent,
+        memory=memory,
+        twitter_agent=twitter_agent,
+    )
     return orch
 
 

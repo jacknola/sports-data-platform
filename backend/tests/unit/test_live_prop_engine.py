@@ -170,19 +170,19 @@ class TestLivePropEngineAnalyze:
 class TestGarbageTimeDiscount:
     def test_no_discount_in_close_game(self, engine):
         discount = engine._garbage_time_discount(
-            score_diff=5, minutes_remaining=20.0, is_star=True, sport="nba"
+            score_diff=5, minutes_remaining=20.0, is_star=True
         )
         assert discount == 1.0
 
     def test_heavy_discount_for_star_in_blowout(self, engine):
         discount = engine._garbage_time_discount(
-            score_diff=28, minutes_remaining=5.0, is_star=True, sport="nba"
+            score_diff=28, minutes_remaining=5.0, is_star=True
         )
         assert discount <= 0.50
 
     def test_lighter_discount_for_role_player(self, engine):
-        star_disc = engine._garbage_time_discount(30, 6.0, True, "nba")
-        role_disc = engine._garbage_time_discount(30, 6.0, False, "nba")
+        star_disc = engine._garbage_time_discount(30, 6.0, True)
+        role_disc = engine._garbage_time_discount(30, 6.0, False)
         assert role_disc > star_disc
 
 

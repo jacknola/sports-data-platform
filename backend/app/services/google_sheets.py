@@ -1188,13 +1188,13 @@ class GoogleSheetsService:
     # Parlays export
     # ───────────────────────────────────────────────────────────────
 
-    def export_parlays(
+    def export_db_parlays(
         self,
         spreadsheet_id: str,
         parlays: List[Dict[str, Any]],
         tab_name: str = "Parlays",
     ) -> Dict[str, Any]:
-        """Export parlay picks with per-leg detail to Google Sheets."""
+        """Export parlay picks from database with per-leg detail to Google Sheets."""
         if not self.client:
             return {"error": "Google Sheets not configured"}
 

@@ -51,6 +51,16 @@ class SignalMetadata:
             DataQuality.LIVE, DataQuality.PARTIAL, DataQuality.INFERRED
         ] and self.source not in [DataSource.SIMULATED]
 
+    def to_dict(self) -> dict:
+        return {
+            "quality": self.quality.value,
+            "source": self.source.value,
+            "timestamp": self.timestamp.isoformat() if self.timestamp else None,
+            "freshness_seconds": self.freshness_seconds,
+            "inference_method": self.inference_method,
+            "provider": self.provider,
+        }
+
 
 @dataclass  
 class SharpSignal:

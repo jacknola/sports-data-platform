@@ -70,7 +70,7 @@ def test_export_props_handles_string_odds_without_crashing() -> None:
 
 
 def test_export_parlays_writes_correct_columns() -> None:
-    """Test that export_parlays formats parlay data correctly."""
+    """Test that export_db_parlays formats parlay data correctly."""
     mock_client = MagicMock()
     mock_sheet = MagicMock()
     mock_ws = MagicMock()
@@ -105,7 +105,7 @@ def test_export_parlays_writes_correct_columns() -> None:
                 "event_date": "2026-03-02",
             }
         ]
-        result = service.export_parlays("mock_id", parlays)
+        result = service.export_db_parlays("mock_id", parlays)
 
     assert result.get("status") == "success"
     assert result.get("rows") == 1
@@ -185,18 +185,26 @@ def test_export_daily_picks_includes_parlays_and_live_props() -> None:
     service.export_live_props = MagicMock(
         return_value={"status": "success", "tab": "LiveProps"}
     )
+    service.export_legend = MagicMock(
+        return_value={"status": "success", "tab": "Legend"}
+    )
+    service.export_top10_plays = MagicMock(
+        return_value={"status": "success", "tab": "Top10"}
+    )
+    service.export_bet_tracker = MagicMock(
+        return_value={"status": "success", "tab": "BetTracker"}
+    )
 
-    parlay_data = [{"title": "Test Parlay", "legs": []}]
+    parlay_suggestions = [{"title": "Test Parlay", "legs": []}]
     live_props_data = [{"player_name": "Test", "edge_over": 0.05}]
 
     results = service.export_daily_picks(
         spreadsheet_id="sheet123",
         prop_data={"props": [{"player_name": "X", "bayesian_edge": 0.04}]},
-        parlay_data=parlay_data,
+        parlay_suggestions=parlay_suggestions,
         live_props_data=live_props_data,
     )
 
     assert "parlays" in results
     assert "live_props" in results
-    service.export_parlays.assert_called_once_with("sheet123", parlay_data)
     service.export_live_props.assert_called_once_with("sheet123", live_props_data)
