@@ -1,14 +1,19 @@
 """
 Google Sheets Export Service — Daily Picks
 
-Exports NCAAB, NBA, and Player Prop analysis to Google Sheets with
-separate tabs per sport. Uses gspread + service account auth.
+Exports NCAAB, NBA, Player Prop, Parlay, and Live Prop analysis to
+Google Sheets with separate tabs per sport/feature. Uses gspread +
+service account auth.
 
 Tabs:
   - Props        — All player props ranked by confidence/edge
+  - HighValueProps — Filtered props (even odds or edge < 30%)
   - NBA          — NBA game picks with spreads, totals, ML
   - NCAAB        — NCAAB sharp money picks
+  - Parlays      — Parlay picks with per-leg detail and performance
+  - LiveProps    — In-game live prop projections with edge/verdict
   - Summary      — Daily overview (auto-generated)
+  - BetSlip      — Interactive tracker
 """
 from __future__ import annotations
 
@@ -1180,6 +1185,173 @@ class GoogleSheetsService:
             return {"error": str(e)}
 
     # ───────────────────────────────────────────────────────────────
+    # Parlays export
+    # ───────────────────────────────────────────────────────────────
+
+    def export_parlays(
+        self,
+        spreadsheet_id: str,
+        parlays: List[Dict[str, Any]],
+        tab_name: str = "Parlays",
+    ) -> Dict[str, Any]:
+        """Export parlay picks with per-leg detail to Google Sheets."""
+        if not self.client:
+            return {"error": "Google Sheets not configured"}
+
+        try:
+            sheet = self.client.open_by_key(spreadsheet_id)
+            ws = self._get_or_create_worksheet(sheet, tab_name, cols=16)
+
+            headers = [
+                "Date",
+                "Title",
+                "Sport",
+                "Legs",
+                "Confidence",
+                "Score",
+                "Total Odds",
+                "Payout",
+                "Unit Size",
+                "Status",
+                "P/L",
+                "ROI",
+                "Tags",
+                "Leg Detail",
+                "Risks",
+                "Tweet",
+            ]
+
+            rows = []
+            for p in parlays:
+                legs = p.get("legs") or []
+                leg_detail = " | ".join(
+                    f"{lg.get('pick', '?')} ({_fmt_odds(lg.get('odds', 0))})"
+                    for lg in legs
+                ) if isinstance(legs, list) else str(legs)
+
+                risks = p.get("risks") or []
+                risk_str = "; ".join(risks) if isinstance(risks, list) else str(risks)
+
+                tags = p.get("tags") or []
+                tag_str = ", ".join(tags) if isinstance(tags, list) else str(tags)
+
+                rows.append([
+                    str(p.get("event_date") or p.get("created_at") or "")[:10],
+                    p.get("title", ""),
+                    p.get("sport", ""),
+                    len(legs) if isinstance(legs, list) else 0,
+                    p.get("confidence_level", ""),
+                    round(p.get("confidence_score") or 0, 1),
+                    _fmt_odds(p.get("total_odds")),
+                    round(p.get("potential_payout_multiplier") or 0, 2),
+                    round(p.get("suggested_unit_size") or 0, 2),
+                    p.get("status", "pending"),
+                    round(p.get("profit_loss") or 0, 2),
+                    f"{round(p.get('roi') or 0, 1)}%",
+                    tag_str,
+                    leg_detail,
+                    risk_str,
+                    (p.get("tweet_text") or "")[:100],
+                ])
+
+            count = self._batch_write(ws, headers, rows)
+            logger.info(f"Exported {count} parlays to Google Sheets tab '{tab_name}'")
+            return {"status": "success", "tab": tab_name, "rows": count}
+
+        except Exception as e:
+            logger.error(f"Parlay export failed: {e}")
+            return {"error": str(e)}
+
+    # ───────────────────────────────────────────────────────────────
+    # Live Props export
+    # ───────────────────────────────────────────────────────────────
+
+    def export_live_props(
+        self,
+        spreadsheet_id: str,
+        projections: List[Dict[str, Any]],
+        tab_name: str = "LiveProps",
+    ) -> Dict[str, Any]:
+        """Export live in-game prop projections to Google Sheets."""
+        if not self.client:
+            return {"error": "Google Sheets not configured"}
+
+        try:
+            sheet = self.client.open_by_key(spreadsheet_id)
+            ws = self._get_or_create_worksheet(sheet, tab_name, cols=18)
+
+            headers = [
+                "Player",
+                "Stat",
+                "Line",
+                "Current",
+                "Min Rem",
+                "Projected",
+                "Hot Hand",
+                "Pace",
+                "Garbage Disc",
+                "Foul Disc",
+                "True P(Over)",
+                "Implied P(Over)",
+                "Edge Over",
+                "Edge Under",
+                "Best Side",
+                "Kelly %",
+                "Verdict",
+                "+EV?",
+            ]
+
+            rows = []
+            for p in projections:
+                edge_over = p.get("edge_over", 0)
+                edge_under = p.get("edge_under", 0)
+                best_side = "OVER" if edge_over >= edge_under else "UNDER"
+                best_edge = max(edge_over, edge_under)
+                is_positive_ev = best_edge > 0
+
+                verdict = p.get("verdict", "")
+                if not verdict:
+                    if best_edge >= 0.20:
+                        verdict = f"STRONG {best_side}"
+                    elif best_edge >= 0.10:
+                        verdict = f"LEAN {best_side}"
+                    elif best_edge >= 0.05:
+                        verdict = f"MARGINAL {best_side}"
+                    elif abs(best_edge) < 0.03:
+                        verdict = "PASS"
+                    else:
+                        verdict = "FADE"
+
+                rows.append([
+                    p.get("player_name", ""),
+                    _STAT_DISPLAY.get(p.get("stat_type", ""), p.get("stat_type", "")),
+                    p.get("threshold", 0),
+                    p.get("current_stat", 0),
+                    round(p.get("minutes_remaining", 0), 1),
+                    round(p.get("projected_final", 0), 1),
+                    round(p.get("hot_hand_factor", 1.0), 2),
+                    round(p.get("pace_factor", 1.0), 2),
+                    round(p.get("garbage_time_discount", 1.0), 2),
+                    round(p.get("foul_discount", 1.0), 2),
+                    f"{round(p.get('true_p_over', 0) * 100, 1)}%",
+                    f"{round(p.get('implied_p_over', 0) * 100, 1)}%",
+                    f"{round(edge_over * 100, 1)}%",
+                    f"{round(edge_under * 100, 1)}%",
+                    best_side,
+                    f"{round(p.get('kelly_fraction', 0) * 100, 2)}%",
+                    verdict,
+                    "✅" if is_positive_ev else "❌",
+                ])
+
+            count = self._batch_write(ws, headers, rows)
+            logger.info(f"Exported {count} live props to Google Sheets tab '{tab_name}'")
+            return {"status": "success", "tab": tab_name, "rows": count}
+
+        except Exception as e:
+            logger.error(f"Live props export failed: {e}")
+            return {"error": str(e)}
+
+    # ───────────────────────────────────────────────────────────────
     # Full daily export (all tabs)
     # ───────────────────────────────────────────────────────────────
 
@@ -1191,8 +1363,9 @@ class GoogleSheetsService:
         nba_bets: Optional[List[Dict[str, Any]]] = None,
         prop_data: Optional[Dict[str, Any]] = None,
         parlay_suggestions: Optional[List[Dict[str, Any]]] = None,
+        live_props_data: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        """Export all daily picks to Google Sheets (Props + NBA + NCAAB + Summary).
+        """Export all daily picks to Google Sheets (Props + NBA + NCAAB + Parlays + LiveProps + Summary).
 
         Args:
             spreadsheet_id: Target Google Sheets ID
@@ -1200,6 +1373,8 @@ class GoogleSheetsService:
             nba_predictions: NBA predictions list
             nba_bets: NBA qualifying bets
             prop_data: Result from run_prop_analysis()
+            parlay_data: List of parlay dicts from the Parlay model
+            live_props_data: List of LivePropProjection dicts
 
         Returns:
             Dict with per-tab results
@@ -1276,6 +1451,12 @@ class GoogleSheetsService:
 
         # BetTracker — full history with P&L, CLV, status for primary book
         results["bet_tracker"] = self.export_bet_tracker(spreadsheet_id)
+
+        # Live Props — in-game prop projections
+        if live_props_data:
+            results["live_props"] = self.export_live_props(
+                spreadsheet_id, live_props_data
+            )
 
         # Log overall result
         tabs_ok = sum(

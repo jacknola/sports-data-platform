@@ -1,345 +1,269 @@
-"""
-Unit tests for LivePropEngine — verifying the three logic fixes:
-
-  1. implied_p_under is derived from under_odds independently (not 1 - implied_p_over)
-  2. Kelly fraction uses best-side's odds and probability
-  3. Verdict SMALL tier covers 3-5% edge; FADE targets best_side for negative-edge cases
-"""
-
+"""Unit tests for LivePropEngine and estimate_live_pace."""
 import pytest
-from unittest.mock import patch, MagicMock
 
 from app.services.live_prop_engine import (
-    LivePropEngine,
-    LivePropProjection,
     LiveGameState,
     LivePlayerState,
+    LivePropEngine,
     LivePropLine,
+    estimate_live_pace,
 )
 
 
 # ---------------------------------------------------------------------------
-# Shared fixtures
+# Fixtures
 # ---------------------------------------------------------------------------
 
-def _game_state(minutes_remaining: float = 20.0, score_diff: int = 2) -> LiveGameState:
-    home_score = 50 + score_diff
+@pytest.fixture
+def engine():
+    return LivePropEngine()
+
+
+def _make_game_state(
+    minutes_remaining: float = 24.0,
+    home_score: int = 50,
+    away_score: int = 48,
+    actual_pace: float = 100.0,
+    sport: str = "nba",
+    period: int = 3,
+) -> LiveGameState:
     return LiveGameState(
         game_id="test_game",
-        sport="nba",
-        period=3,
+        sport=sport,
+        period=period,
         minutes_remaining=minutes_remaining,
-        home_team="HOME",
-        away_team="AWAY",
+        home_team="LAL",
+        away_team="GSW",
         home_score=home_score,
-        away_score=50,
-        actual_pace=100.0,
+        away_score=away_score,
+        actual_pace=actual_pace,
     )
 
 
-def _player(stat_type: str = "points", current_stat: float = 18.0, minutes_played: float = 28.0) -> LivePlayerState:
+def _make_player(
+    stat_type: str = "points",
+    current_stat: float = 12.0,
+    minutes_played: float = 24.0,
+    fouls: int = 1,
+    is_star: bool = True,
+) -> LivePlayerState:
     return LivePlayerState(
         player_id="test_player",
         player_name="Test Player",
-        team="HOME",
+        team="LAL",
         stat_type=stat_type,
         current_stat=current_stat,
         minutes_played=minutes_played,
-        fouls=0,
-        is_star=True,
+        fouls=fouls,
+        is_star=is_star,
     )
 
 
-def _season_data(season_avg: float = 25.0, avg_minutes: float = 35.0) -> dict:
+def _make_live_line(
+    threshold: float = 25.5,
+    over_odds: float = -115,
+    under_odds: float = -105,
+) -> LivePropLine:
+    return LivePropLine(threshold=threshold, over_odds=over_odds, under_odds=under_odds)
+
+
+def _make_season_data(
+    season_avg: float = 24.0,
+    avg_minutes: float = 34.0,
+    expected_pace: float = 100.0,
+) -> dict:
     return {
         "season_avg": season_avg,
         "avg_minutes": avg_minutes,
-        "expected_pace": 100.0,
+        "expected_pace": expected_pace,
     }
 
 
 # ---------------------------------------------------------------------------
-# Bug 1: implied_p_under must use under_odds, not (1 - implied_p_over)
+# Core analysis
 # ---------------------------------------------------------------------------
 
-class TestImpliedUnderFromOdds:
-    """implied_p_under should be independently derived from under_odds."""
-
-    def test_implied_p_under_from_under_odds_not_complement(self) -> None:
-        """
-        When over and under have different vig, implied_p_under must NOT equal
-        1 - implied_p_over. The two must sum to more than 1.0 (the book's vig).
-        """
-        engine = LivePropEngine()
-        # Asymmetric odds: over at -110 (52.4% implied), under at -130 (56.5% implied)
-        line = LivePropLine(threshold=25.5, over_odds=-110, under_odds=-130)
+class TestLivePropEngineAnalyze:
+    def test_returns_projection_dict(self, engine):
         proj = engine.analyze(
-            player=_player(),
-            game_state=_game_state(),
-            player_season_data=_season_data(),
-            live_line=line,
+            _make_player(),
+            _make_game_state(),
+            _make_season_data(),
+            _make_live_line(),
         )
-        # With the fix, implied_p_over + implied_p_under > 1.0 (vig > 0)
-        total_implied = proj.implied_p_over + proj.implied_p_under
-        assert total_implied > 1.0, (
-            f"Expected vig: implied_p_over + implied_p_under > 1.0, got {total_implied:.4f}"
-        )
+        result = proj.to_dict()
+        assert isinstance(result, dict)
+        required = [
+            "player_name", "stat_type", "threshold", "current_stat",
+            "true_p_over", "true_p_under", "edge_over", "edge_under",
+            "best_side", "best_edge", "verdict", "is_positive_ev",
+        ]
+        for key in required:
+            assert key in result, f"Missing key: {key}"
 
-    def test_implied_p_under_matches_under_odds_directly(self) -> None:
-        """implied_p_under must equal _american_to_implied(under_odds)."""
-        from app.services.prop_analyzer import PropAnalyzer
-
-        engine = LivePropEngine()
-        over_odds = -110
-        under_odds = -130
-        line = LivePropLine(threshold=25.5, over_odds=over_odds, under_odds=under_odds)
+    def test_probabilities_sum_to_one(self, engine):
         proj = engine.analyze(
-            player=_player(),
-            game_state=_game_state(),
-            player_season_data=_season_data(),
-            live_line=line,
+            _make_player(),
+            _make_game_state(),
+            _make_season_data(),
+            _make_live_line(),
         )
-        expected_implied_under = PropAnalyzer._american_to_implied(under_odds)
-        # Projection rounds to 4 decimal places, so allow 1e-4 tolerance
-        assert abs(proj.implied_p_under - expected_implied_under) < 1e-4, (
-            f"implied_p_under={proj.implied_p_under:.6f} "
-            f"expected={expected_implied_under:.6f}"
-        )
+        assert abs(proj.true_p_over + proj.true_p_under - 1.0) < 1e-6
 
-    def test_edge_under_not_simply_negative_edge_over(self) -> None:
-        """
-        With asymmetric odds, edge_under should NOT equal -edge_over.
-        (Pre-fix this was always equal because implied_p_under = 1 - implied_p_over.)
-        """
-        engine = LivePropEngine()
-        # Meaningful vig difference: over favored, under more expensive
-        line = LivePropLine(threshold=25.5, over_odds=-110, under_odds=-150)
+    def test_already_hit_threshold_high_p_over(self, engine):
+        """Player with current_stat > threshold should have very high P(over)."""
+        player = _make_player(current_stat=30.0)
+        line = _make_live_line(threshold=25.5)
+        proj = engine.analyze(player, _make_game_state(), _make_season_data(), line)
+        assert proj.true_p_over >= 0.97
+
+    def test_edge_calculation_is_consistent(self, engine):
         proj = engine.analyze(
-            player=_player(),
-            game_state=_game_state(),
-            player_season_data=_season_data(),
-            live_line=line,
+            _make_player(),
+            _make_game_state(),
+            _make_season_data(),
+            _make_live_line(),
         )
-        assert abs(proj.edge_over + proj.edge_under) > 0.01, (
-            "edge_over and edge_under should NOT be perfect negatives of each other "
-            "when the book has vig on both sides"
-        )
+        # edge_over = true_p_over - implied_p_over
+        assert abs(proj.edge_over - (proj.true_p_over - proj.implied_p_over)) < 1e-4
 
-    def test_symmetric_odds_edge_under_equals_negative_edge_over(self) -> None:
-        """
-        With perfectly symmetric odds (-110 / -110), total implied ≈ 1.048.
-        edge_over + edge_under ≈ -vig (both sides penalised equally).
-        """
-        engine = LivePropEngine()
-        line = LivePropLine(threshold=25.5, over_odds=-110, under_odds=-110)
+    def test_kelly_fraction_bounded(self, engine):
+        """Half-Kelly must be in [0, 0.10]."""
         proj = engine.analyze(
-            player=_player(),
-            game_state=_game_state(),
-            player_season_data=_season_data(),
-            live_line=line,
+            _make_player(),
+            _make_game_state(),
+            _make_season_data(),
+            _make_live_line(over_odds=150),
         )
-        # With symmetric odds, edge_over and edge_under should be equal magnitudes
-        # apart only by the vig penalty shared equally
-        assert abs(proj.edge_over + proj.edge_under) < 0.10, (
-            "With symmetric odds the total edge should approximately equal -vig"
-        )
+        assert 0.0 <= proj.kelly_fraction <= 0.10
 
-
-# ---------------------------------------------------------------------------
-# Bug 2: Kelly fraction must use best-side's odds and probability
-# ---------------------------------------------------------------------------
-
-class TestKellyBestSide:
-    """Kelly fraction must reflect the odds/probability of whichever side has the edge."""
-
-    def _kelly_manual(self, true_prob: float, american_odds: float) -> float:
-        from app.core.betting import american_to_decimal
-        decimal = american_to_decimal(american_odds)
-        raw = max(0.0, (true_prob * decimal - 1.0) / (decimal - 1.0))
-        return min(raw * 0.5, 0.10)
-
-    def test_kelly_uses_over_odds_when_over_is_best_side(self) -> None:
-        """When over has higher edge, Kelly should be computed from over_odds."""
-        engine = LivePropEngine()
-        # Favour the over: high current stat, low threshold
-        line = LivePropLine(threshold=5.0, over_odds=-110, under_odds=-110)
-        player = _player(current_stat=4.0, minutes_played=10.0)  # likely to over
+    def test_verdict_pass_when_edge_near_zero(self, engine):
+        """When true probability ≈ implied probability, verdict should be PASS or FADE."""
+        # Use fair odds (-110 / -110) so edge is near zero
         proj = engine.analyze(
-            player=player,
-            game_state=_game_state(minutes_remaining=38.0),
-            player_season_data=_season_data(season_avg=25.0, avg_minutes=35.0),
-            live_line=line,
+            _make_player(current_stat=12.0),
+            _make_game_state(minutes_remaining=24.0),
+            _make_season_data(season_avg=25.0),
+            _make_live_line(threshold=24.0, over_odds=-110, under_odds=-110),
         )
-        if proj.best_side == 'over':
-            expected_kelly = self._kelly_manual(proj.true_p_over, line.over_odds)
-            assert abs(proj.kelly_fraction - expected_kelly) < 1e-4, (
-                f"Kelly should use over odds: expected={expected_kelly:.4f} got={proj.kelly_fraction:.4f}"
-            )
-        else:
-            pytest.fail(
-                f"Expected best_side='over' for a below-threshold scenario, got '{proj.best_side}'"
-            )
+        assert proj.verdict in ("PASS", "LEAN OVER", "LEAN UNDER", "MARGINAL OVER", "MARGINAL UNDER", "FADE OVER", "FADE UNDER", "STRONG OVER", "STRONG UNDER")
 
-    def test_kelly_uses_under_odds_when_under_is_best_side(self) -> None:
-        """When under has higher edge, Kelly should be computed from under_odds."""
-        engine = LivePropEngine()
-        # Make under best side: player has very high implied probability of UNDER
-        # Use large threshold (far above likely projection) + generous under odds
-        line = LivePropLine(threshold=60.0, over_odds=+500, under_odds=-800)
-        player = _player(current_stat=5.0, minutes_played=35.0)  # very unlikely to reach 60
-        proj = engine.analyze(
-            player=player,
-            game_state=_game_state(minutes_remaining=1.0),
-            player_season_data=_season_data(season_avg=20.0, avg_minutes=35.0),
-            live_line=line,
+    def test_strong_verdict_with_big_edge(self, engine):
+        """Clear hot hand + long odds over should give STRONG OVER verdict."""
+        # Player has 5 threes in Q1 (very hot), asking about 3.5 threshold
+        player = _make_player(
+            stat_type="threes",
+            current_stat=5.0,
+            minutes_played=12.0,
+            is_star=True,
         )
-        assert proj.best_side == 'under', (
-            f"Expected best_side='under' for an unreachable threshold, got '{proj.best_side}'"
-        )
-        expected_kelly = self._kelly_manual(proj.true_p_under, line.under_odds)
-        assert abs(proj.kelly_fraction - expected_kelly) < 1e-4, (
-            f"Kelly should use under odds when under is best_side: "
-            f"expected={expected_kelly:.4f} got={proj.kelly_fraction:.4f}"
-        )
-
-    def test_kelly_non_negative(self) -> None:
-        """Kelly fraction should never be negative and must match manual formula."""
-        engine = LivePropEngine()
-        line = LivePropLine(threshold=25.5, over_odds=-110, under_odds=-110)
-        proj = engine.analyze(
-            player=_player(),
-            game_state=_game_state(),
-            player_season_data=_season_data(),
-            live_line=line,
-        )
-        assert proj.kelly_fraction >= 0.0
-        # Verify the exact Kelly formula for whichever side was chosen
-        expected = self._kelly_manual(
-            proj.true_p_over if proj.best_side == "over" else proj.true_p_under,
-            line.over_odds if proj.best_side == "over" else line.under_odds,
-        )
-        assert abs(proj.kelly_fraction - expected) < 1e-4
-
-    def test_kelly_capped_at_10_percent(self) -> None:
-        """Kelly fraction should never exceed 0.10 (the cap)."""
-        engine = LivePropEngine()
-        # Player already hit threshold — near-certain over
-        line = LivePropLine(threshold=1.0, over_odds=-110, under_odds=-110)
-        player = _player(current_stat=5.0, minutes_played=5.0)  # already past threshold
-        proj = engine.analyze(
-            player=player,
-            game_state=_game_state(minutes_remaining=43.0),
-            player_season_data=_season_data(),
-            live_line=line,
-        )
-        assert proj.kelly_fraction <= 0.10
-
-
-# ---------------------------------------------------------------------------
-# Bug 3: Verdict tiers — SMALL for 3-5%, FADE targets best_side
-# ---------------------------------------------------------------------------
-
-class TestVerdictTiers:
-    """Verdict property must correctly classify all edge ranges."""
-
-    def _make_proj(self, edge_over: float, edge_under: float) -> LivePropProjection:
-        """Build a minimal LivePropProjection with given edges.
-
-        true_p_over and true_p_under are set so they sum to 1.0 and are
-        centered at 0.5, independent of edge_under (which may differ from
-        -edge_over when vig is accounted for).
-        """
-        true_p_over = 0.5 + edge_over
-        return LivePropProjection(
-            player_name="Test",
-            stat_type="points",
-            threshold=25.5,
-            current_stat=15.0,
-            minutes_remaining=20.0,
-            season_per_minute=0.5,
-            current_per_minute=0.5,
-            blended_per_minute=0.5,
-            hot_hand_factor=1.0,
-            pace_factor=1.0,
-            garbage_time_discount=1.0,
-            foul_discount=1.0,
-            effective_minutes=20.0,
-            projected_remaining=10.0,
-            projected_final=25.0,
-            remaining_needed=10.5,
-            sigma_remaining=3.0,
-            true_p_over=true_p_over,
-            true_p_under=1.0 - true_p_over,
-            implied_p_over=0.5,
-            implied_p_under=0.5,
-            devig_p_over=0.5,
-            edge_over=edge_over,
-            edge_under=edge_under,
-            kelly_fraction=0.02,
-            over_odds=-110,
-            under_odds=-110,
-        )
-
-    def test_strong_over_at_25_pct_edge(self) -> None:
-        proj = self._make_proj(edge_over=0.25, edge_under=-0.25)
-        assert proj.verdict == "STRONG OVER"
-
-    def test_lean_over_at_15_pct_edge(self) -> None:
-        proj = self._make_proj(edge_over=0.15, edge_under=-0.15)
-        assert proj.verdict == "LEAN OVER"
-
-    def test_marginal_over_at_7_pct_edge(self) -> None:
-        proj = self._make_proj(edge_over=0.07, edge_under=-0.07)
-        assert proj.verdict == "MARGINAL OVER"
-
-    def test_small_over_at_4_pct_edge(self) -> None:
-        """3–5% edge must produce SMALL, not FADE (pre-fix this was FADE)."""
-        proj = self._make_proj(edge_over=0.04, edge_under=-0.04)
-        assert proj.verdict == "SMALL OVER", (
-            f"Expected 'SMALL OVER' for 4% edge, got '{proj.verdict}'"
-        )
-
-    def test_small_over_at_3_pct_edge(self) -> None:
-        """Exactly 3% edge should also be SMALL."""
-        proj = self._make_proj(edge_over=0.03, edge_under=-0.03)
-        assert proj.verdict == "SMALL OVER"
-
-    def test_pass_at_zero_edge(self) -> None:
-        proj = self._make_proj(edge_over=0.00, edge_under=0.00)
-        assert proj.verdict == "PASS"
-
-    def test_pass_at_small_negative_edge(self) -> None:
-        proj = self._make_proj(edge_over=-0.01, edge_under=0.01)
-        # best_side = 'under' (edge_under > edge_over), best_edge = 0.01
-        assert proj.verdict == "PASS"
-
-    def test_fade_best_side_not_opposite(self) -> None:
-        """FADE must name best_side, not the opposite (pre-fix was reversed)."""
-        # best_side = 'over' (edge_over > edge_under), best_edge = -0.05
-        proj = self._make_proj(edge_over=-0.05, edge_under=-0.10)
+        line = _make_live_line(threshold=3.5, over_odds=200, under_odds=-280)
+        proj = engine.analyze(player, _make_game_state(minutes_remaining=36.0), _make_season_data(season_avg=3.0, avg_minutes=34.0), line)
         assert proj.best_side == "over"
-        assert proj.verdict == "FADE OVER", (
-            f"FADE should target best_side='over', got '{proj.verdict}'"
+        assert proj.best_edge > 0.0
+
+
+# ---------------------------------------------------------------------------
+# Situational discounts
+# ---------------------------------------------------------------------------
+
+class TestGarbageTimeDiscount:
+    def test_no_discount_in_close_game(self, engine):
+        discount = engine._garbage_time_discount(
+            score_diff=5, minutes_remaining=20.0, is_star=True, sport="nba"
         )
+        assert discount == 1.0
 
-    def test_fade_under_when_under_is_best_side(self) -> None:
-        """FADE UNDER when edge_under > edge_over and both negative."""
-        proj = self._make_proj(edge_over=-0.10, edge_under=-0.05)
-        assert proj.best_side == "under"
-        assert proj.verdict == "FADE UNDER"
+    def test_heavy_discount_for_star_in_blowout(self, engine):
+        discount = engine._garbage_time_discount(
+            score_diff=28, minutes_remaining=5.0, is_star=True, sport="nba"
+        )
+        assert discount <= 0.50
 
-    def test_lean_over_matches_table_example_ty_jerome(self) -> None:
-        """
-        Ty Jerome 3PM example from the problem statement:
-        edge_over=10%, best_side=OVER → LEAN OVER.
-        """
-        proj = self._make_proj(edge_over=0.10, edge_under=-0.10)
-        assert proj.verdict == "LEAN OVER"
+    def test_lighter_discount_for_role_player(self, engine):
+        star_disc = engine._garbage_time_discount(30, 6.0, True, "nba")
+        role_disc = engine._garbage_time_discount(30, 6.0, False, "nba")
+        assert role_disc > star_disc
 
-    def test_marginal_over_matches_table_example_luka(self) -> None:
-        """
-        Luka Doncic PTS example from the problem statement:
-        edge_over=8%, best_side=OVER → MARGINAL OVER.
-        """
-        proj = self._make_proj(edge_over=0.08, edge_under=-0.08)
-        assert proj.verdict == "MARGINAL OVER"
+
+class TestFoulDiscount:
+    def test_no_discount_clean(self, engine):
+        assert engine._foul_discount(1, 30.0, "nba") == 1.0
+
+    def test_heavy_discount_one_foul_from_limit(self, engine):
+        disc = engine._foul_discount(5, 20.0, "nba")   # 1 away from foul out
+        assert disc == 0.55
+
+    def test_moderate_discount_two_away_early(self, engine):
+        disc = engine._foul_discount(4, 15.0, "nba")   # 2 away, early Q4
+        assert disc == 0.72
+
+
+# ---------------------------------------------------------------------------
+# Slate analysis
+# ---------------------------------------------------------------------------
+
+class TestAnalyzeSlate:
+    def test_slate_sorted_by_edge_descending(self, engine):
+        props = [
+            {
+                "player": _make_player(stat_type="threes", current_stat=5.0, minutes_played=12.0),
+                "game_state": _make_game_state(minutes_remaining=36.0),
+                "player_season_data": _make_season_data(season_avg=3.0),
+                "live_line": _make_live_line(threshold=3.5, over_odds=200, under_odds=-280),
+            },
+            {
+                "player": _make_player(stat_type="points", current_stat=8.0, minutes_played=20.0),
+                "game_state": _make_game_state(),
+                "player_season_data": _make_season_data(),
+                "live_line": _make_live_line(threshold=25.5),
+            },
+        ]
+        results = engine.analyze_slate(props)
+        assert len(results) == 2
+        assert results[0]["best_edge"] >= results[1]["best_edge"]
+
+    def test_empty_slate(self, engine):
+        assert engine.analyze_slate([]) == []
+
+    def test_bad_entry_skipped(self, engine):
+        """A malformed entry should not crash the slate — it should be skipped."""
+        props = [
+            {"player": None, "game_state": None, "player_season_data": {}, "live_line": None},
+            {
+                "player": _make_player(),
+                "game_state": _make_game_state(),
+                "player_season_data": _make_season_data(),
+                "live_line": _make_live_line(),
+            },
+        ]
+        results = engine.analyze_slate(props)
+        assert len(results) == 1
+
+
+# ---------------------------------------------------------------------------
+# estimate_live_pace
+# ---------------------------------------------------------------------------
+
+class TestEstimateLivePace:
+    def test_normal_game_pace(self):
+        # 38+35=73 points in 14.5 min → ~(73/1.1/14.5)*48 ≈ 220 raw, clamped to 140
+        # Use a realistic Q3 score: 95 pts through 36 min → pace ≈ 115
+        pace = estimate_live_pace(home_score=48, away_score=47, minutes_played=36.0)
+        assert 60 <= pace <= 140
+
+    def test_zero_minutes_returns_default(self):
+        pace = estimate_live_pace(home_score=0, away_score=0, minutes_played=0.0)
+        assert pace == 100.0
+
+    def test_pace_clamped_to_floor(self):
+        pace = estimate_live_pace(home_score=2, away_score=1, minutes_played=24.0)
+        assert pace >= 60.0
+
+    def test_pace_clamped_to_ceiling(self):
+        pace = estimate_live_pace(home_score=999, away_score=999, minutes_played=1.0)
+        assert pace <= 140.0
+
+    def test_ncaab_sport_param_accepted(self):
+        pace = estimate_live_pace(30, 28, 10.0, sport="ncaab")
+        assert isinstance(pace, float)

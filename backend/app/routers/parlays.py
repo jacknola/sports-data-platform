@@ -302,6 +302,63 @@ async def search_parlays(
     return results
 
 
+@router.post("/parlays/{parlay_id}/post-twitter", response_model=Dict[str, Any])
+async def post_parlay_to_twitter(
+    parlay_id: str,
+    data: Dict[str, Any] = {}
+) -> Dict[str, Any]:
+    """
+    Post a parlay to Twitter/X.
+
+    Stores tweet metadata on the parlay record. Actual Twitter API
+    integration can be wired here; for now returns a structured stub so
+    the frontend button doesn't 404.
+    """
+    db = SessionLocal()
+
+    try:
+        parlay = db.query(Parlay).filter(Parlay.parlay_id == parlay_id).first()
+
+        if not parlay:
+            raise HTTPException(status_code=404, detail="Parlay not found")
+
+        # Build a shareable tweet text from the parlay legs
+        legs_text = ""
+        if parlay.legs:
+            picks = [f"{leg.get('pick', '')} ({leg.get('odds', '')})" for leg in parlay.legs[:3]]
+            legs_text = " | ".join(picks)
+            if len(parlay.legs) > 3:
+                legs_text += f" + {len(parlay.legs) - 3} more"
+
+        tweet_text = (
+            f"🎯 {parlay.title or 'Parlay Alert'}\n"
+            f"Sport: {parlay.sport} | Confidence: {parlay.confidence_level}\n"
+            f"Legs: {legs_text}\n"
+            f"Total Odds: {parlay.total_odds:+.0f}" if parlay.total_odds else
+            f"🎯 {parlay.title or 'Parlay Alert'}\n"
+            f"Sport: {parlay.sport} | Confidence: {parlay.confidence_level}"
+        )
+
+        # Persist tweet text; real post_id would come from the Twitter API
+        parlay.tweet_text = tweet_text
+        parlay.twitter_posted_at = datetime.now()
+        db.commit()
+        db.refresh(parlay)
+
+        logger.info(f"Parlay {parlay_id} queued for Twitter post")
+
+        return {
+            'parlay_id': parlay_id,
+            'tweet_text': tweet_text,
+            'twitter_post_id': parlay.twitter_post_id,
+            'posted': parlay.twitter_post_id is not None,
+            'message': 'Tweet queued (Twitter API not yet connected)',
+        }
+
+    finally:
+        db.close()
+
+
 @router.get("/parlays/stats/performance", response_model=Dict[str, Any])
 async def get_parlay_performance_stats() -> Dict[str, Any]:
     """
@@ -313,45 +370,49 @@ async def get_parlay_performance_stats() -> Dict[str, Any]:
     db = SessionLocal()
     
     try:
-        # Get all completed parlays
-        completed = db.query(Parlay).filter(
-            Parlay.status.in_(['won', 'lost'])
-        ).all()
-        
-        if not completed:
+        all_parlays = db.query(Parlay).all()
+
+        pending = [p for p in all_parlays if p.status == 'pending']
+        completed = [p for p in all_parlays if p.status in ('won', 'lost')]
+
+        if not all_parlays:
             return {
                 'total_parlays': 0,
-                'message': 'No completed parlays yet'
+                'pending': 0,
+                'won': 0,
+                'lost': 0,
+                'message': 'No parlays yet'
             }
-        
+
         won = [p for p in completed if p.status == 'won']
         lost = [p for p in completed if p.status == 'lost']
-        
+
         total_invested = sum(p.suggested_unit_size or 0 for p in completed)
         total_return = sum(p.actual_return or 0 for p in completed)
-        
+
         # Performance by sport
         sports_stats = {}
         for parlay in completed:
             sport = parlay.sport
             if sport not in sports_stats:
                 sports_stats[sport] = {'won': 0, 'lost': 0, 'roi': 0}
-            
+
             sports_stats[sport]['won' if parlay.status == 'won' else 'lost'] += 1
             if parlay.roi:
                 sports_stats[sport]['roi'] += parlay.roi
-        
+
         return {
-            'total_parlays': len(completed),
+            'total_parlays': len(all_parlays),
+            'pending': len(pending),
             'won': len(won),
             'lost': len(lost),
-            'win_rate': len(won) / len(completed) * 100,
+            'win_rate': (len(won) / len(completed) * 100) if completed else 0,
             'total_invested': total_invested,
             'total_return': total_return,
             'net_profit': total_return - total_invested,
             'overall_roi': ((total_return - total_invested) / total_invested * 100) if total_invested > 0 else 0,
             'by_sport': sports_stats,
-            'avg_odds': sum(p.total_odds for p in completed) / len(completed)
+            'avg_odds': (sum(p.total_odds for p in completed if p.total_odds) / max(sum(1 for p in completed if p.total_odds), 1)) if completed else 0,
         }
         
     finally:

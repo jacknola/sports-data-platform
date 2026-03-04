@@ -32,8 +32,10 @@ async def test_predict_game_output_types():
     assert isinstance(ml_pred.get("away_win_prob"), float), "away_win_prob should be a float"
     assert isinstance(ml_pred.get("confidence"), float), "confidence should be a float"
 
-    # Note: spread/total/book/features keys are only present in predict_today_games(),
-    # not in the lower-level predict_game() call.
+    # Check for core prediction keys (spread/total/book added by predict_today_games, not predict_game)
+    assert "expected_value" in prediction, "expected_value key should be in prediction"
+    assert "kelly_criterion" in prediction, "kelly_criterion key should be in prediction"
+    assert "method" in prediction, "method key should be in prediction"
 
 @pytest.mark.asyncio
 async def test_graceful_degradation_without_odds():
@@ -66,4 +68,6 @@ async def test_graceful_degradation_without_odds():
     assert ev.get("home_odds") == -110
     assert ev.get("away_odds") == -110
 
-    # features key is not added by predict_today_games()
+    # Check that spread/total metadata was attached
+    assert "spread" in predictions[0], "spread key should be in prediction"
+    assert "total" in predictions[0], "total key should be in prediction"
