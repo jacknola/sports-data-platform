@@ -815,10 +815,8 @@ class SportsAPIService:
         "player_rebounds",
         "player_assists",
         "player_threes",
-        "player_points_alternate",
-        "player_rebounds_alternate",
-        "player_assists_alternate",
-        "player_threes_alternate",
+        # Alternate markets removed — they return every offered line (7.5, 12.5, etc.)
+        # causing inflated edges on low lines that are nearly guaranteed to hit.
     ]
 
     # Extended markets — included by default when credits allow (20k quota)
@@ -1074,20 +1072,6 @@ class SportsAPIService:
                                     "player": pair["player"],
                                     "prop_type": market_key,
                                     "line": pair["line"],
-                                    "over_odds": pair["over_odds"],
-                                    "under_odds": pair["under_odds"],
-                                    "book": book_title,
-                                    "book_key": book_key,
-                                    "event_id": eid,
-                                    "home_team": home,
-                                    "away_team": away,
-                                }
-                            )
-                            all_raw_props.append(
-                                {
-                                    "player": player,
-                                    "prop_type": market_key,
-                                    "line": pair.get("line", 0.0),
                                     "over_odds": pair["over_odds"],
                                     "under_odds": pair["under_odds"],
                                     "book": book_title,

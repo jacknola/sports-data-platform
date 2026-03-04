@@ -149,10 +149,13 @@ async def _get_live_props(sport: str) -> List[Dict]:
         if not has_real_devig:
             if raw.get("books_offering", 1) < 2:
                 continue
-            edge_magnitude = max(ev_over, ev_under)  # positive EV only — no abs() inflation
+            # For perfectly balanced lines (-110/-110), we don't know the market edge yet.
+            # Give it a default positive score based on book count so it passes the pre-filter
+            # and gets analyzed by the Bayesian model.
+            edge_magnitude = 0.05 + (raw.get("books_offering", 1) * 0.001)
         else:
-            # Use max absolute EV as the sorting score (handles both short and long odds fairly)
-            edge_magnitude = max(abs(ev_over), abs(ev_under))
+            # Use max EV (not abs) — negative EV should not inflate the sort score
+            edge_magnitude = max(ev_over, ev_under)
         is_long_odds = over_am >= 200 or under_am >= 200
         if edge_magnitude < MIN_DEVIG_EDGE and not is_long_odds:
             continue
@@ -520,6 +523,8 @@ async def _get_live_props(sport: str) -> List[Dict]:
                 "books_offering": raw.get("books_offering", 1),
                 "best_over_book": raw.get("best_over_book", ""),
                 "best_under_book": raw.get("best_under_book", ""),
+                "fanduel_over_odds": raw.get("fanduel_over_odds"),
+                "fanduel_under_odds": raw.get("fanduel_under_odds"),
                 "devigged_over_prob": raw.get("devigged_over_prob", 0.5),
                 "devigged_under_prob": raw.get("devigged_under_prob", 0.5),
                 "_research": research,
@@ -768,14 +773,14 @@ async def run_prop_analysis(sport: str = "nba") -> Dict[str, Any]:
     def _is_positive(p: Dict[str, Any]) -> bool:
         ev_class = p.get("ev_classification", "")
         bayesian_edge = p.get("bayesian_edge", 0)
-        kelly_frac = p.get("kelly_fraction", 0)
-        if kelly_frac > 0:
-            return True
         if ev_class == "pass":
             return False
+        # Require minimum 3% edge for any classification
+        if bayesian_edge < 0.03:
+            return False
         if ev_class in ("strong_play", "good_play", "lean"):
-            return bayesian_edge >= 0.01
-        return bayesian_edge >= 0.015
+            return True
+        return bayesian_edge >= 0.05
 
     # ── Alt-line best-value tagging ──
     # For each (player, stat_type, best_side) group, tag the entry with
@@ -808,7 +813,7 @@ async def run_prop_analysis(sport: str = "nba") -> Dict[str, Any]:
             p
             for p in analyzed
             if p.get("stat_type") == st
-            and p.get("bayesian_edge", 0) > 0
+            and p.get("bayesian_edge", 0) >= 0.03
             and p.get("ev_classification", "") != "pass"
         ]
         if candidates:
