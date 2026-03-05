@@ -212,6 +212,7 @@ def send_report(picks_only: bool = False, prediction_only: bool = False) -> bool
         logger.error(f"Prop analysis/send failed (non-fatal): {e}")
 
     # 6. DvP analysis (separate Telegram message)
+    dvp_data = None
     try:
         dvp_data = run_dvp_analysis_pipeline()
         if dvp_data and dvp_data.get("high_value_count", 0) > 0:
@@ -228,7 +229,7 @@ def send_report(picks_only: bool = False, prediction_only: bool = False) -> bool
     except Exception as e:
         logger.error(f"DvP analysis/send failed (non-fatal): {e}")
 
-    # 7. Google Sheets export (all tabs: Props + NBA + NCAAB + Summary)
+    # 7. Google Sheets export (all tabs: Props + NBA + NCAAB + DvP + Summary)
     try:
         ncaab_for_sheets = data.get("ncaab") if data else None
         nba_for_sheets = data.get("nba") if data else None
@@ -236,6 +237,7 @@ def send_report(picks_only: bool = False, prediction_only: bool = False) -> bool
             ncaab_data=ncaab_for_sheets,
             nba_data=nba_for_sheets,
             prop_data=prop_data,
+            dvp_data=dvp_data,
         )
         if sheets_result:
             tabs_ok = sum(
