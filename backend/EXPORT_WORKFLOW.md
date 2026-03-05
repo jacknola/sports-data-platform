@@ -96,6 +96,19 @@ python3 backend/export_to_sheets.py
 
 ## Troubleshooting
 
+### Google Sheets API Rate Limiting (429 Error)
+**Symptom:** `APIError: [429]: Quota exceeded for quota metric 'Write requests'`
+
+**Cause:** Google Sheets API quota is **60 write requests/minute/user**. Each tab makes multiple write requests (data + formatting), so 11 tabs can exceed this.
+
+**Solution:** Export pipeline includes **3-second delays** between tabs (11 tabs × 3s = 33s total). This ensures each tab's ~5 write requests stay under the 60/min limit.
+
+**If errors persist:**
+1. Wait 60 seconds before retrying (quota resets every minute)
+2. Increase delay: edit `google_sheets.py` line 1021+, change `time.sleep(3.0)` to `time.sleep(5.0)`
+3. Run exports separately: `--nba-only`, `--props-only`, `--ncaab-only`
+4. Check for other processes using the same Google service account
+
 ### "No games found"
 - NBA: Check if games are scheduled today (ESPN API)
 - Props: Check Odds API credits/limits
