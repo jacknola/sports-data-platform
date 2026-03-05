@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock, patch
 
-from app.services.google_sheets import GoogleSheetsService
+from app.services.google_sheets import GoogleSheetsService, _build_dvp_lookup
 
 
 def test_export_daily_picks_includes_high_value_props_tab() -> None:
@@ -28,8 +28,8 @@ def test_export_daily_picks_includes_high_value_props_tab() -> None:
 
     assert "props" in results
     assert "high_value_props" in results
-    service.export_props.assert_called_once_with("sheet123", prop_data)
-    service.export_high_value_props.assert_called_once_with("sheet123", prop_data)
+    service.export_props.assert_called_once_with("sheet123", prop_data, dvp_data=None)
+    service.export_high_value_props.assert_called_once_with("sheet123", prop_data, dvp_data=None)
 
 
 def test_export_props_handles_string_odds_without_crashing() -> None:
@@ -65,8 +65,8 @@ def test_export_props_handles_string_odds_without_crashing() -> None:
     args, kwargs = mock_ws.update.call_args
     rows = kwargs["values"]
     assert rows[1][8] == "+105"
-    assert rows[1][19] == "+105"
-    assert rows[1][20] == "-120"
+    assert rows[1][21] == "+105"
+    assert rows[1][22] == "-120"
 
 
 def test_export_parlays_writes_correct_columns() -> None:
@@ -344,4 +344,167 @@ def test_export_daily_picks_skips_dvp_when_no_data() -> None:
 
     assert "dvp" not in results
     service.export_dvp.assert_not_called()
+
+
+# ─── DvP Rank integration tests ────────────────────────────────────────
+
+
+def test_build_dvp_lookup_returns_empty_for_none() -> None:
+    """_build_dvp_lookup should return empty dict when dvp_data is None."""
+    assert _build_dvp_lookup(None) == {}
+    assert _build_dvp_lookup({}) == {}
+    assert _build_dvp_lookup({"projections": []}) == {}
+
+
+def test_build_dvp_lookup_keys_by_player_and_stat() -> None:
+    """_build_dvp_lookup should create (player, stat_label) keys."""
+    dvp_data = {
+        "projections": [
+            {
+                "Player": "Nikola Jokic",
+                "Stat_Category": "REB",
+                "DvP_Advantage_%": 12.5,
+                "Team": "DEN",
+                "Opponent": "LAL",
+            },
+            {
+                "Player": "Nikola Jokic",
+                "Stat_Category": "PTS",
+                "DvP_Advantage_%": 8.3,
+                "Team": "DEN",
+                "Opponent": "LAL",
+            },
+        ]
+    }
+    lookup = _build_dvp_lookup(dvp_data)
+    assert ("Nikola Jokic", "REB") in lookup
+    assert ("Nikola Jokic", "PTS") in lookup
+    assert lookup[("Nikola Jokic", "REB")]["DvP_Advantage_%"] == 12.5
+
+
+def test_export_props_includes_dvp_columns_with_data() -> None:
+    """export_props should populate DvP Rank and Matchup when dvp_data is provided."""
+    prop_data = {
+        "props": [
+            {
+                "player_name": "Nikola Jokic",
+                "stat_type": "rebounds",
+                "line": 12.5,
+                "best_side": "over",
+                "bayesian_edge": 0.06,
+                "over_odds": -110,
+                "under_odds": -110,
+            }
+        ]
+    }
+    dvp_data = {
+        "projections": [
+            {
+                "Player": "Nikola Jokic",
+                "Stat_Category": "REB",
+                "DvP_Advantage_%": 14.5,
+                "Team": "DEN",
+                "Opponent": "LAL",
+            }
+        ]
+    }
+
+    mock_client = MagicMock()
+    mock_sheet = MagicMock()
+    mock_ws = MagicMock()
+    mock_client.open_by_key.return_value = mock_sheet
+    mock_sheet.worksheet.return_value = mock_ws
+
+    with (
+        patch("app.services.google_sheets.Credentials.from_service_account_file"),
+        patch("app.services.google_sheets.gspread.authorize", return_value=mock_client),
+    ):
+        service = GoogleSheetsService(credentials_path="mock_creds.json")
+        result = service.export_props("mock_id", prop_data, dvp_data=dvp_data)
+
+    assert result.get("status") == "success"
+    _, kwargs = mock_ws.update.call_args
+    rows = kwargs["values"]
+    headers = rows[0]
+    data_row = rows[1]
+    # Verify DvP Rank and Matchup columns exist in headers
+    assert "DvP Rank" in headers
+    assert "Matchup" in headers
+    dvp_idx = headers.index("DvP Rank")
+    matchup_idx = headers.index("Matchup")
+    assert data_row[dvp_idx] == "+14.5%"
+    assert data_row[matchup_idx] == "DEN vs LAL"
+
+
+def test_export_props_dvp_shows_dash_when_no_dvp_data() -> None:
+    """export_props should show '—' for DvP Rank when dvp_data is None."""
+    prop_data = {
+        "props": [
+            {
+                "player_name": "LeBron James",
+                "stat_type": "points",
+                "line": 25.5,
+                "best_side": "over",
+                "bayesian_edge": 0.05,
+                "over_odds": -110,
+                "under_odds": -110,
+            }
+        ]
+    }
+
+    mock_client = MagicMock()
+    mock_sheet = MagicMock()
+    mock_ws = MagicMock()
+    mock_client.open_by_key.return_value = mock_sheet
+    mock_sheet.worksheet.return_value = mock_ws
+
+    with (
+        patch("app.services.google_sheets.Credentials.from_service_account_file"),
+        patch("app.services.google_sheets.gspread.authorize", return_value=mock_client),
+    ):
+        service = GoogleSheetsService(credentials_path="mock_creds.json")
+        result = service.export_props("mock_id", prop_data, dvp_data=None)
+
+    assert result.get("status") == "success"
+    _, kwargs = mock_ws.update.call_args
+    rows = kwargs["values"]
+    headers = rows[0]
+    data_row = rows[1]
+    dvp_idx = headers.index("DvP Rank")
+    matchup_idx = headers.index("Matchup")
+    assert data_row[dvp_idx] == "—"
+    assert data_row[matchup_idx] == ""
+
+
+def test_export_daily_picks_passes_dvp_data_to_prop_exports() -> None:
+    """export_daily_picks should forward dvp_data to export_props and export_high_value_props."""
+    service = GoogleSheetsService(credentials_path=None)
+    service.client = MagicMock()
+
+    service.export_props = MagicMock(return_value={"status": "success", "tab": "Props"})
+    service.export_high_value_props = MagicMock(
+        return_value={"status": "success", "tab": "HighValueProps"}
+    )
+    service.export_nba = MagicMock(return_value={"status": "success", "tab": "NBA"})
+    service.export_summary = MagicMock(
+        return_value={"status": "success", "tab": "Summary"}
+    )
+    service.export_dvp = MagicMock(return_value={"status": "success", "tab": "DvP"})
+
+    prop_data = {"props": [{"player_name": "Test", "bayesian_edge": 0.04}]}
+    dvp_data = {
+        "projections": [
+            {"Player": "Test", "Stat_Category": "PTS", "DvP_Advantage_%": 10.0}
+        ]
+    }
+    results = service.export_daily_picks(
+        spreadsheet_id="sheet123",
+        prop_data=prop_data,
+        dvp_data=dvp_data,
+    )
+
+    service.export_props.assert_called_once_with("sheet123", prop_data, dvp_data=dvp_data)
+    service.export_high_value_props.assert_called_once_with(
+        "sheet123", prop_data, dvp_data=dvp_data
+    )
 
