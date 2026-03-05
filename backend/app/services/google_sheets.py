@@ -66,6 +66,7 @@ _STAT_DISPLAY = {
 }
 
 # Reverse mapping: DvP Stat_Category → prop stat_type display label
+# DvP analyzer (nba_dvp_analyzer.py) produces: PTS, REB, AST, PTS+REB+AST
 _DVP_STAT_TO_DISPLAY = {
     "PTS": "PTS",
     "REB": "REB",
