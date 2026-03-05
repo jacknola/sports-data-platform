@@ -69,6 +69,17 @@ async def export_props_to_sheets():
         info = sheets_service.get_spreadsheet_info(spreadsheet_id)
         print(f"\n  View Dashboard here: {info.get('url')}")
     
+    # 4. Export FanDuel Bets Dashboard
+    logger.info("Generating FanDuel Bets Dashboard...")
+    fanduel_result = sheets_service.export_fanduel_props(spreadsheet_id, prop_data)
+    
+    if "error" in fanduel_result:
+        print(f"\n  Export (FanDuel) failed: {fanduel_result['error']}")
+    else:
+        print(f"  ✅ Successfully exported {fanduel_result.get('rows_written', 0)} filtered props to 'FanDuelBets' tab!")
+        info = sheets_service.get_spreadsheet_info(spreadsheet_id)
+        print(f"\n  View Dashboard here: {info.get('url')}")
+    
     print("=" * 76 + "\n")
     
     if "error" in result:

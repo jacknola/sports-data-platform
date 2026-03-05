@@ -18,6 +18,8 @@ Tabs:
 """
 from __future__ import annotations
 
+import os
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -1516,6 +1518,7 @@ class GoogleSheetsService:
 
         # 1. Legend — always first
         results["legend"] = self.export_legend(spreadsheet_id)
+        time.sleep(1.5)  # Rate limit: 60 writes/min = 1 write/sec
 
         # 2. Top 10 Plays — always second
         results["top10"] = self.export_top10_plays(
@@ -1525,28 +1528,34 @@ class GoogleSheetsService:
             nba_predictions=nba_predictions,
             nba_bets=nba_bets,
         )
+        time.sleep(1.5)
 
         # 3. Parlays — generated suggestions (or empty-state message if none)
         results["parlays"] = self.export_parlays(
             spreadsheet_id,
             parlay_suggestions=parlay_suggestions,
         )
+        time.sleep(1.5)
 
         if prop_data and prop_data.get("props"):
             results["props"] = self.export_props(spreadsheet_id, prop_data)
+            time.sleep(1.5)
             results["high_value_props"] = self.export_high_value_props(
                 spreadsheet_id,
                 prop_data,
             )
+            time.sleep(1.5)
             results["fanduel_props"] = self.export_fanduel_props(
                 spreadsheet_id,
                 prop_data,
             )
+            time.sleep(1.5)
 
         if nba_predictions:
             results["nba"] = self.export_nba(
                 spreadsheet_id, nba_predictions, nba_bets or []
             )
+            time.sleep(1.5)
 
         if ncaab_data and ncaab_data.get("game_analyses"):
             qdrant_used = any(
@@ -1558,6 +1567,7 @@ class GoogleSheetsService:
                     "Qdrant context present — including historical context in Sheets export"
                 )
             results["ncaab"] = self.export_ncaab(spreadsheet_id, ncaab_data)
+            time.sleep(1.5)
 
         # Unified model-vs-market comparison tab (any sport with data)
         if ncaab_data or nba_predictions:
@@ -1574,6 +1584,7 @@ class GoogleSheetsService:
             nba_bets=nba_bets,
             prop_data=prop_data,
         )
+        time.sleep(1.5)
 
         # BetSlip — interactive tracker the user fills in
         results["bet_slip"] = self.export_bet_slip(
@@ -1582,6 +1593,7 @@ class GoogleSheetsService:
             ncaab_data=ncaab_data,
             nba_bets=nba_bets,
         )
+        time.sleep(1.5)
 
         # BetTracker — full history with P&L, CLV, status for primary book
         results["bet_tracker"] = self.export_bet_tracker(spreadsheet_id)
