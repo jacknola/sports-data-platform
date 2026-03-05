@@ -435,18 +435,20 @@ def run_sheets_export_pipeline(
     ncaab_data: Optional[Dict[str, Any]] = None,
     nba_data: Optional[Dict[str, Any]] = None,
     prop_data: Optional[Dict[str, Any]] = None,
+    dvp_data: Optional[Dict[str, Any]] = None,
     spreadsheet_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Export all daily picks to Google Sheets.
 
-    Called after Telegram sends complete.  Collects NCAAB, NBA, and
-    prop data produced by the other pipeline stages and writes them
-    to the configured Google Spreadsheet (Props / NBA / NCAAB / Summary tabs).
+    Called after Telegram sends complete.  Collects NCAAB, NBA, prop,
+    and DvP data produced by the other pipeline stages and writes them
+    to the configured Google Spreadsheet (Props / NBA / NCAAB / DvP / Summary tabs).
 
     Args:
         ncaab_data: Result from run_ncaab_analysis() (contains game_analyses + bets)
         nba_data: Result from run_nba_analysis() (contains predictions + bets)
         prop_data: Result from run_prop_analysis() (contains props + best_props)
+        dvp_data: Result from run_dvp_analysis_pipeline() (contains projections)
         spreadsheet_id: Override sheet ID (defaults to GOOGLE_SPREADSHEET_ID)
 
     Returns:
@@ -493,6 +495,7 @@ def run_sheets_export_pipeline(
             nba_bets=nba_bets,
             prop_data=prop_data,
             parlay_suggestions=parlay_suggestions,
+            dvp_data=dvp_data,
         )
 
         tabs_ok = sum(

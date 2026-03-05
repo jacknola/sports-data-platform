@@ -208,3 +208,140 @@ def test_export_daily_picks_includes_parlays_and_live_props() -> None:
     assert "parlays" in results
     assert "live_props" in results
     service.export_live_props.assert_called_once_with("sheet123", live_props_data)
+
+
+def test_export_dvp_writes_correct_columns() -> None:
+    """Test that export_dvp writes projections with the expected column layout."""
+    service = GoogleSheetsService(credentials_path=None)
+    service.client = MagicMock()
+
+    mock_ws = MagicMock()
+    service._get_or_create_worksheet = MagicMock(return_value=mock_ws)
+    captured: list = []
+
+    def fake_batch_write(ws, headers, rows):
+        captured.extend([headers] + rows)
+        return len(rows)
+
+    service._batch_write = fake_batch_write
+
+    dvp_data = {
+        "projections": [
+            {
+                "Player": "Nikola Jokic",
+                "Position": "C",
+                "Team": "DEN",
+                "Opponent": "LAL",
+                "Stat_Category": "PTS",
+                "Season_Avg": 26.6,
+                "Projected_Line": 30.1,
+                "Sportsbook_Line": 27.5,
+                "DvP_Advantage_%": 9.5,
+                "Recommendation": "LEAN OVER",
+            }
+        ]
+    }
+    result = service.export_dvp("mock_id", dvp_data)
+
+    assert result.get("status") == "success"
+    assert result.get("rows_written") == 1
+    # captured[0] = header row, captured[1] = first data row
+    header = captured[0]
+    assert header[1] == "Player"
+    assert header[10] == "Recommendation"
+    data_row = captured[1]
+    assert data_row[1] == "Nikola Jokic"
+    assert data_row[2] == "C"
+    assert data_row[3] == "DEN"
+    assert data_row[4] == "LAL"
+    assert data_row[5] == "PTS"
+    assert data_row[6] == 26.6
+    assert data_row[7] == 30.1
+    assert data_row[8] == 27.5
+    assert data_row[9] == 9.5
+    assert data_row[10] == "LEAN OVER"
+
+
+def test_export_dvp_empty_projections_returns_success() -> None:
+    """export_dvp should succeed with zero rows when projections list is empty."""
+    service = GoogleSheetsService(credentials_path=None)
+    service.client = MagicMock()
+
+    result = service.export_dvp("sheet123", {"projections": []})
+
+    assert result.get("status") == "success"
+    assert result.get("rows_written") == 0
+
+
+def test_export_dvp_no_client_returns_error() -> None:
+    """export_dvp should return an error dict when client is not configured."""
+    service = GoogleSheetsService(credentials_path=None)
+    service.client = None
+
+    result = service.export_dvp("sheet123", {"projections": [{"Player": "X"}]})
+
+    assert "error" in result
+
+
+def test_export_daily_picks_includes_dvp_tab() -> None:
+    """export_daily_picks should call export_dvp when dvp_data with projections is provided."""
+    service = GoogleSheetsService(credentials_path=None)
+    service.client = MagicMock()
+
+    service.export_dvp = MagicMock(return_value={"status": "success", "tab": "DvP"})
+    service.export_live_props = MagicMock(return_value={"status": "success", "tab": "LiveProps"})
+    service.export_legend = MagicMock(return_value={"status": "success", "tab": "Legend"})
+    service.export_top10_plays = MagicMock(return_value={"status": "success", "tab": "Top10"})
+    service.export_parlays = MagicMock(return_value={"status": "success", "tab": "Parlays"})
+    service.export_summary = MagicMock(return_value={"status": "success", "tab": "Summary"})
+    service.export_bet_slip = MagicMock(return_value={"status": "success", "tab": "BetSlip"})
+    service.export_bet_tracker = MagicMock(
+        return_value={"status": "success", "tab": "BetTracker"}
+    )
+
+    dvp_data = {
+        "projections": [
+            {
+                "Player": "Giannis Antetokounmpo",
+                "Position": "PF",
+                "Team": "MIL",
+                "Opponent": "BOS",
+                "Stat_Category": "REB",
+                "Season_Avg": 11.4,
+                "Projected_Line": 13.2,
+                "Sportsbook_Line": 11.5,
+                "DvP_Advantage_%": 14.8,
+                "Recommendation": "HIGH VALUE OVER",
+            }
+        ]
+    }
+
+    results = service.export_daily_picks(
+        spreadsheet_id="sheet123",
+        dvp_data=dvp_data,
+    )
+
+    assert "dvp" in results
+    service.export_dvp.assert_called_once_with("sheet123", dvp_data)
+
+
+def test_export_daily_picks_skips_dvp_when_no_data() -> None:
+    """export_daily_picks should NOT call export_dvp when dvp_data is None."""
+    service = GoogleSheetsService(credentials_path=None)
+    service.client = MagicMock()
+
+    service.export_dvp = MagicMock(return_value={"status": "success", "tab": "DvP"})
+    service.export_legend = MagicMock(return_value={"status": "success", "tab": "Legend"})
+    service.export_top10_plays = MagicMock(return_value={"status": "success", "tab": "Top10"})
+    service.export_parlays = MagicMock(return_value={"status": "success", "tab": "Parlays"})
+    service.export_summary = MagicMock(return_value={"status": "success", "tab": "Summary"})
+    service.export_bet_slip = MagicMock(return_value={"status": "success", "tab": "BetSlip"})
+    service.export_bet_tracker = MagicMock(
+        return_value={"status": "success", "tab": "BetTracker"}
+    )
+
+    results = service.export_daily_picks(spreadsheet_id="sheet123", dvp_data=None)
+
+    assert "dvp" not in results
+    service.export_dvp.assert_not_called()
+

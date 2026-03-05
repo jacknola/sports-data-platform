@@ -1,7 +1,7 @@
 """
 Google Sheets Export Service — Daily Picks
 
-Exports NCAAB, NBA, Player Prop, Parlay, and Live Prop analysis to
+Exports NCAAB, NBA, Player Prop, Parlay, Live Prop, and DvP analysis to
 Google Sheets with separate tabs per sport/feature. Uses gspread +
 service account auth.
 
@@ -12,6 +12,7 @@ Tabs:
   - NCAAB        — NCAAB sharp money picks
   - Parlays      — Parlay picks with per-leg detail and performance
   - LiveProps    — In-game live prop projections with edge/verdict
+  - DvP          — NBA Defense vs. Position prop projections
   - Summary      — Daily overview (auto-generated)
   - BetSlip      — Interactive tracker
 """
@@ -1352,6 +1353,111 @@ class GoogleSheetsService:
             return {"error": str(e)}
 
     # ───────────────────────────────────────────────────────────────
+    # DvP (Defense vs Position) export
+    # ───────────────────────────────────────────────────────────────
+
+    def export_dvp(
+        self,
+        spreadsheet_id: str,
+        dvp_data: Dict[str, Any],
+        tab_name: str = "DvP",
+    ) -> Dict[str, Any]:
+        """Export NBA DvP (Defense vs Position) projections to a Google Sheets tab.
+
+        Args:
+            spreadsheet_id: Google Sheets ID
+            dvp_data: Result from DvPAgent.execute() — must contain a
+                      ``projections`` list of dicts with keys:
+                      Player, Position, Team, Opponent, Stat_Category,
+                      Season_Avg, Projected_Line, Sportsbook_Line,
+                      DvP_Advantage_%, Recommendation
+            tab_name: Worksheet name (default "DvP")
+
+        Returns:
+            Status dict with rows_written count.
+        """
+        if not self.client:
+            return {"error": "Google Sheets not configured"}
+
+        try:
+            projections = dvp_data.get("projections", [])
+            if not projections:
+                logger.info("No DvP projections to export")
+                return {"status": "success", "tab": tab_name, "rows_written": 0}
+
+            sheet = self.client.open_by_key(spreadsheet_id)
+            ws = self._get_or_create_worksheet(sheet, tab_name, cols=11)
+
+            headers = [
+                "Date",
+                "Player",
+                "Position",
+                "Team",
+                "Opponent",
+                "Stat",
+                "Season Avg",
+                "Projected",
+                "Sportsbook Line",
+                "DvP Adv %",
+                "Recommendation",
+            ]
+
+            today = datetime.now().strftime("%Y-%m-%d")
+            rows: List[List[Any]] = []
+            for p in projections:
+                rows.append([
+                    today,
+                    p.get("Player", ""),
+                    p.get("Position", ""),
+                    p.get("Team", ""),
+                    p.get("Opponent", ""),
+                    p.get("Stat_Category", ""),
+                    round(float(p.get("Season_Avg", 0)), 1),
+                    round(float(p.get("Projected_Line", 0)), 1),
+                    round(float(p.get("Sportsbook_Line", 0)), 1),
+                    round(float(p.get("DvP_Advantage_%", 0)), 1),
+                    p.get("Recommendation", ""),
+                ])
+
+            written = self._batch_write(ws, headers, rows)
+
+            # ── Formatting ──
+            try:
+                self._format_tab_header(ws, "#1A4B3A", len(headers))
+
+                # Colour-code rows by recommendation
+                _rec_colours = {
+                    "HIGH VALUE OVER":  {"red": 0.2, "green": 0.8, "blue": 0.4},
+                    "HIGH VALUE UNDER": {"red": 0.2, "green": 0.6, "blue": 0.9},
+                    "LEAN OVER":        {"red": 0.8, "green": 0.95, "blue": 0.8},
+                    "LEAN UNDER":       {"red": 0.8, "green": 0.9,  "blue": 0.98},
+                }
+                for i, p in enumerate(projections, start=2):
+                    rec = p.get("Recommendation", "")
+                    colour = next(
+                        (v for k, v in _rec_colours.items() if k in rec), None
+                    )
+                    if colour:
+                        ws.format(
+                            f"A{i}:K{i}",
+                            {"backgroundColor": colour},
+                        )
+
+                self._set_column_widths(
+                    sheet, ws,
+                    [80, 160, 65, 70, 70, 90, 80, 80, 110, 80, 140],
+                )
+            except Exception as fmt_err:
+                logger.debug(f"DvP formatting skipped: {fmt_err}")
+
+            logger.info(f"Exported {written} DvP projections to tab '{tab_name}'")
+            return {"status": "success", "tab": tab_name, "rows_written": written}
+
+        except Exception as exc:
+            logger.error(f"DvP export failed: {exc}")
+            return {"error": str(exc)}
+
+    # ───────────────────────────────────────────────────────────────
     # Full daily export (all tabs)
     # ───────────────────────────────────────────────────────────────
 
@@ -1364,6 +1470,7 @@ class GoogleSheetsService:
         prop_data: Optional[Dict[str, Any]] = None,
         parlay_suggestions: Optional[List[Dict[str, Any]]] = None,
         live_props_data: Optional[List[Dict[str, Any]]] = None,
+        dvp_data: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Export all daily picks to Google Sheets (Props + NBA + NCAAB + Parlays + LiveProps + Summary).
 
@@ -1457,6 +1564,10 @@ class GoogleSheetsService:
             results["live_props"] = self.export_live_props(
                 spreadsheet_id, live_props_data
             )
+
+        # DvP — Defense vs Position NBA prop projections
+        if dvp_data and dvp_data.get("projections"):
+            results["dvp"] = self.export_dvp(spreadsheet_id, dvp_data)
 
         # Log overall result
         tabs_ok = sum(
