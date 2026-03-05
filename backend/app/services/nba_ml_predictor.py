@@ -5,9 +5,7 @@ Integrated with kyleskom/NBA-Machine-Learning-Sports-Betting approach
 
 import os
 import pickle
-from typing import Dict, Any, List, Optional, Tuple
-from datetime import datetime
-import numpy as np
+from typing import Dict, Any, List, Optional
 import pandas as pd
 from loguru import logger
 
@@ -33,8 +31,7 @@ except ImportError:
 
 try:
     import xgboost as xgb
-
-    XGBOOST_AVAILABLE = True
+    XGBOOST_AVAILABLE = bool(xgb)  # verifies installation
 except ImportError:
     XGBOOST_AVAILABLE = False
     logger.warning("XGBoost not installed, ML predictions disabled")
@@ -92,15 +89,16 @@ class NBAMLPredictor:
     def _load_models(self):
         """Load trained ML models"""
         try:
-            model_path = os.getenv("NBA_MODEL_PATH", "./models/nba_ml")
+            _raw_path = os.getenv("NBA_MODEL_PATH", "./models/nba_ml")
+            model_path = os.path.normpath(os.path.abspath(_raw_path))
 
             # Load XGBoost models if available
-            if XGBOOST_AVAILABLE and os.path.exists(model_path):
+            if XGBOOST_AVAILABLE and os.path.isdir(model_path):
                 try:
-                    with open(f"{model_path}/moneyline_model.pkl", "rb") as f:
+                    with open(os.path.join(model_path, "moneyline_model.pkl"), "rb") as f:
                         self.models["moneyline"] = pickle.load(f)
 
-                    with open(f"{model_path}/underover_model.pkl", "rb") as f:
+                    with open(os.path.join(model_path, "underover_model.pkl"), "rb") as f:
                         self.models["underover"] = pickle.load(f)
 
                     logger.info("NBA ML models loaded successfully")

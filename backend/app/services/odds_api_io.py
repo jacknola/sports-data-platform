@@ -4,11 +4,9 @@ Integrated as a fallback provider for bulk odds (Moneyline, Spreads, Totals).
 Provider: https://odds-api.io/
 """
 
-import asyncio
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 import httpx
 from loguru import logger
-from datetime import datetime, timezone
 
 class OddsApiIoService:
     BASE_URL = "https://api.odds-api.io/v3"

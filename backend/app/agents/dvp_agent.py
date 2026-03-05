@@ -5,7 +5,7 @@ Specialized agent that runs the NBADvPAnalyzer to identify +EV
 player prop bets. Extends BaseAgent to plug into the multi-agent system
 and support the platform's adaptive learning loop.
 """
-from typing import Dict, Any, List
+from typing import Dict, Any
 from loguru import logger
 
 from app.agents.base_agent import BaseAgent
@@ -72,7 +72,6 @@ class DvPAgent(BaseAgent):
 
         # Auto-populate slate from Odds API when no explicit slate is provided
         if not slate_data:
-            import asyncio
             try:
                 await self.analyzer.load_slate_from_odds_api()
             except Exception as e:

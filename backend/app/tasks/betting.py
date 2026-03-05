@@ -3,7 +3,6 @@ Betting-related background tasks
 """
 from typing import Dict, Any
 from loguru import logger
-import asyncio
 import anyio
 
 from app.celery_app import app

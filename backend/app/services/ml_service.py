@@ -3,10 +3,8 @@ ML Service using Hugging Face models
 """
 import os
 import torch
-import numpy as np
 from typing import List, Dict, Any
-from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
-from transformers import AutoModel
+from transformers import pipeline, AutoTokenizer, AutoModel
 from loguru import logger
 
 

@@ -6,8 +6,7 @@ fetching actual game scores/results via the Odds API (or scraper),
 and grading the bets as Won, Lost, or Push.
 """
 
-from typing import List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime
 from loguru import logger
 
 from app.services.bet_tracker import BetTracker

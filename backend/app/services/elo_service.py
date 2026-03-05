@@ -6,7 +6,6 @@ and win probability calculations. Used as a feature for ML models and
 as a standalone predictor.
 """
 
-import os
 import pickle
 from pathlib import Path
 from threading import Lock

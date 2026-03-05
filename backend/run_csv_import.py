@@ -3,13 +3,12 @@ import os
 import argparse
 import csv
 from datetime import datetime
-from typing import Dict, Any, List, Optional, Set
+from typing import Dict, Any, Set
 
 # Ensure local app modules are discoverable
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from loguru import logger
-from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models.historical_game_line import HistoricalGameLine
 

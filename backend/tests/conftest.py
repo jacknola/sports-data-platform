@@ -50,7 +50,8 @@ from sqlalchemy.orm import sessionmaker
 def db_engine():
     """Session-scoped SQLite in-memory engine with all tables created."""
     from app.database import Base
-    from app.models import bet, game, team, player  # noqa: F401 — registers models
+    from app.models import bet, game, team, player
+    _ = (bet, game, team, player)  # import to register models with SQLAlchemy Base
 
     engine = create_engine("sqlite:///:memory:", echo=False)
     Base.metadata.create_all(engine)

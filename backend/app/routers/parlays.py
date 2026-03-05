@@ -10,10 +10,8 @@ import uuid
 
 from app.services.rag_pipeline import RAGPipeline
 from app.database import SessionLocal
-from app.models.parlay import Parlay, ParlayLeg
+from app.models.parlay import Parlay
 from app.services.parlay_utils import (
-    american_to_decimal as _american_to_decimal,
-    implied_prob as _implied_prob,
     calculate_parlay_odds,
     calculate_parlay_ev,
     parlay_risk_summary as _parlay_risk_summary_fn,
@@ -110,7 +108,7 @@ async def create_parlay(parlay: ParlayCreate) -> Dict[str, Any]:
         }
         
         # Store in RAG pipeline (with embeddings)
-        result = await rag_pipeline.store_parlay(parlay_id, parlay_data, generate_embedding=True)
+        await rag_pipeline.store_parlay(parlay_id, parlay_data, generate_embedding=True)
         
         # Get insights from similar parlays
         insights = await rag_pipeline.get_parlay_insights(parlay_id)
@@ -442,4 +440,4 @@ def _parlay_risk_summary(legs: List["ParlayLegCreate"], sport: str) -> Dict[str,
         }
         for leg in legs
     ]
-    return parlay_risk_summary(leg_dicts, sport)
+    return _parlay_risk_summary_fn(leg_dicts, sport)

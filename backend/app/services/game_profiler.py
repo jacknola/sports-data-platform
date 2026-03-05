@@ -2,7 +2,6 @@
 Game profiler service for situational analysis.
 """
 from typing import Dict, Any
-from loguru import logger
 
 class GameProfiler:
     """

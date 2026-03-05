@@ -24,7 +24,6 @@ import asyncio
 import random
 from app.services.sports_api import SportsAPIService, normalize_team_name
 
-import numpy as np
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple
 from loguru import logger
@@ -516,7 +515,7 @@ async def get_live_ncaab_games(team_stats: Optional[Dict[str, Any]] = None) -> T
                         "total": spreads.get("total", 0.0),
                         "home_eff": h_stats,
                         "away_eff": a_stats,
-                        "notes": f"Live ESPN + Odds API. Spread-implied public splits. Model prob from logistic.",
+                        "notes": "Live ESPN + Odds API. Spread-implied public splits. Model prob from logistic.",
                     }
                 )
             else:
@@ -625,7 +624,6 @@ def run_analysis() -> Dict[str, Any]:
     scored_plays: List[Dict[str, Any]] = []
     game_analyses: List[Dict[str, Any]] = []
 
-    detector = LineMovementAnalyzer()
     optimizer = MultivariateKellyOptimizer(
         kelly_scale=0.5,  # Half-Kelly
         max_single_fraction=0.05,  # Max 5% per bet
@@ -647,7 +645,7 @@ def run_analysis() -> Dict[str, Any]:
     print("\n" + "=" * 76)
     print(f"  NCAAB SHARP MONEY ANALYSIS — {datetime.now().strftime('%A, %B %d, %Y')}")
     print(f"  Data: {source_label} | {len(games_to_analyze)} games on slate")
-    print(f"  Methodology: RLM + Devig + Bayesian + Multivariate Kelly (Half-Kelly)")
+    print("  Methodology: RLM + Devig + Bayesian + Multivariate Kelly (Half-Kelly)")
     print("=" * 76)
 
     opportunities = []
@@ -804,7 +802,6 @@ def run_analysis() -> Dict[str, Any]:
         a = game["away"]
         spread = game["spread"]
         fav = h if spread < 0 else a
-        dog = a if spread < 0 else h
         spread_str = f"{fav} {spread:+.1f}" if spread < 0 else f"{fav} +{spread:.1f}"
         total_str = f"{game.get('total', 0.0):.1f}"
 
@@ -1011,8 +1008,7 @@ def run_analysis() -> Dict[str, Any]:
             signal_conf = analysis["signal_confidence"] if is_sharp_side else 0.0
             score = edge * 100 + signal_conf * 5  # weighted composite
 
-            side_idx = 0 if side == game["home"] else 1
-            odds = (
+                        odds = (
                 game["retail_home_odds"]
                 if side == game["home"]
                 else game["retail_away_odds"]

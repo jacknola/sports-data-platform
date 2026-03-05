@@ -1,7 +1,6 @@
 """
 Unit tests for NCAAB historical data scraper.
 """
-import pytest
 from unittest.mock import MagicMock, patch
 from app.services.ncaab_backfill import NCAABBackfillService
 from app.models.game import Game

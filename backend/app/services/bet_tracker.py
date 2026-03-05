@@ -21,7 +21,7 @@ Schema:
 import os
 import uuid
 import sqlite3
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from datetime import datetime, timezone
 from loguru import logger
 

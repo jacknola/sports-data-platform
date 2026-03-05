@@ -7,7 +7,7 @@ import asyncio
 import re
 import time
 from typing import Dict, Any, List, Optional, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import httpx
 from loguru import logger

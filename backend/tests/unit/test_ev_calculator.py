@@ -6,7 +6,7 @@ KELLY_FRACTION_QUARTER=0.25, MAX_BET_PERCENTAGE=0.05) — no patching needed.
 """
 import pytest
 
-from app.services.ev_calculator import EVCalculator, PROP_TYPE_KEYS, MODEL_WEIGHTS
+from app.services.ev_calculator import EVCalculator
 
 
 # ---------------------------------------------------------------------------

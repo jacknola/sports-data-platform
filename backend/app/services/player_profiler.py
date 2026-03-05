@@ -2,7 +2,6 @@
 Player profiler service for situational player analysis.
 """
 from typing import Dict, Any
-from loguru import logger
 
 class PlayerProfiler:
     """

@@ -12,13 +12,11 @@ Consolidates previously duplicated implementations from:
 - app/services/prop_analyzer.py
 """
 
-from typing import Tuple, Optional
-from loguru import logger
+from typing import Tuple
 
 from app.constants import (
     KELLY_SCALE_DEFAULT,
     KELLY_MAX_SINGLE_FRACTION,
-    KELLY_MAX_TOTAL_EXPOSURE,
     PROBABILITY_DECIMAL_PLACES,
     EDGE_DECIMAL_PLACES,
     KELLY_FRACTION_DECIMAL_PLACES,

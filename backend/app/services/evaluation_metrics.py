@@ -3,7 +3,6 @@ Evaluation metrics for betting model performance.
 """
 from typing import Dict, Any
 import numpy as np
-from loguru import logger
 
 class Evaluator:
     """

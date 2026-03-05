@@ -13,7 +13,7 @@ for NBA teams. Uses nba_api for game logs and calculates:
 
 import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict
 
 import numpy as np
 import pandas as pd

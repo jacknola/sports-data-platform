@@ -303,15 +303,12 @@ def run_daemon(picks_only: bool = False, prediction_only: bool = False) -> None:
     try:
         import schedule
         import time
-        import pytz
     except ImportError:
         logger.error(
             "Missing packages: pip install schedule pytz\n"
             "Or run: pip install -r backend/requirements.txt"
         )
         sys.exit(1)
-
-    tz = pytz.timezone(settings.TELEGRAM_TIMEZONE)
 
     # Parse schedule times from .env
     schedule_times = []
@@ -334,14 +331,14 @@ def run_daemon(picks_only: bool = False, prediction_only: bool = False) -> None:
         sys.exit(1)
 
     for label, time_str in schedule_times:
-    if label == "SHEETS":
-        schedule.every().day.at(time_str).do(generate_daily_sheets)
-    else:
-        schedule.every().day.at(time_str).do(
-            send_report,
-            picks_only=picks_only,
-            prediction_only=prediction_only,
-        )
+        if label == "SHEETS":
+            schedule.every().day.at(time_str).do(generate_daily_sheets)
+        else:
+            schedule.every().day.at(time_str).do(
+                send_report,
+                picks_only=picks_only,
+                prediction_only=prediction_only,
+            )
 
     logger.info(
         f"Scheduled {label} report at {time_str} {settings.TELEGRAM_TIMEZONE}"
@@ -397,6 +394,7 @@ def main():
         "--prediction-only",
         action="store_true",
         help="Run model predictions without odds-dependent report formatting",
+    )
 
 
     args = parser.parse_args()

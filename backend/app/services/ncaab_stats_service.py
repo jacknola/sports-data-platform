@@ -2,10 +2,8 @@
 NCAAB Stats Service
 Scrapes and provides real team efficiency statistics from BartTorvik.
 """
-import asyncio
-from typing import Dict, Any, List, Optional
+from typing import Dict, Optional
 from datetime import datetime
-import pandas as pd
 from loguru import logger
 import httpx
 from bs4 import BeautifulSoup

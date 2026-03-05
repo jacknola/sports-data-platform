@@ -18,8 +18,7 @@ from app.services.sharp_money_tracker import (
     SharpMoneyTracker,
     SharpSignal,
     _score_label,
-    STALE_LINE_DIVERGENCE,
-    RLM_PUBLIC_THRESHOLD,
+)
 )
 
 

@@ -1,7 +1,6 @@
 """
 Unit tests for player vector backfill service.
 """
-import pytest
 from unittest.mock import MagicMock, patch
 from app.services.player_vector_backfill import PlayerVectorBackfillService
 from app.models.player_game_log import PlayerGameLog

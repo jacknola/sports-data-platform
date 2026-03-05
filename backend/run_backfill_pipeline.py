@@ -18,7 +18,6 @@ from app.services.player_vector_backfill import PlayerVectorBackfillService
 # NBA API imports
 from nba_api.stats.static import teams as nba_teams
 from nba_api.stats.static import players as nba_players
-from nba_api.stats.endpoints import commonallplayers
 
 async def seed_teams(db: Session):
     """Seed NBA teams from nba_api."""
@@ -46,10 +45,7 @@ async def seed_players(db: Session):
     # Using static active players list first (fast)
     active_players = nba_players.get_active_players()
     count = 0
-    
-    # Pre-fetch teams for lookup
-    teams_map = {t.external_team_id: t.id for t in db.execute(select(Team)).scalars().all()}
-    
+
     for p in active_players:
         pid = str(p['id'])
         stmt = select(Player).where(Player.external_player_id == pid)

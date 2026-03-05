@@ -1,7 +1,6 @@
 """
 Unit tests for feature engineering utility.
 """
-import pytest
 import pandas as pd
 from app.services.feature_engineering import FeatureEngineer
 

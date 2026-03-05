@@ -18,7 +18,6 @@ Tabs:
 """
 from __future__ import annotations
 
-import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -1029,7 +1028,6 @@ class GoogleSheetsService:
                 home_prob = p.get("home_win_probability", 0.5)
                 away_prob = 1.0 - home_prob
                 home_ml = ev.get("home_odds", 0)
-                away_ml = ev.get("away_odds", 0)
                 market_hp = _american_to_implied_prob(home_ml) if home_ml else 0.5
                 market_ap = 1.0 - market_hp
                 best_bet = ev.get("best_bet", "")
@@ -1849,7 +1847,6 @@ class GoogleSheetsService:
                 self._format_tab_header(ws, "#5B2C8D", len(headers))
                 return {"status": "success", "tab": tab_name, "rows_written": 0}
 
-            today = datetime.now().strftime("%Y-%m-%d")
             rows: List[List[Any]] = []
 
             for i, s in enumerate(suggestions, 1):
@@ -2091,7 +2088,6 @@ class GoogleSheetsService:
         CONF_WEIGHTS = {"MAX": 1.3, "HIGH": 1.0, "MEDIUM": 0.8, "LOW": 0.6, "SPECULATIVE": 0.4}
 
         candidates: List[Dict[str, Any]] = []
-        today = datetime.now().strftime("%Y-%m-%d")
 
         # ── Props candidates ──
         for p in (prop_data or {}).get("props", []):
@@ -2145,7 +2141,6 @@ class GoogleSheetsService:
             })
 
         # ── NBA candidates ──
-        nba_bet_lookup = {b.get("game_id", ""): b for b in (nba_bets or [])}
         for p in (nba_predictions or []):
             if "error" in p:
                 continue

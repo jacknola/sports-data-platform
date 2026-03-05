@@ -5,7 +5,7 @@ All sub-agents and the AgentMemory are mocked so no real I/O happens.
 Tests verify the orchestration flow, agent delegation, and result structure.
 """
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 
 # ---------------------------------------------------------------------------
@@ -109,7 +109,7 @@ class TestExecuteFullAnalysis:
 
     @pytest.mark.asyncio
     async def test_analysis_agent_called_for_value_bets(self, orchestrator):
-        result = await orchestrator.execute_full_analysis({"sport": "nba", "teams": []})
+        await orchestrator.execute_full_analysis({"sport": "nba", "teams": []})
         # 1 value bet in mock → analysis_agent.execute called once
         orchestrator.analysis_agent.execute.assert_awaited_once()
 

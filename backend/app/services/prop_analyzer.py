@@ -12,7 +12,6 @@ Applies line-movement and consensus analysis to player prop markets
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime
 import numpy as np
 from loguru import logger
 

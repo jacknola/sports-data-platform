@@ -15,12 +15,11 @@ import os
 import asyncio
 import argparse
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from loguru import logger
-from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models.historical_game_line import HistoricalGameLine

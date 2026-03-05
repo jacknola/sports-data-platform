@@ -1,7 +1,6 @@
 """
 Unit tests for reporting utility.
 """
-import pytest
 from app.services.comparison_runner import ComparisonRunner
 
 def test_format_report():

@@ -150,7 +150,7 @@ class StatsFeatureEngineer:
         elo_diff = home_elo - away_elo
 
         # Get Elo-based win probability
-        elo_home_prob = self.elo_service.predict_win_prob(home_team, away_team)
+        self.elo_service.predict_win_prob(home_team, away_team)
 
         # Get rolling stats (5-game and 10-game windows)
         home_stats_5g = self.rolling_calc.get_team_rolling_stats_by_name(

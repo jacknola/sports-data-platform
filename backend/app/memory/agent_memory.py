@@ -1,12 +1,11 @@
 """
 Agent memory system for storing and retrieving past experiences
 """
-from typing import Dict, List, Any, Optional
-from datetime import datetime, timedelta
+from typing import Dict, List, Any
+from datetime import datetime
 from loguru import logger
 import json
 
-from app.database import SessionLocal
 from app.services.cache import RedisCache
 
 

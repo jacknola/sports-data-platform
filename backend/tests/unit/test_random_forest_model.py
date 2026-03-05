@@ -1,7 +1,6 @@
 """
 Unit tests for Random Forest model implementation.
 """
-import pytest
 import numpy as np
 import pandas as pd
 from app.services.random_forest_model import RandomForestModel

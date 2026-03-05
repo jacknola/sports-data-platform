@@ -6,8 +6,6 @@ Optimized for processing large volumes of historical games and player logs into 
 import sys
 import os
 import argparse
-import asyncio
-from typing import List, Dict, Any
 from loguru import logger
 from sqlalchemy import select
 

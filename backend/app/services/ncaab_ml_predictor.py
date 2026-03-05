@@ -11,7 +11,6 @@ Game discovery: ESPN scoreboard (free, no API key required).
 import os
 import pickle
 from typing import Any, Dict, List, Optional
-from datetime import datetime
 import numpy as np
 import pandas as pd
 from loguru import logger
@@ -20,8 +19,8 @@ from app.services.sports_api import SportsAPIService
 from app.services.ncaab_stats_service import NCAABStatsService
 
 try:
-    import xgboost as xgb  # noqa: F401
-    XGBOOST_AVAILABLE = True
+    import xgboost as xgb
+    XGBOOST_AVAILABLE = bool(xgb)  # verifies installation
 except ImportError:
     XGBOOST_AVAILABLE = False
     logger.warning("XGBoost not installed — NCAAB will use Pythagorean fallback")
@@ -56,8 +55,9 @@ class NCAABMLPredictor:
     # ── Model loading ────────────────────────────────────────────────────────
 
     def _load_models(self) -> None:
-        model_path = os.getenv("NCAAB_MODEL_PATH", "./models/ncaab_ml")
-        if not XGBOOST_AVAILABLE or not os.path.exists(model_path):
+        _raw_path = os.getenv("NCAAB_MODEL_PATH", "./models/ncaab_ml")
+        model_path = os.path.normpath(os.path.abspath(_raw_path))
+        if not XGBOOST_AVAILABLE or not os.path.isdir(model_path):
             logger.info("NCAAB: no model directory — using Pythagorean fallback")
             return
         try:

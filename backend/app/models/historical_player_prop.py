@@ -2,7 +2,7 @@
 Historical player prop lines model
 """
 
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, JSON
+from sqlalchemy import Column, Integer, String, Float, DateTime, JSON
 from app.database import Base
 from datetime import datetime, timezone
 

@@ -3,7 +3,6 @@ RAG (Retrieval-Augmented Generation) Pipeline for Parlay Data
 Stores and retrieves parlay data with semantic search capabilities
 """
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
 from loguru import logger
 import json
 import numpy as np

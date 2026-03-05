@@ -111,7 +111,6 @@ class HistoricalDataFetcher:
             return pd.read_pickle(cache_file)
 
         all_games = []
-        teams = self._get_teams()
 
         for year in range(start_year, end_year + 1):
             season = f"{year}-{str(year + 1)[2:]}"

@@ -8,7 +8,7 @@ Three endpoints wired to the full prop analysis pipeline:
 """
 
 from fastapi import APIRouter, HTTPException, Query
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from datetime import datetime
 import asyncio
 import re
@@ -18,7 +18,6 @@ from app.services.bayesian import BayesianAnalyzer
 from app.services.prop_analyzer import PropAnalyzer
 from app.services.prop_probability import PropProbabilityModel
 from app.services.multivariate_kelly import (
-    BettingOpportunity,
     MultivariateKellyOptimizer,
 )
 from app.services.sports_api import SportsAPIService
@@ -442,9 +441,6 @@ async def _get_live_props(sport: str) -> List[Dict]:
             else:
                 # Final fallback: if player_team still empty, check if player_name matches home/away
                 # This handles cases where research completely fails
-                player_name_lower = player_name.lower()
-                home_lower = home_team.lower()
-                away_lower = away_team.lower()
 
                 # Check if player belongs to home or away based on name proximity
                 # (This is a weak heuristic but better than leaving fields blank)

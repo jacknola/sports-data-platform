@@ -20,9 +20,11 @@ source $VENV_DIR/bin/activate
 # Upgrade pip
 pip install --upgrade pip
 
-# Comment out incompatible packages (torch, crawl4ai) if needed
-sed -i '' 's/^torch==/# torch==/' $REQ_FILE
-sed -i '' 's/^crawl4ai==/# crawl4ai==/' $REQ_FILE
+# Comment out incompatible packages (torch, crawl4ai) using bash parameter expansion
+REQ_CONTENT=$(<"$REQ_FILE")
+REQ_CONTENT="${REQ_CONTENT//torch==/#torch==}"
+REQ_CONTENT="${REQ_CONTENT//crawl4ai==/#crawl4ai==}"
+printf '%s\n' "$REQ_CONTENT" > "$REQ_FILE"
 
 # Install requirements
 pip install -r $REQ_FILE
