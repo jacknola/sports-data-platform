@@ -5,10 +5,9 @@ Provides training, calibration, and evaluation for sports betting models.
 Supports walk-forward validation and model persistence.
 """
 
-import os
 import pickle
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -25,7 +24,6 @@ except ImportError:
 try:
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.calibration import CalibratedClassifierCV
-    from sklearn.model_selection import cross_val_score
     from sklearn.metrics import (
         accuracy_score,
         brier_score_loss,

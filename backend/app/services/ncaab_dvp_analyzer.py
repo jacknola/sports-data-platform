@@ -13,13 +13,11 @@ Pipeline:
     5. Flag value based on implied totals vs efficiency projections
     6. Output recommendations for game totals and team totals
 """
-import asyncio
 import json
 import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-import numpy as np
 from loguru import logger
 
 from app.services.ncaab_stats_service import NCAABStatsService

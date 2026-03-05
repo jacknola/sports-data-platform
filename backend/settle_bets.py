@@ -17,7 +17,6 @@ import sqlite3
 import asyncio
 import argparse
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime, timezone, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -221,7 +220,7 @@ def _print_summary(results: List[Tuple[str, str, str]]) -> None:
     settled = sum(v for k, v in counts.items() if k != "skipped")
 
     print(f"\n{'='*60}")
-    print(f"  BET SETTLEMENT SUMMARY")
+    print("  BET SETTLEMENT SUMMARY")
     print(f"{'='*60}")
     print(f"  Total pending checked : {total}")
     print(f"  Settled               : {settled}")

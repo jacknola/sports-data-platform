@@ -1,7 +1,6 @@
 """
 NBA player historical game log backfill service.
 """
-from typing import List, Dict, Any
 from datetime import datetime
 import time
 from sqlalchemy.orm import Session

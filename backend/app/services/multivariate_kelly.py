@@ -16,12 +16,15 @@ References:
     - Busseti et al. (2016) "Risk-Constrained Kelly Gambling"
 """
 
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Dict, List, Tuple
 import numpy as np
 from scipy.optimize import minimize
 from loguru import logger
-from app.core.betting import american_to_decimal  # noqa: F401 — re-exported for backward compat
+from app.core.betting import american_to_decimal
+
+# Re-export for backward-compatibility: callers may import american_to_decimal from here
+__all__ = ["american_to_decimal", "BettingOpportunity", "MultivariateKellyOptimizer"]
 
 
 # ---------------------------------------------------------------------------

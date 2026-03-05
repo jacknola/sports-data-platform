@@ -23,7 +23,6 @@ try:
     from nba_api.stats.endpoints import (
         leaguedashteamstats,
         leaguedashplayerstats,
-        teamdashboardbygeneralsplits,
     )
     from nba_api.stats.static import teams as nba_teams
     NBA_API_AVAILABLE = True
@@ -847,7 +846,6 @@ class NBADvPAnalyzer:
             slate_teams.add(game["away"])
 
         try:
-            last_n = f"Last {num_recent_games}" if num_recent_games else None
             stats = leaguedashplayerstats.LeagueDashPlayerStats(
                 season=self.season,
                 per_mode_detailed="PerGame",

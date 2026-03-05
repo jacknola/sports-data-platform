@@ -15,7 +15,7 @@ with [LIVE], [CACHED], or [FALLBACK].
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import httpx
 from loguru import logger
@@ -340,7 +340,6 @@ class SportsAPIService:
                     # Conference (NCAAB only — extracted from group name)
                     conference = ""
                     for comp in competitors:
-                        conf_name = comp.get("team", {}).get("conferenceId", "")
                         # ESPN sometimes puts conference in different spots
                         groups = event.get("competitions", [{}])[0].get("groups", {})
                         if groups:

@@ -6,7 +6,6 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 from app.models.game import Game
-from app.models.bet import Bet
 from loguru import logger
 
 class DataExtractor:

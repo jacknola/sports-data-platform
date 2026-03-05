@@ -1,7 +1,6 @@
 """
 Unit tests for SimilaritySearchService.
 """
-import pytest
 from unittest.mock import MagicMock, patch
 from app.services.similarity_search import SimilaritySearchService
 

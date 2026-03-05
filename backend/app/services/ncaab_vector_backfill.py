@@ -2,7 +2,6 @@
 NCAAB Vector Backfill Service.
 Generates embeddings for historical NCAAB games and upserts them to Qdrant.
 """
-from typing import List, Dict, Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.models.game import Game

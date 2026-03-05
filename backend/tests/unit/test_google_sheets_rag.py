@@ -1,7 +1,6 @@
 """
 Unit tests for GoogleSheetsService RAG enhancement.
 """
-import pytest
 from unittest.mock import MagicMock, patch
 from app.services.google_sheets import GoogleSheetsService
 

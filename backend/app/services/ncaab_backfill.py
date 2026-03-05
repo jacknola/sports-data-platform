@@ -1,10 +1,9 @@
 """
 NCAAB historical data backfill service.
 """
-from typing import List, Dict, Any
 import httpx
 from bs4 import BeautifulSoup
-from datetime import datetime, timezone
+from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.models.game import Game

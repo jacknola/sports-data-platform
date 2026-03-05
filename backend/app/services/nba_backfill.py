@@ -1,7 +1,6 @@
 """
 NBA historical data backfill service.
 """
-from typing import List, Dict, Any
 from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session

@@ -1,6 +1,5 @@
 
 import pytest
-import pandas as pd
 from app.services.nba_ml_predictor import NBAMLPredictor
 
 @pytest.mark.asyncio

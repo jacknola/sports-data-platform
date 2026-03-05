@@ -2,7 +2,7 @@
 Orchestrator Agent - Coordinates multiple agents
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any
 from loguru import logger
 
 from app.agents.odds_agent import OddsAgent
@@ -109,9 +109,6 @@ class OrchestratorAgent:
             # Assume first match is the correct game context
             # (In reality we might want to let user pick or aggregate)
             match_context = props[0]
-            team = match_context.get(
-                "home_team"
-            )  # OddsAgent typically returns home/away teams
             # Logic to determine player's team vs opponent requires knowing which side player is on.
             # However, `get_all_player_props` returns home_team and away_team.
             # We need to infer or fuzzy match player's team if not explicitly provided.

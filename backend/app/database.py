@@ -37,6 +37,7 @@ async def init_db():
         PlayerGameLog,
         HistoricalGameLine,
     )
+    _ = (Bet, Game, Team, Player, APICache, Parlay, ParlayLeg, PlayerGameLog, HistoricalGameLine)
 
     # Create tables
     if os.getenv("ENVIRONMENT") != "test":

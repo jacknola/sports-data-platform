@@ -5,7 +5,7 @@ Provides endpoints for querying historical game lines and player props,
 including vector similarity search.
 """
 
-from typing import List, Optional
+from typing import Optional
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query

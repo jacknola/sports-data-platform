@@ -12,7 +12,6 @@ Features:
 """
 
 import time
-import asyncio
 from typing import Optional
 import httpx
 from loguru import logger

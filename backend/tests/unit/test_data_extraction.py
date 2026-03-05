@@ -1,7 +1,6 @@
 """
 Unit tests for data extraction utility.
 """
-import pytest
 from datetime import datetime, timedelta, timezone
 from app.models.game import Game
 from app.models.bet import Bet

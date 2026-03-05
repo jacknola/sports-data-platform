@@ -10,7 +10,7 @@ Endpoints:
 """
 
 from fastapi import APIRouter, HTTPException
-from typing import Any, Dict, List
+from typing import Any, Dict
 from loguru import logger
 
 from app.services.live_prop_engine import (

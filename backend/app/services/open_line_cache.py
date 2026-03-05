@@ -15,7 +15,7 @@ Storage: SQLite file at ``data/open_lines.db``.  Rows expire after 24h
 import os
 import sqlite3
 import time
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 from loguru import logger
 
 

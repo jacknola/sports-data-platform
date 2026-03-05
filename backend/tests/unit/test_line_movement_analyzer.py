@@ -11,9 +11,7 @@ Tests cover:
 import pytest
 
 from app.services.line_movement_analyzer import (
-    CLVRecord,
     LineMovementAnalyzer,
-    LineMovementFeatures,
 )
 
 

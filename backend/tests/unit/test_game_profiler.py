@@ -1,7 +1,6 @@
 """
 Unit tests for GameProfiler.
 """
-import pytest
 from app.services.game_profiler import GameProfiler
 
 def test_generate_profile_description():

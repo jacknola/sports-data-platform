@@ -10,8 +10,7 @@ import os
 import asyncio
 import argparse
 from datetime import datetime
-from typing import Any, Dict, List, Optional
-import pandas as pd
+from typing import Any, Dict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 

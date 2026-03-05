@@ -1,7 +1,7 @@
 """
 Analysis orchestration endpoints
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from typing import Dict, Any
 from loguru import logger
 

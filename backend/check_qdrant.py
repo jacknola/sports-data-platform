@@ -1,6 +1,5 @@
 from app.services.vector_store import VectorStoreService
 from app.config import settings
-from loguru import logger
 
 def check():
     vs = VectorStoreService()

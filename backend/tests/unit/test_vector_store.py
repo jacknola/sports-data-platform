@@ -1,7 +1,6 @@
 """
 Unit tests for VectorStoreService.
 """
-import pytest
 from unittest.mock import MagicMock
 from app.services.vector_store import VectorStoreService
 

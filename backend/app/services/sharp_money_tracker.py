@@ -28,8 +28,7 @@ Identifies where professional (sharp) bettors are placing money by analyzing:
 """
 from __future__ import annotations
 
-import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import numpy as np

@@ -1,9 +1,7 @@
 """
 Unit tests for NBA player historical data backfill.
 """
-import pytest
 from unittest.mock import MagicMock, patch
-from datetime import datetime, timezone
 from app.services.player_backfill import NBAPlayerBackfillService
 from app.models.player_game_log import PlayerGameLog
 from app.models.player import Player

@@ -2,7 +2,7 @@
 Sports Game Odds API Service
 Provides live odds and public betting percentages.
 """
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 import httpx
 from loguru import logger
 from app.config import settings

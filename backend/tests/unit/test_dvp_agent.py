@@ -5,7 +5,7 @@ The NBADvPAnalyzer is patched throughout so no NBA API calls are made.
 """
 import pytest
 import pandas as pd
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from app.agents.dvp_agent import DvPAgent
 

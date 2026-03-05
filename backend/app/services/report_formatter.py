@@ -264,7 +264,7 @@ class ReportFormatter:
     def _format_portfolio(raw: str) -> str:
         """Format the portfolio summary section."""
         lines = [l.strip() for l in raw.split("\n") if l.strip()]
-        out = [f"<b>📈 PORTFOLIO SUMMARY</b>"]
+        out = ["<b>📈 PORTFOLIO SUMMARY</b>"]
 
         for line in lines:
             if line.startswith("─") or line.startswith("="):
@@ -312,7 +312,7 @@ class ReportFormatter:
         if not games:
             return ""
 
-        lines = [f"<b>🏀 GAME BREAKDOWN</b>"]
+        lines = ["<b>🏀 GAME BREAKDOWN</b>"]
 
         for g in games:
             matchup = ReportFormatter._escape(g.get("matchup", ""))
@@ -697,16 +697,12 @@ class ReportFormatter:
         edge_pct = bayesian_edge * 100 if isinstance(bayesian_edge, float) else 0
         if edge_pct >= 8:
             emoji = "🟢"
-            tier = "STRONG"
         elif edge_pct >= 5:
             emoji = "🟡"
-            tier = "GOOD"
         elif edge_pct >= 3:
             emoji = "🔵"
-            tier = "LEAN"
         else:
             emoji = "⚪"
-            tier = "PASS"
 
         # Sharp signal tag
         signal_tag = ""
@@ -733,7 +729,7 @@ class ReportFormatter:
             f"{emoji} <b>#{rank} {esc(player)} — {side_upper} "
             f"{line} {stat_display} ({odds})</b>{signal_tag}{ev_tag}\n"
         )
-        result += f"   [PROP] "
+        result += "   [PROP] "
         if matchup:
             result += f"<i>{esc(matchup)}</i>\n"
         result += (

@@ -34,7 +34,6 @@ Output (stdout + optional Google Sheets)
 from __future__ import annotations
 
 import argparse
-import math
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -47,7 +46,6 @@ from sqlalchemy import text
 ROOT = Path(__file__).parent.parent.parent          # → backend/
 sys.path.insert(0, str(ROOT))
 
-from app.config import settings                      # noqa: E402
 from app.database import SessionLocal                # noqa: E402
 from app.services.inference_service import PropInferenceService   # noqa: E402
 from app.services.sheets_service import SheetsService             # noqa: E402

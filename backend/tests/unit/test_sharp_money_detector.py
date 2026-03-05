@@ -3,7 +3,6 @@ Unit tests for SharpMoneyDetector (app/services/sharp_money_detector.py).
 
 All tests are pure-unit: no external I/O, no database.
 """
-import pytest
 
 from app.services.sharp_money_detector import SharpMoneyDetector
 
@@ -42,7 +41,7 @@ class TestAnalyzeGameDevig:
         must yield a true probability strictly less than the raw implied.
         """
         result = self._run(pinnacle_odds=-110, retail_odds=-110)
-        pinnacle_raw = SharpMoneyDetector._american_to_implied_static(-110)
+        _ = SharpMoneyDetector._american_to_implied_static(-110)
         # ev_edge = devigged - retail_implied; both retail sides are the same
         # so edge ≈ devigged_home - pinnacle_raw_home
         # devigged_home should be < pinnacle_raw

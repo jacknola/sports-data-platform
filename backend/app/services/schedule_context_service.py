@@ -24,7 +24,7 @@ Usage
 from __future__ import annotations
 
 import math
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from loguru import logger
@@ -167,8 +167,6 @@ class ScheduleContextService:
         self, db: Session, team: Team, game: Game, sport: str
     ) -> Dict:
         """Derive schedule context from historical games and save it."""
-        game_date = game.game_date.date()
-
         # All games for this team, ordered by date, before today
         past_games: List[Game] = db.execute(
             select(Game).where(

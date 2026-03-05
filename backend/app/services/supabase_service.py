@@ -17,7 +17,7 @@ from datetime import datetime
 from loguru import logger
 
 try:
-    from supabase import create_client, Client
+    from supabase import create_client
     SUPABASE_AVAILABLE = True
 except ImportError:
     SUPABASE_AVAILABLE = False

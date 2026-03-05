@@ -1,7 +1,6 @@
 """
 Unit tests for PlayerProfiler.
 """
-import pytest
 from app.services.player_profiler import PlayerProfiler
 
 def test_generate_player_description():

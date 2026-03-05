@@ -7,7 +7,6 @@ import os
 import sys
 import pickle
 import pandas as pd
-import numpy as np
 from loguru import logger
 from sqlalchemy import select
 from sklearn.model_selection import train_test_split

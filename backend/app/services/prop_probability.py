@@ -21,8 +21,7 @@ game spread markets.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple
-import numpy as np
+from typing import Dict
 from scipy import stats
 from loguru import logger
 

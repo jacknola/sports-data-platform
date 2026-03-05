@@ -39,7 +39,6 @@ async def get_team_roster(team_id: str):
         print(f"Error: {e}")
         return []
 
-import asyncio
 if __name__ == "__main__":
     players = asyncio.run(get_team_roster("1610612747")) # Lakers
     print("Top 10 players by minutes:")

@@ -1,7 +1,6 @@
 """
 Bulk vectorization service for player performances.
 """
-from typing import List, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from app.models.player_game_log import PlayerGameLog
@@ -24,7 +23,6 @@ class PlayerVectorBackfillService:
         results = self.db.execute(stmt).all()
         
         count = 0
-        batch_points = []
         
         for log, player_name in results:
             # FIX: Stop hardcoding "Opponent" and "is_home". 

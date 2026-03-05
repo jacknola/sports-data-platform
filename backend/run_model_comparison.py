@@ -7,12 +7,9 @@ and the Random Forest ML model using historical project data.
 
 import sys
 import os
-import asyncio
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from loguru import logger
 from app.database import SessionLocal
 from app.services.comparison_runner import ComparisonRunner
 

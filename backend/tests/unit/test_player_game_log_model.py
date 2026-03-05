@@ -1,7 +1,6 @@
 """
 Unit tests for PlayerGameLog model.
 """
-import pytest
 from datetime import datetime, timezone
 from app.models.player_game_log import PlayerGameLog
 

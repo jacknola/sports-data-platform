@@ -5,7 +5,6 @@ Focus:
 - _calculate_metrics — pure function, no DB needed
 - SQLite layer (save, retrieve, update) via a temp DB path
 """
-import os
 import sqlite3
 import uuid
 import pytest
