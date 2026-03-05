@@ -29,6 +29,15 @@ _MIN_COMBINED_ODDS = 150   # American — parlay must pay at least +150
 _MIN_EDGE = -0.01          # Allow near-break-even parlays to surface in output
 _MAX_PARLAYS = 15          # Max suggestions returned
 
+# ── Odds floor: skip legs that are too heavy a favourite ──────────────────────
+# Odds below -200 represent ≥67% implied probability — too chalk to add parlay value.
+_MIN_LEG_ODDS = -200
+
+# ── Team diversity limits ─────────────────────────────────────────────────────
+# Cap how many times a single team can appear across the final suggestion list.
+_MAX_LEGS_PER_TEAM_IN_POOL = 3   # top-N leg pool: max 3 legs per team
+_MAX_SGPS_PER_EVENT = 3          # cap SGP suggestions from the same game
+
 
 def _american_to_decimal(american: int) -> float:
     if american >= 100:
@@ -64,7 +73,11 @@ def _parlay_edge(combined_decimal: float, combined_true_prob: float) -> float:
 
 
 def _build_leg(pick: Dict[str, Any], source: str) -> Optional[Dict[str, Any]]:
-    """Normalise a pick (prop / nba bet / ncaab bet) into a standard parlay leg dict."""
+    """Normalise a pick (prop / nba bet / ncaab bet) into a standard parlay leg dict.
+
+    Returns None if the individual leg odds are below the -200 floor (too chalky
+    to contribute meaningful parlay value).
+    """
     edge = float(pick.get("bayesian_edge", pick.get("edge", 0)) or 0)
     true_prob = float(pick.get("posterior_p", pick.get("true_over_prob", 0.5)) or 0.5)
 
@@ -78,12 +91,19 @@ def _build_leg(pick: Dict[str, Any], source: str) -> Optional[Dict[str, Any]]:
         true_p = float(pick.get("true_under_prob", 1 - true_prob) or (1 - true_prob))
         fd_odds = pick.get("fanduel_under_odds")
 
-    decimal = _american_to_decimal(am_odds)
+    # ── Odds floor: skip legs that are too heavily favoured ──────────────────
+    # Use FanDuel odds when available (primary book), fall back to best odds.
+    primary_odds = int(fd_odds) if fd_odds is not None else am_odds
+    if primary_odds < _MIN_LEG_ODDS:
+        return None
+
+    decimal = _american_to_decimal(primary_odds)
 
     # Player prop
     player = pick.get("player_name") or pick.get("pick") or ""
     stat = pick.get("stat_type", "")
     line = pick.get("line", "")
+    team = pick.get("team", "")
     game = pick.get("game", "")
     if not game:
         h = pick.get("home_team", "")
@@ -97,13 +117,14 @@ def _build_leg(pick: Dict[str, Any], source: str) -> Optional[Dict[str, Any]]:
         "stat": stat,
         "line": line,
         "side": best_side,
-        "odds_american": am_odds,
+        "odds_american": primary_odds,
         "fanduel_odds": fd_odds,
         "decimal_odds": decimal,
         "true_prob": true_p,
         "edge": edge,
         "ev_class": pick.get("ev_classification", ""),
         "source": source,
+        "team": team,
     }
 
 
@@ -168,6 +189,7 @@ def generate_suggestions(
             "edge": edge,
             "ev_class": "strong_play" if edge >= 0.07 else ("good_play" if edge >= 0.05 else "lean"),
             "source": "NCAAB",
+            "team": pick_team,
         })
 
     # NBA: qualifying bets
@@ -192,6 +214,7 @@ def generate_suggestions(
             "edge": edge,
             "ev_class": "strong_play" if edge >= 0.07 else ("good_play" if edge >= 0.05 else "lean"),
             "source": "NBA",
+            "team": home if b.get("side", "").upper() == "HOME" else away,
         })
 
     if len(legs) < 2:
@@ -202,6 +225,7 @@ def generate_suggestions(
     suggestions: List[Dict[str, Any]] = []
 
     # Same-Game Parlays (SGP): 2-3 legs with same event_id
+    # Cap SGPs per event to avoid one hot game flooding the output.
     event_map: Dict[str, List[Dict]] = {}
     for leg in legs:
         eid = leg["event_id"]
@@ -211,6 +235,7 @@ def generate_suggestions(
     for eid, event_legs in event_map.items():
         if len(event_legs) < 2:
             continue
+        sgp_count = 0
         # Try 2-leg and 3-leg SGPs
         for size in (2, 3):
             if len(event_legs) < size:
@@ -219,12 +244,30 @@ def generate_suggestions(
                 sugg = _score_combo(list(combo), sgp=True, parlay_type="SGP")
                 if sugg:
                     suggestions.append(sugg)
+                    sgp_count += 1
+                    if sgp_count >= _MAX_SGPS_PER_EVENT:
+                        break
+            if sgp_count >= _MAX_SGPS_PER_EVENT:
+                break
 
     # Cross-Game Parlays: 2-4 legs from different events
-    # Use top 20 legs by edge, ensure different event_ids per combo
-    top_legs = sorted(legs, key=lambda x: x["edge"], reverse=True)[:20]
+    # Apply team diversity: cap how many legs per team appear in the pool so
+    # that one hot team (e.g. Bulls player props) doesn't dominate every combo.
+    team_counts: Dict[str, int] = {}
+    diverse_legs: List[Dict[str, Any]] = []
+    for leg in sorted(legs, key=lambda x: x["edge"], reverse=True):
+        raw_team = leg.get("team") or ""
+        if not raw_team and " @ " in leg.get("game", ""):
+            raw_team = leg["game"].split(" @ ")[-1]
+        team = raw_team or "unknown"
+        if team_counts.get(team, 0) < _MAX_LEGS_PER_TEAM_IN_POOL:
+            diverse_legs.append(leg)
+            team_counts[team] = team_counts.get(team, 0) + 1
+        if len(diverse_legs) >= 20:
+            break
+
     for size in (2, 3, 4):
-        for combo in itertools.combinations(top_legs, size):
+        for combo in itertools.combinations(diverse_legs, size):
             # Ensure all from different events (or event_id is empty = different matches)
             event_ids = [l["event_id"] for l in combo if l["event_id"]]
             if len(event_ids) != len(set(event_ids)):

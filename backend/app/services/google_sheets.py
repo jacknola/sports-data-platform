@@ -1516,7 +1516,7 @@ class GoogleSheetsService:
                 "Side",
                 "Best Odds",      # best across all books
                 "FD Odds",        # FanDuel-specific (— if not offered)
-                "Best Book",
+                "Win Prob %",     # model's true win probability for the pick
                 "Projected",
                 "Edge %",
                 "Bayesian P",
@@ -1620,11 +1620,8 @@ class GoogleSheetsService:
 
                 edge = p.get("bayesian_edge", 0)
                 ev_class = p.get("ev_classification", "")
-                best_book = (
-                    p.get("best_over_book", "")
-                    if best_side == "OVER"
-                    else p.get("best_under_book", "")
-                )
+                # Win probability: use posterior_p (model's win probability for the pick side)
+                win_prob_pct = round(float(p.get("posterior_p", 0) or 0) * 100, 1)
                 home = p.get("home_team", "")
                 away = p.get("away_team", "")
                 game = f"{away} @ {home}" if home and away else ""
@@ -1647,7 +1644,7 @@ class GoogleSheetsService:
                         best_side,
                         _fmt_odds(odds),          # Best Odds (col I)
                         fd_odds_str,               # FD Odds (col J)
-                        best_book,                 # Best Book (col K)
+                        win_prob_pct,              # Win Prob % (col K) — replaces Best Book
                         round(p.get("projected_mean", 0), 1),
                         round(edge * 100, 2),
                         round(p.get("posterior_p", 0), 4),
@@ -1677,7 +1674,7 @@ class GoogleSheetsService:
                     {"type": "TEXT_EQ", "value": "MEDIUM", "bg": "#FFEB9C", "fg": "#9C6500", "bold": True},
                     {"type": "TEXT_EQ", "value": "LOW",    "bg": "#FFC7CE", "fg": "#9C0006", "bold": False},
                 ], written, index_offset=4)
-                # Column widths: Date|Player|Team|Opp|Game|Stat|Line|Side|BestOdds|FDOdds|BestBook|Proj|Edge%|BayesP|EVClass|Conf|Kelly%|BestLine?|Signals|Context|Books#|OvOdds|UnOdds
+                # Column widths: Date|Player|Team|Opp|Game|Stat|Line|Side|BestOdds|FDOdds|WinProb%|Proj|Edge%|BayesP|EVClass|Conf|Kelly%|BestLine?|Signals|Context|Books#|OvOdds|UnOdds
                 self._set_column_widths(sheet, ws, [80, 160, 70, 100, 180, 50, 50, 55, 65, 65, 90, 60, 60, 70, 90, 75, 60, 70, 160, 200, 55, 60, 60])
                 logger.info("Applied conditional formatting to HighValueProps")
 
