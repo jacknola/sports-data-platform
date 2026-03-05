@@ -17,6 +17,7 @@ interface TrackedBet {
   odds: number
   line: number
   edge: number
+  win_probability: number | null
   bet_size: number
   status: 'pending' | 'won' | 'lost' | 'push' | 'void'
   book: string
@@ -228,7 +229,7 @@ export default function Bets() {
                       {bet.line ? <span className="text-gray-400 font-normal"> · {bet.line}</span> : null}
                     </p>
                     <p className="text-xs text-gray-500 mt-0.5">
-                      {fmtOdds(bet.odds)} · Edge: {(bet.edge * 100).toFixed(1)}% · Size: {bet.bet_size}u
+                      {fmtOdds(bet.odds)} · Win Prob: {bet.win_probability != null ? fmtPct(bet.win_probability) : '—'} · Edge: {(bet.edge * 100).toFixed(1)}% · Size: {bet.bet_size}u
                       {bet.book ? ` · ${bet.book}` : ''}
                     </p>
                   </div>
@@ -287,14 +288,20 @@ export default function Bets() {
                       <p className="text-gray-700 truncate">{bet.game_id || '—'}</p>
                     </div>
                     <div>
-                      <p className="text-xs text-gray-400">Bet ID</p>
-                      <p className="text-gray-500 font-mono text-xs truncate">{bet.id}</p>
+                      <p className="text-xs text-gray-400">Win Probability</p>
+                      <p className={bet.win_probability != null ? (bet.win_probability >= 0.5 ? 'text-green-600' : 'text-yellow-600') : 'text-gray-400'}>
+                        {bet.win_probability != null ? fmtPct(bet.win_probability) : 'Not recorded'}
+                      </p>
                     </div>
                     <div>
                       <p className="text-xs text-gray-400">CLV</p>
                       <p className={bet.actual_clv != null ? (bet.actual_clv > 0 ? 'text-green-600' : 'text-red-500') : 'text-gray-400'}>
                         {bet.actual_clv != null ? `${bet.actual_clv > 0 ? '+' : ''}${(bet.actual_clv * 100).toFixed(2)}%` : 'Not recorded'}
                       </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-400">Bet ID</p>
+                      <p className="text-gray-500 font-mono text-xs truncate">{bet.id}</p>
                     </div>
                     <div>
                       <p className="text-xs text-gray-400">Settled</p>

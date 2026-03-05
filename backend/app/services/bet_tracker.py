@@ -61,6 +61,7 @@ class BetTracker:
                     odds INTEGER,
                     line REAL,
                     edge REAL,
+                    win_probability REAL,
                     bet_size REAL,
                     status TEXT,
                     book TEXT,
@@ -71,6 +72,11 @@ class BetTracker:
             # Add book column to existing DBs that pre-date this field
             try:
                 conn.execute("ALTER TABLE bets ADD COLUMN book TEXT")
+            except sqlite3.OperationalError:
+                pass  # column already exists
+            # Add win_probability column to existing DBs that pre-date this field
+            try:
+                conn.execute("ALTER TABLE bets ADD COLUMN win_probability REAL")
             except sqlite3.OperationalError:
                 pass  # column already exists
             conn.commit()
@@ -84,6 +90,15 @@ class BetTracker:
         now_iso = datetime.now(timezone.utc).isoformat()
 
         # Standardize record
+        raw_win_prob = bet_data.get("win_probability", bet_data.get("true_prob"))
+        # Validate win_probability is within [0, 1] — clamp to None if outside bounds
+        if raw_win_prob is not None:
+            try:
+                raw_win_prob = float(raw_win_prob)
+                raw_win_prob = raw_win_prob if 0.0 <= raw_win_prob <= 1.0 else None
+            except (TypeError, ValueError):
+                raw_win_prob = None
+
         record = {
             "id": bet_id,
             "created_at": now_iso,
@@ -95,6 +110,7 @@ class BetTracker:
             "odds": bet_data.get("odds", -110),
             "line": bet_data.get("line", 0.0),
             "edge": bet_data.get("edge", 0.0),
+            "win_probability": raw_win_prob,
             "bet_size": bet_data.get("bet_size", 0.0),
             "status": "pending",
             "book": bet_data.get("book", settings.PRIMARY_BOOK),
@@ -168,8 +184,8 @@ class BetTracker:
             conn.execute(
                 """
                 INSERT INTO bets
-                (id, created_at, date, game_id, sport, side, market, odds, line, edge, bet_size, status, book)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, created_at, date, game_id, sport, side, market, odds, line, edge, win_probability, bet_size, status, book)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record["id"],
@@ -182,6 +198,7 @@ class BetTracker:
                     record["odds"],
                     record["line"],
                     record["edge"],
+                    record.get("win_probability"),
                     record["bet_size"],
                     record["status"],
                     record.get("book", settings.PRIMARY_BOOK),

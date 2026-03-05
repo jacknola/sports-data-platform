@@ -1,197 +1,165 @@
 # Sports Data Intelligence Platform
 
-A comprehensive sports betting intelligence application that aggregates data from multiple sources, runs Bayesian models, performs ML analysis, and automatically updates your Notion database.
+A quantitative sports betting intelligence platform that identifies +EV wagers by comparing devigged market-maker odds (Pinnacle) against the primary retail book (FanDuel). Uses Bayesian modeling, XGBoost ML, and sharp money signals. Bet sizing via Fractional Kelly Criterion with a focus on win probability over raw odds hunting.
 
 ## Features
 
-- 🎯 **Best Bets Analysis**: Aggregates odds from multiple sportsbooks and identifies value bets
-- 🧠 **Sequential Thinking**: Expert-level reasoning like a professional sports bettor
-- 🤖 **Multi-Agent System**: Specialized agents that learn from past mistakes
-- 🕷️ **AI Web Scraping**: Crawl4AI-powered intelligent data extraction
-- 🐦 **Twitter Sentiment Analysis**: Monitors and analyzes Twitter discussions about teams/players
-- 📊 **Bayesian Models**: Runs sophisticated betting probability calculations
-- 🤖 **Hugging Face ML**: Sentiment analysis and prediction models
-- 📊 **Google Sheets Integration**: Automatic data syncing and analysis tracking
-- 📝 **Notion Integration**: Automatically updates your Notion database with insights
-- 📱 **Modern Dashboard**: Beautiful React frontend with real-time updates
+- 🎯 **+EV Prop Analysis**: Identifies positive-EV player props using Bayesian posteriors, PropProbabilityModel projections, and EVCalculator hit-rate modeling
+- 📐 **Win Probability First**: All picks display the model's true win probability — the primary decision metric when betting a single book (FanDuel)
+- 🧠 **Sharp Signal Detection**: Line movement, juice shift, and CLV tracking via `LineMovementAnalyzer`
+- 🤖 **XGBoost ML Predictions**: NBA and NCAAB game outcome predictions using `NBAMLPredictor` / `NCAABMLPredictor`
+- 📊 **Bayesian Models**: Posterior probability computation with Fractional Kelly sizing (Quarter/Half Kelly)
+- 🎲 **Parlay Engine**: Generates SGP and cross-game parlays from today's +EV picks with team-diversity enforcement and a −200 odds floor
+- 📑 **Google Sheets Export**: Daily prop picks, game bets, parlays, and bet-slip — all auto-formatted and pushed to Sheets
+- 📱 **React Dashboard**: Real-time frontend with bet tracking, win probability display, and parlay RAG insights
+- 📲 **Telegram Reports**: 3× daily automated reports via Telegram bot
+
+## Architecture
+
+```
+The Odds API + ESPN
+  ↓
+PropProbabilityModel + Bayesian Posterior
+  ↓
+EVCalculator (L5/L10/L20 game logs)
+  ↓
+Parlay Engine (team-diverse, ≥ −200 odds)
+  ↓
+FractionalKelly sizing → Google Sheets / Bet Tracker
+```
 
 ## Tech Stack
 
 ### Backend
-- **FastAPI** - Modern Python API framework
-- **SQLAlchemy** - ORM for database operations
-- **PostgreSQL** - Primary database
-- **Redis** - Caching layer
-- **Celery** - Task queue for async operations
-- **Hugging Face Transformers** - ML models
-- **PyMC3** - Bayesian modeling
-- **Selenium/Playwright** - Web scraping
+- **FastAPI** (Python 3.9+) — REST API
+- **SQLAlchemy** — ORM; PostgreSQL primary, SQLite fallback for local dev
+- **Supabase** — hosted Postgres + realtime (with automatic SQLite fallback)
+- **Redis** — odds/stat caching; Celery task broker
+- **Celery** — async task queue (odds refresh, sheet export)
+- **XGBoost** — NBA/NCAAB ML prediction models
+- **Loguru** — structured logging throughout
 
 ### Frontend
-- **React** - UI framework
-- **TailwindCSS** - Styling
-- **TypeScript** - Type safety
-- **Recharts** - Data visualization
-- **React Query** - Data fetching
+- **React 18** + **TypeScript** + **Vite**
+- **Tailwind CSS** — utility-first styling
+- **@tanstack/react-query** — server state management
+- **Axios** — API client (auto-unwraps `response.data`)
 
 ## Quick Start
 
 ### Prerequisites
 
-- Python 3.11+
+- Python 3.9+
 - Node.js 18+
-- PostgreSQL
-- Redis
-- Docker (optional)
+- Docker (optional — full-stack via `docker-compose up --build`)
 
-### Installation
+### Backend
 
-1. **Clone the project:**
-```bash
-cd /Users/jackcurran/sports-data-platform
-```
-
-2. **Set up backend:**
 ```bash
 cd backend
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+source venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env   # fill in API keys
+python run_server.py   # FastAPI on port 8000
 ```
 
-3. **Configure environment:**
-```bash
-cp .env.example .env
-# Edit .env with your API keys
-```
+### Frontend
 
-4. **Set up database:**
 ```bash
-alembic upgrade head
-```
-
-5. **Set up frontend:**
-```bash
-cd ../frontend
-npm install
-```
-
-6. **Run the application:**
-```bash
-# Terminal 1 - Backend
-cd backend
-python run_server.py
-
-# Terminal 2 - Frontend
 cd frontend
-npm run dev
-
-# Terminal 3 - Celery Worker (for async tasks)
-cd backend
-celery -A app.celery_app worker --loglevel=info
+npm install
+npm run dev   # Vite dev server on port 3000
 ```
 
-## Required API Keys
-
-Add these to your `.env` file:
+### Docker (full stack)
 
 ```bash
-# Sports APIs
-SPORTSRADAR_API_KEY=your_key
-ODDSAPI_API_KEY=your_key
-THE_ODDS_API_KEY=your_key
+docker-compose up --build
+# Frontend: http://localhost:3000
+# Backend:  http://localhost:8000
+# API Docs: http://localhost:8000/docs
+```
 
-# Twitter
-TWITTER_BEARER_TOKEN=your_token
+## Required Environment Variables
 
-# Hugging Face
-HUGGINGFACE_API_KEY=your_token
-
-# Notion
-NOTION_API_KEY=secret_your_integration_key
-NOTION_DATABASE_ID=your_database_id
-
-# OpenAI
-OPENAI_API_KEY=your_key
+```bash
+# Odds
+THE_ODDS_API_KEY=your_key          # Primary odds source (props + game lines)
 
 # Database
-DATABASE_URL=postgresql://user:password@localhost:5432/sports_data
+DATABASE_URL=postgresql://...       # PostgreSQL; falls back to SQLite if unset
+SUPABASE_URL=https://...
+SUPABASE_KEY=your_anon_key
+
+# Cache
 REDIS_URL=redis://localhost:6379/0
+
+# Reporting
+TELEGRAM_BOT_TOKEN=your_token
+TELEGRAM_CHAT_ID=your_chat_id
+GOOGLE_SERVICE_ACCOUNT_PATH=/path/to/sa.json
+GOOGLE_SPREADSHEET_ID=your_sheet_id
+
+# Optional
+OPENAI_API_KEY=your_key            # ExpertAgent sequential reasoning
+QDRANT_URL=http://localhost:6333   # Vector store for parlay RAG
 ```
 
-## Usage
+## Key Commands
 
-### 1. View Dashboard
-Navigate to `http://localhost:3000` to see the dashboard
-
-### 2. Trigger Analysis
 ```bash
-curl -X POST http://localhost:8000/api/v1/analyze \
-  -H "Content-Type: application/json" \
-  -d '{"sport": "nfl", "target_date": "2024-01-15"}'
+# Run daily NBA analysis + export
+python backend/run_nba_analysis.py
+
+# Run NCAAB sharp money analysis
+python backend/run_ncaab_analysis.py
+
+# Send Telegram report immediately
+python backend/telegram_cron.py --send-now
+
+# Run all unit tests
+PYTHONPATH=$(pwd)/backend python3 -m pytest backend/tests/unit/ --tb=short -q
 ```
 
-### 3. View Notion Updates
-Your Notion database will be automatically updated with:
-- Best bets with edge calculations
-- Twitter sentiment scores
-- Historical performance metrics
+## Core API Endpoints
 
-## API Endpoints
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET`  | `/api/v1/props/{sport}` | Live props with full analysis |
+| `GET`  | `/api/v1/bets/tracked` | All tracked bets (win/loss) |
+| `POST` | `/api/v1/bets/{id}/settle` | Mark a bet won/lost/push |
+| `GET`  | `/api/v1/bets/performance` | Win rate, ROI, CLV metrics |
+| `GET`  | `/api/v1/parlays` | Saved parlays list |
+| `GET`  | `/api/v1/cbb/games` | NCAAB game edges + sharp signals |
+| `POST` | `/api/v1/sheets/{id}/export-all` | Full daily Google Sheets export |
+| `GET`  | `/api/v1/agents/analyze` | Multi-agent expert analysis |
 
-- `GET /api/v1/bets` - Get best bets
-- `POST /api/v1/analyze` - Trigger full analysis
-- `GET /api/v1/odds/{sport}` - Get current odds
-- `GET /api/v1/sentiment/{team}` - Get Twitter sentiment
-- `POST /api/v1/bayesian` - Run Bayesian model
-- `GET /api/v1/predictions` - Get ML predictions
-- `POST /api/v1/agents/analyze` - Multi-agent analysis with sequential thinking
-- `GET /api/v1/agents/status` - Agent status and performance
-- `POST /api/v1/agents/learn` - Submit outcomes for learning
-- `POST /api/v1/sheets/{id}/bet-analysis` - Write bet analysis to Google Sheets
-- `POST /api/v1/sheets/{id}/sync-predictions` - Sync predictions to Google Sheets
-- `POST /api/v1/sheets/{id}/daily-summary` - Create daily summary sheet
-- `POST /api/v1/notion/sync` - Manually sync to Notion
+## Betting Logic Summary
 
-## Architecture
+- **Primary book**: FanDuel (`PRIMARY_BOOK=fanduel`). FD odds are shown alongside best-market odds on every prop.
+- **Odds floor**: Individual parlay legs must have odds ≥ −200. Anything heavier than −200 is excluded.
+- **Win probability**: The model's `posterior_p` (Bayesian win probability) is the primary metric — not raw odds or edge %. Displayed on every bet card and in the HighValueProps sheet.
+- **Kelly sizing**: Always Fractional Kelly (Quarter or Half). Hard cap at 5% of bankroll per bet.
+- **Parlay diversity**: The parlay engine limits each team to ≤ 3 legs in the cross-game pool and caps SGPs from any single game at 3 suggestions, preventing one team from dominating the output.
+- **EV thresholds**: Low confidence ≥ 3% edge (Quarter Kelly), Medium ≥ 5%, High ≥ 7%, Max ≥ 10%.
 
-```
-┌─────────────────┐
-│  React Frontend │
-└────────┬────────┘
-         │
-    ┌────┴────┐
-    │ FastAPI │
-    └────┬────┘
-         │
-    ┌────┴────────────────────┐
-    │                          │
-┌───┴───┐  ┌─────────────────┐  ┌──────────────┐
-│ Celery│  │  ML Services     │  │  Bayesian    │
-│ Tasks │  │  (Hugging Face)  │  │  Models      │
-└───┬───┘  └─────────────────┘  └──────────────┘
-    │
-┌───┴────────────────────────────────────────┐
-│  PostgreSQL  │  Redis  │  Notion  │  APIs  │
-└─────────────────────────────────────────────┘
-```
+## Database Architecture
 
-## Services
+See [`DATABASE_SERVICES.md`](DATABASE_SERVICES.md) for full schema documentation.
 
-1. **Sports Data API** - Aggregates odds from multiple sources
-2. **Twitter Analyzer** - Collects tweets and analyzes sentiment
-3. **Web Scraper** - Scrapes sports data from websites
-4. **Bayesian Models** - Computes probabilities and edges
-5. **ML Service** - Uses Hugging Face for predictions
-6. **Notion Integration** - Syncs data to Notion database
+**Bet tracking** (`bet_tracker.py`):
+- Dual-write: operational record to Supabase/SQLite + analytical record to PostgreSQL `bets` table
+- `win_probability` (model's true probability) stored alongside each bet for post-hoc calibration analysis
+- Automatic SQLite fallback when Supabase is unavailable
 
 ## Development
 
 ### Adding New Data Sources
 
-1. Create a new service in `backend/app/services/`
-2. Add API endpoint in `backend/app/routers/`
-3. Update frontend components in `frontend/src/components/`
+1. Create a service in `backend/app/services/`
+2. Add an endpoint in `backend/app/routers/`
+3. Register the router in `backend/app/main.py`
 
 ### Running Bayesian Models
 
@@ -200,33 +168,19 @@ from app.services.bayesian import BayesianAnalyzer
 
 analyzer = BayesianAnalyzer()
 result = analyzer.compute_posterior({
-    'devig_prob': 0.52,
-    'implied_prob': 0.48,
-    'features': {
-        'injury_status': 'ACTIVE',
-        'team_pace': 104.2
-    }
+    'devig_prob': 0.56,
+    'implied_prob': 0.52,
+    'current_american_odds': -115,
+    'features': {'injury_status': 'ACTIVE', 'is_home': True}
 })
-```
-
-### Using Hugging Face Models
-
-```python
-from app.services.ml_analyzer import MLService
-
-ml_service = MLService()
-sentiment = ml_service.analyze_sentiment(
-    tweets=['Great game!', 'That was terrible']
-)
+# result: {'posterior_p': 0.57, 'edge': 0.048, 'kelly_fraction': 0.096, ...}
 ```
 
 ## Monitoring
 
 - API Docs: `http://localhost:8000/docs`
 - Dashboard: `http://localhost:3000`
-- Flower (Celery): `http://localhost:5555`
 
 ## License
 
 MIT
-
