@@ -27,6 +27,7 @@ class PlayerVectorBackfillService:
         for log, player_name in results:
             # FIX: Stop hardcoding "Opponent" and "is_home". 
             # Use log attributes to ensure your search vectors are accurate.
+            scenario = log.scenario or {}
             log_data = {
                 "player_id": log.player_id,
                 "player_name": player_name,
@@ -34,7 +35,9 @@ class PlayerVectorBackfillService:
                 "is_home": getattr(log, 'is_home', True),
                 "pts": log.pts,
                 "pra": log.pra,
-                "game_id": log.game_id
+                "game_id": log.game_id,
+                "opp_pace": scenario.get("opp_pace", 100.0),
+                "rest_days": scenario.get("rest_advantage", 1),
             }
             
             description = self.profiler.generate_description(log_data)
