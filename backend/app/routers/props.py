@@ -497,7 +497,7 @@ async def _get_live_props(sport: str) -> List[Dict]:
                 else line,
                 # TODO: Sharp signals require real ticket/money % from SportsGameOdds API
                 # Currently hardcoded 50/50 prevents RLM detection (requires >=65% on one side)
-                # See: backend/app/services/sharp_money_detector.py for RLM logic
+                # See: backend/app/services/line_movement_analyzer.py for RLM logic
                 "over_ticket_pct": 0.0,  # No live data source — 0.0 prevents false RLM signals
                 "over_money_pct": 0.0,  # No live data source — 0.0 prevents false RLM signals
                 "season_avg": season_avg,

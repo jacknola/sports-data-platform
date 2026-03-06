@@ -7,7 +7,7 @@ implementing their own versions.
 
 Consolidates previously duplicated implementations from:
 - app/services/multivariate_kelly.py
-- app/services/sharp_money_detector.py
+- app/services/line_movement_analyzer.py
 - app/services/nba_ml_predictor.py
 - app/services/prop_analyzer.py
 """

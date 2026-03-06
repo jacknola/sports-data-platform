@@ -1,10 +1,10 @@
 """
-Unit tests for SharpMoneyDetector (app/services/sharp_money_detector.py).
+Unit tests for LineMovementAnalyzer devigging (migrated from sharp_money_detector tests).
 
 All tests are pure-unit: no external I/O, no database.
 """
 
-from app.services.sharp_money_detector import SharpMoneyDetector
+from app.services.line_movement_analyzer import LineMovementAnalyzer
 
 
 # ---------------------------------------------------------------------------
@@ -22,7 +22,7 @@ class TestAnalyzeGameDevig:
     """
 
     def _run(self, pinnacle_odds: float, retail_odds: float) -> dict:
-        return SharpMoneyDetector.analyze_game(
+        return LineMovementAnalyzer.analyze_game(
             game_id="test_game",
             market="spread",
             home_team="Home",
@@ -36,74 +36,39 @@ class TestAnalyzeGameDevig:
         )
 
     def test_devigged_prob_lower_than_raw_implied_for_favorite(self):
-        """
-        For a -110 Pinnacle line (52.38% raw implied), stripping ~2.5% vig
-        must yield a true probability strictly less than the raw implied.
-        """
         result = self._run(pinnacle_odds=-110, retail_odds=-110)
-        _ = SharpMoneyDetector._american_to_implied_static(-110)
-        # ev_edge = devigged - retail_implied; both retail sides are the same
-        # so edge ≈ devigged_home - pinnacle_raw_home
-        # devigged_home should be < pinnacle_raw
-        # We verify indirectly: for a symmetric -110/-110 market, the retail
-        # implied equals the Pinnacle raw implied, so edge = devigged - implied < 0
+        _ = LineMovementAnalyzer._american_to_implied_static(-110)
         assert result["ev_edge"] < 0.0, (
             "Symmetric -110/-110 market should show no edge (or negative) after devigging"
         )
 
     def test_devigged_prob_near_expected_for_even_market(self):
-        """
-        For a symmetric -110 / -110 Pinnacle market (true prob ≈ 50%),
-        the devigged probability should be close to 0.5110
-        (= 0.5238 / 1.025), not the raw 0.5238.
-        """
-        # Access the devigged value through the edge calculation:
-        #   ev_edge = devigged_home - retail_implied
-        # If retail is also -110, retail_implied = 0.5238
-        # So devigged_home = ev_edge + 0.5238
         result = self._run(pinnacle_odds=-110, retail_odds=-110)
-        retail_implied = SharpMoneyDetector._american_to_implied_static(-110)
+        retail_implied = LineMovementAnalyzer._american_to_implied_static(-110)
         devigged_home = result["ev_edge"] + retail_implied
         assert abs(devigged_home - 0.5110) < 0.001, (
             f"Expected devigged_home ≈ 0.5110, got {devigged_home:.4f}"
         )
 
     def test_devigged_heavy_favorite_below_raw_implied(self):
-        """
-        For -200 Pinnacle odds (raw implied 0.6667), devigged must be
-        0.6667 / 1.025 ≈ 0.6504 — strictly less than the raw implied.
-        """
         result = self._run(pinnacle_odds=-200, retail_odds=-200)
-        retail_implied = SharpMoneyDetector._american_to_implied_static(-200)
+        retail_implied = LineMovementAnalyzer._american_to_implied_static(-200)
         devigged_home = result["ev_edge"] + retail_implied
-        expected = SharpMoneyDetector._american_to_implied_static(-200) / 1.025
+        expected = LineMovementAnalyzer._american_to_implied_static(-200) / 1.025
         assert abs(devigged_home - expected) < 0.001, (
             f"Expected devigged_home ≈ {expected:.4f}, got {devigged_home:.4f}"
         )
 
     def test_positive_ev_when_retail_worse_than_pinnacle(self):
-        """
-        When the retail book's implied probability is higher than
-        Pinnacle's devigged probability, edge is negative (retail is worse).
-        Conversely, when retail offers a higher true-value price, edge > 0.
-        """
-        # Retail at -120 (implied 0.5455) vs Pinnacle -110 devigged (0.5110)
-        # edge = 0.5110 - 0.5455 < 0
         result_negative = self._run(pinnacle_odds=-110, retail_odds=-120)
         assert result_negative["ev_edge"] < 0.0
 
-        # Retail at -100 (+EV: implied 0.50) vs Pinnacle -110 devigged (0.5110)
-        # edge = 0.5110 - 0.50 > 0
         result_positive = self._run(pinnacle_odds=-110, retail_odds=100)
         assert result_positive["ev_edge"] > 0.0
 
     def test_pinnacle_implied_key_is_raw_not_devigged(self):
-        """
-        The 'pinnacle_implied' key in the result should return the
-        raw (viggy) Pinnacle implied probability, as documented.
-        """
         result = self._run(pinnacle_odds=-110, retail_odds=-110)
-        expected_raw = SharpMoneyDetector._american_to_implied_static(-110)
+        expected_raw = LineMovementAnalyzer._american_to_implied_static(-110)
         assert abs(result["pinnacle_implied"] - expected_raw) < 0.001
 
 

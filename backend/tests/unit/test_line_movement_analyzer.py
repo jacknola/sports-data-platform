@@ -2,11 +2,10 @@
 Unit tests for LineMovementAnalyzer (app/services/line_movement_analyzer.py).
 
 Tests cover:
-    - Devigging correctness (same math as the old SharpMoneyDetector tests)
+    - Devigging correctness
     - Market consensus probability calculation
     - Line movement feature extraction
     - CLV recording and summary
-    - Backward compatibility through SharpMoneyDetector wrapper
 """
 import pytest
 
@@ -213,37 +212,3 @@ class TestCLVTracking:
         analyzer = LineMovementAnalyzer()
         summary = analyzer.clv_summary()
         assert summary["count"] == 0
-
-
-# ---------------------------------------------------------------------------
-# Backward compatibility through SharpMoneyDetector wrapper
-# ---------------------------------------------------------------------------
-
-class TestBackwardCompat:
-    """Ensure the deprecated SharpMoneyDetector still works."""
-
-    def test_import_from_sharp_money_detector(self):
-        from app.services.sharp_money_detector import SharpMoneyDetector, CLVRecord
-        assert SharpMoneyDetector is not None
-        assert CLVRecord is not None
-
-    def test_analyze_game_via_wrapper(self):
-        from app.services.sharp_money_detector import SharpMoneyDetector
-        result = SharpMoneyDetector.analyze_game(
-            game_id="test", market="spread",
-            home_team="H", away_team="A",
-            open_line=-3.5, current_line=-3.5,
-            home_ticket_pct=0.5, home_money_pct=0.5,
-            pinnacle_home_odds=-110, retail_home_odds=-110,
-        )
-        assert "ev_edge" in result
-
-    def test_devig_via_wrapper(self):
-        from app.services.sharp_money_detector import SharpMoneyDetector
-        p1, p2 = SharpMoneyDetector.devig_odds(-110, -110)
-        assert abs(p1 - 0.50) < 0.001
-
-    def test_implied_static_via_wrapper(self):
-        from app.services.sharp_money_detector import SharpMoneyDetector
-        imp = SharpMoneyDetector._american_to_implied_static(-110)
-        assert abs(imp - 0.5238) < 0.001
