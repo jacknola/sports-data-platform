@@ -36,6 +36,7 @@ async def init_db():
         ParlayLeg,
         PlayerGameLog,
         HistoricalGameLine,
+        DefenseVsPosition,
     )
     _ = (Bet, Game, Team, Player, APICache, Parlay, ParlayLeg, PlayerGameLog, HistoricalGameLine)
 

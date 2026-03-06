@@ -411,6 +411,8 @@ class GoogleSheetsService:
                 "EV Class",
                 "Confidence",
                 "Kelly %",
+                "DvP Rank",
+                "Matchup",
                 "Sharp Signals",
                 "Situational Context",
                 "Best Book",
@@ -479,6 +481,19 @@ class GoogleSheetsService:
                     situational_context = p.get(
                         "situational_context", "No historical analogs found."
                     )
+                    
+                    # Get DvP matchup info
+                    dvp_rank = p.get("dvp_rank", "")
+                    matchup_quality = ""
+                    if dvp_rank:
+                        if dvp_rank >= 140:
+                            matchup_quality = "⭐⭐⭐"
+                        elif dvp_rank >= 120:
+                            matchup_quality = "⭐⭐"
+                        elif dvp_rank >= 100:
+                            matchup_quality = "⭐"
+                        else:
+                            matchup_quality = "—"
 
                     rows.append(
                         [
@@ -497,6 +512,8 @@ class GoogleSheetsService:
                             ev_class.replace("_", " ").title() if ev_class else "",
                             _confidence_label(edge, ev_class),
                             round(p.get("kelly_fraction", 0) * 100, 2),
+                            dvp_rank if dvp_rank else "—",
+                            matchup_quality,
                             signals,
                             situational_context,
                             best_book,
@@ -525,6 +542,149 @@ class GoogleSheetsService:
         except Exception as e:
             logger.error(f"Props export failed: {e}")
             return {"error": str(e)}
+
+    # ───────────────────────────────────────────────────────────────
+    # DvP Matchups export
+    # ───────────────────────────────────────────────────────────────
+
+    def export_dvp_matchups(
+        self,
+        spreadsheet_id: str,
+        games: Optional[List[Dict[str, Any]]] = None,
+        tab_name: str = "DvP Matchups",
+    ) -> Dict[str, Any]:
+        """
+        Export Defense vs Position matchup opportunities to Google Sheets.
+        
+        Shows daily favorable matchups where players face weak defenses.
+        
+        Args:
+            spreadsheet_id: Target spreadsheet ID
+            games: List of today's NBA games (home_team, away_team)
+            tab_name: Sheet tab name
+            
+        Returns:
+            Dict with status and details
+        """
+        if not self.client:
+            return {"status": "error", "message": "Google Sheets not configured"}
+
+        try:
+            from app.services.dvp_matchup_analyzer import DvPMatchupAnalyzer
+            from app.services.nba_stats_service import NBAStatsService
+            
+            analyzer = DvPMatchupAnalyzer()
+            nba_stats = NBAStatsService()
+            
+            # Get today's games if not provided
+            if not games:
+                games = nba_stats.get_todays_games()
+            
+            if not games:
+                logger.warning("No NBA games today - skipping DvP Matchups export")
+                return {"status": "skipped", "message": "No games today"}
+            
+            # Analyze matchups
+            matchups = analyzer.analyze_todays_matchups(games, threshold_rank=100)
+            
+            if not matchups:
+                logger.warning("No favorable DvP matchups found")
+                # Export empty state message
+                sheet = self.client.open_by_key(spreadsheet_id)
+                ws = self._get_or_create_sheet(sheet, tab_name)
+                ws.clear()
+                ws.update("A1:F2", [
+                    ["No Favorable Matchups Today", "", "", "", "", ""],
+                    ["Check back tomorrow for DvP opportunities!", "", "", "", "", ""]
+                ])
+                self._format_tab_header(ws, "#9E9E9E", 6)
+                return {"status": "success", "matchups": 0}
+            
+            # Prepare data for export
+            sheet = self.client.open_by_key(spreadsheet_id)
+            ws = self._get_or_create_sheet(sheet, tab_name)
+            ws.clear()
+            
+            headers = [
+                "Game",
+                "Position",
+                "Team",
+                "Opponent",
+                "DvP Rank",
+                "Matchup",
+                "Pts Allowed",
+                "Reb Allowed",
+                "Ast Allowed",
+                "3PM Allowed",
+                "Stl Allowed",
+                "Blk Allowed",
+            ]
+            
+            rows: List[List[Any]] = []
+            for m in matchups:
+                # Matchup quality emoji
+                rank = m["dvp_rank"]
+                if rank >= 140:
+                    matchup_quality = "⭐⭐⭐ Excellent"
+                elif rank >= 120:
+                    matchup_quality = "⭐⭐ Very Good"
+                elif rank >= 100:
+                    matchup_quality = "⭐ Good"
+                else:
+                    matchup_quality = "Average"
+                
+                rows.append([
+                    m.get("game", ""),
+                    m.get("position", ""),
+                    m.get("team", ""),
+                    m.get("opponent", ""),
+                    m.get("dvp_rank", ""),
+                    matchup_quality,
+                    round(m.get("pts_allowed", 0), 1),
+                    round(m.get("reb_allowed", 0), 1),
+                    round(m.get("ast_allowed", 0), 1),
+                    round(m.get("threes_allowed", 0), 1),
+                    round(m.get("stl_allowed", 0), 1),
+                    round(m.get("blk_allowed", 0), 1),
+                ])
+            
+            # Sort by DvP rank (worst defenses first)
+            rows.sort(key=lambda x: x[4], reverse=True)
+            
+            written = self._batch_write(ws, headers, rows)
+            
+            # Formatting
+            self._format_tab_header(ws, "#FF6F00", len(headers))  # Orange header
+            
+            # Conditional formatting for matchup quality
+            if written > 1:
+                # Excellent (⭐⭐⭐) = Green
+                self._apply_conditional_format(
+                    sheet, ws, 2, written, 6, 6,
+                    condition_type="TEXT_CONTAINS",
+                    condition_value="⭐⭐⭐",
+                    bg_color={"red": 0.85, "green": 0.95, "blue": 0.85}
+                )
+                # Very Good (⭐⭐) = Light green
+                self._apply_conditional_format(
+                    sheet, ws, 2, written, 6, 6,
+                    condition_type="TEXT_CONTAINS",
+                    condition_value="⭐⭐ ",  # Space to avoid matching ⭐⭐⭐
+                    bg_color={"red": 0.90, "green": 0.95, "blue": 0.90}
+                )
+            
+            logger.info(f"DvP Matchups: {len(matchups)} favorable matchups exported")
+            
+            return {
+                "status": "success",
+                "tab": tab_name,
+                "matchups": len(matchups),
+                "rows_written": written,
+            }
+            
+        except Exception as e:
+            logger.error(f"DvP Matchups export failed: {e}")
+            return {"status": "error", "message": str(e)}
 
     # ───────────────────────────────────────────────────────────────
     # NBA export
@@ -1556,6 +1716,24 @@ class GoogleSheetsService:
                 spreadsheet_id, nba_predictions, nba_bets or []
             )
             time.sleep(3.0)
+            
+            # Export DvP Matchups for today's NBA games
+            # Extract games from predictions
+            games = []
+            for pred in nba_predictions:
+                if "error" not in pred:
+                    games.append({
+                        "home_team": pred.get("home_team"),
+                        "away_team": pred.get("away_team"),
+                        "date": pred.get("date", datetime.now().strftime("%Y-%m-%d")),
+                    })
+            
+            if games:
+                results["dvp_matchups"] = self.export_dvp_matchups(
+                    spreadsheet_id,
+                    games=games,
+                )
+                time.sleep(3.0)
 
         if ncaab_data and ncaab_data.get("game_analyses"):
             qdrant_used = any(
@@ -1673,6 +1851,8 @@ class GoogleSheetsService:
                 "EV Class",
                 "Confidence",
                 "Kelly %",
+                "DvP Rank",
+                "Matchup",
                 "Best Line?",     # ✓ = highest-edge line for player+stat
                 "Sharp Signals",
                 "Situational Context",
@@ -1786,6 +1966,19 @@ class GoogleSheetsService:
                     situational_context = p.get(
                         "situational_context", "No historical analogs found."
                     )
+                    
+                    # Get DvP matchup info
+                    dvp_rank = p.get("dvp_rank", "")
+                    matchup_quality = ""
+                    if dvp_rank:
+                        if dvp_rank >= 140:
+                            matchup_quality = "⭐⭐⭐"
+                        elif dvp_rank >= 120:
+                            matchup_quality = "⭐⭐"
+                        elif dvp_rank >= 100:
+                            matchup_quality = "⭐"
+                        else:
+                            matchup_quality = "—"
 
                     rows.append(
                         [
@@ -1797,16 +1990,18 @@ class GoogleSheetsService:
                             stat_label,
                             p.get("line", 0),
                             best_side,
-                            _fmt_odds(odds),          # Best Odds (col I)
-                            fd_odds_str,               # FD Odds (col J)
-                            best_book,                 # Best Book (col K)
+                            _fmt_odds(best_odds),      # Best Odds
+                            fd_odds_str,               # FD Odds
+                            best_book,                 # Best Book
                             round(p.get("projected_mean", 0), 1),
                             round(edge * 100, 2),
                             round(p.get("posterior_p", 0), 4),
-                            ev_class.replace("_", " ").title() if ev_class else "",
+                            ev_class,
                             _confidence_label(edge, ev_class),
                             round(p.get("kelly_fraction", 0) * 100, 2),
-                            best_line_mark,            # Best Line? (col R)
+                            dvp_rank if dvp_rank else "—",
+                            matchup_quality,
+                            best_line_mark,
                             signals,
                             situational_context,
                             p.get("books_offering", 0),

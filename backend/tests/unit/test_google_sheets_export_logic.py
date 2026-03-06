@@ -65,9 +65,10 @@ def test_export_props_handles_string_odds_without_crashing() -> None:
     args, kwargs = mock_ws.update.call_args
     rows = kwargs["values"]
     # rows[0] = headers, rows[1] = stat section header, rows[2] = data
-    assert rows[2][8] == "+105"
-    assert rows[2][19] == "+105"
-    assert rows[2][20] == "-120"
+    # Column indices: Date|Player|Team|Opp|Game|Stat|Line|Side|Odds|Projected|Edge%|BayesP|EVClass|Conf|Kelly%|DvPRank|Matchup|Signals|Context|Book|Books#|OverOdds|UnderOdds
+    assert rows[2][8] == "+105"   # Odds (col 8)
+    assert rows[2][21] == "+105"  # Over Odds (col 21, was 19)
+    assert rows[2][22] == "-120"  # Under Odds (col 22, was 20)
 
 
 def test_export_parlays_writes_correct_columns() -> None:

@@ -19,7 +19,6 @@ from app.services.sharp_money_tracker import (
     SharpSignal,
     _score_label,
 )
-)
 
 
 # ---------------------------------------------------------------------------

@@ -10,6 +10,10 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 from loguru import logger
 
+from app.database import SessionLocal
+from app.models.defense_vs_position import DefenseVsPosition
+from app.services.position_mapper import PositionMapper
+
 
 # ---------------------------------------------------------------------------
 # Supported prop types and their stat key mappings
@@ -69,6 +73,10 @@ class EVCalculator:
     line to surface edge, classify the bet, and size positions via Kelly
     Criterion.
     """
+
+    def __init__(self):
+        """Initialize EVCalculator"""
+        pass
 
     # ------------------------------------------------------------------
     # Odds conversion helpers
@@ -210,15 +218,25 @@ class EVCalculator:
         research_data: Dict[str, Any], prop_type: str, line: float
     ) -> float:
         """
-        Compute a matchup-based probability adjustment.
+        Compute a matchup-based probability adjustment using DvP data.
 
-        Looks for ``matchup`` or ``opponent_stats`` keys in research_data
-        which contain opponent defensive rankings or per-stat allowances.
+        Priority:
+        1. DvP (Defense vs Position) matchup factor
+        2. Legacy matchup/opponent_stats from research_data
+        3. Neutral 0.50 when no data available
 
         Returns:
             A probability adjustment centered around 0.50 (so the raw weight
             application treats it the same as a hit rate).
         """
+        
+        # Try DvP matchup factor first
+        dvp_factor = EVCalculator._get_dvp_matchup_factor(research_data, prop_type)
+        if dvp_factor is not None:
+            logger.debug(f"Using DvP matchup factor: {dvp_factor:.3f}")
+            return dvp_factor
+        
+        # Fall back to legacy matchup logic
         matchup = research_data.get("matchup", research_data.get("opponent_stats", {}))
         if not matchup:
             return 0.50  # neutral when no data
@@ -243,6 +261,84 @@ class EVCalculator:
             return float(np.clip(0.35 + (def_rank - 1) * (0.30 / 29.0), 0.35, 0.65))
 
         return 0.50
+
+    @staticmethod
+    def _get_dvp_matchup_factor(
+        research_data: Dict[str, Any], prop_type: str
+    ) -> Optional[float]:
+        """
+        Get DvP-based matchup factor from Defense vs Position rankings.
+
+        Args:
+            research_data: Player research data (must include 'player_name', 'opponent')
+            prop_type: Prop type (e.g., 'points', 'rebounds', 'assists')
+
+        Returns:
+            Matchup factor in [0.30, 0.70] range, or None if DvP data unavailable
+        """
+        
+        player_name = research_data.get("player_name")
+        opponent = research_data.get("opponent")
+        
+        if not player_name or not opponent:
+            logger.debug("Missing player_name or opponent for DvP lookup")
+            return None
+        
+        # Normalize team abbreviation
+        position_mapper = PositionMapper()
+        opponent = position_mapper.normalize_team_abbrev(opponent)
+        
+        # Get player position (infer from stat type if needed)
+        stat_key = PROP_TYPE_KEYS.get(prop_type, prop_type)
+        position = position_mapper.get_player_position(player_name, stat_type=stat_key)
+        
+        # Query DvP data
+        session = SessionLocal()
+        try:
+            dvp = (
+                session.query(DefenseVsPosition)
+                .filter(
+                    DefenseVsPosition.source == "hashtag",
+                    DefenseVsPosition.position == position,
+                    DefenseVsPosition.team == opponent,
+                )
+                .first()
+            )
+            
+            if not dvp:
+                logger.debug(f"No DvP data for {opponent} vs {position}")
+                return None
+            
+            # Convert DvP rank to matchup factor
+            # Rank scale: 1 (best defense) to 150 (worst defense)
+            # Factor scale: 0.30 (elite defense) to 0.70 (worst defense)
+            rank = dvp.rank
+            
+            if rank <= 50:
+                # Elite defense (ranks 1-50): 0.30-0.40
+                factor = 0.30 + (rank - 1) / 49.0 * 0.10
+            elif rank <= 100:
+                # Average defense (ranks 51-100): 0.40-0.55
+                factor = 0.40 + (rank - 51) / 49.0 * 0.15
+            elif rank <= 140:
+                # Weak defense (ranks 101-140): 0.55-0.65
+                factor = 0.55 + (rank - 101) / 39.0 * 0.10
+            else:
+                # Worst defenses (ranks 141-150): 0.65-0.70
+                factor = 0.65 + min((rank - 141) / 9.0 * 0.05, 0.05)
+            
+            logger.info(
+                f"DvP matchup: {player_name} ({position}) vs {opponent} "
+                f"(rank {rank}) → factor {factor:.3f}"
+            )
+            
+            return float(np.clip(factor, 0.30, 0.70))
+            
+        except Exception as e:
+            logger.error(f"Error querying DvP data: {e}")
+            return None
+        finally:
+            session.close()
 
     @staticmethod
     def _trend_adjustment(values: List[float], line: float) -> float:
