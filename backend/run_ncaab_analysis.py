@@ -597,11 +597,14 @@ async def get_live_ncaab_games(team_stats: Optional[Dict[str, Any]] = None) -> T
     return ([], "no_games")
 
 
-def run_analysis() -> Dict[str, Any]:
+def run_analysis(prediction_only: bool = False) -> Dict[str, Any]:
     """Run NCAAB sharp money analysis.
 
     Prints a full human-readable breakdown to stdout AND returns a structured
     result dict so the orchestrator / report formatter can consume it directly.
+
+    Args:
+        prediction_only: When True, skip bet saving and only return predictions.
 
     Returns:
         {
@@ -931,7 +934,7 @@ def run_analysis() -> Dict[str, Any]:
         print("  Consider lowering minimum edge threshold or adding more games.")
 
     # --- Save bets to tracker ---
-    if bets:
+    if bets and not prediction_only:
         # First save games to PostgreSQL so bets can reference them
         try:
             from app.database import SessionLocal
@@ -1008,7 +1011,7 @@ def run_analysis() -> Dict[str, Any]:
             signal_conf = analysis["signal_confidence"] if is_sharp_side else 0.0
             score = edge * 100 + signal_conf * 5  # weighted composite
 
-                        odds = (
+            odds = (
                 game["retail_home_odds"]
                 if side == game["home"]
                 else game["retail_away_odds"]

@@ -8,6 +8,7 @@ from app.services.analysis_runner import (
     run_orchestrated_analysis,
     run_sheets_export_pipeline,
     run_prop_analysis_pipeline,
+    run_dvp_analysis_pipeline,
 )
 
 
@@ -21,9 +22,12 @@ def main():
     logger.info("Step 2: Running prop analysis pipeline...")
     prop_data = run_prop_analysis_pipeline()
 
-    logger.info("Step 3: Exporting all fresh data to Google Sheets...")
+    logger.info("Step 3: Running DvP analysis pipeline...")
+    dvp_data = run_dvp_analysis_pipeline()
+
+    logger.info("Step 4: Exporting all fresh data to Google Sheets...")
     export_result = run_sheets_export_pipeline(
-        ncaab_data=ncaab_data, nba_data=nba_data, prop_data=prop_data
+        ncaab_data=ncaab_data, nba_data=nba_data, prop_data=prop_data, dvp_data=dvp_data
     )
 
     if export_result:

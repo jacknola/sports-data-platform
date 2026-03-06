@@ -602,6 +602,7 @@ class NBADvPAnalyzer:
                     "Season_Avg": baseline,
                     "Projected_Line": projected,
                     "Sportsbook_Line": sb_line,
+                    "Matchup_Modifier": mod,  # raw multiplier (1.0 = neutral, >1 = soft matchup)
                     "DvP_Advantage_%": dvp_pct,
                     "Recommendation": recommendation,
                 })
@@ -634,6 +635,60 @@ class NBADvPAnalyzer:
         if df is None:
             df = self.run_analysis()
         return df[df["Recommendation"].str.contains("HIGH VALUE")].reset_index(drop=True)
+
+    def build_modifier_lookup(self) -> Dict[Tuple[str, str], float]:
+        """Compute DvP matchup modifier deltas for all slate players.
+
+        Unlike run_analysis(), this does NOT require sportsbook lines — it
+        returns modifier deltas for every (player_name_lower, stat_cat) pair
+        so they can be injected into prop game_context regardless of whether
+        a discrepancy can be flagged.
+
+        Returns:
+            Dict keyed by (player_name_lower, stat_category) where stat_category
+            is one of "PTS", "REB", "AST". Value is modifier - 1.0 (delta from
+            neutral: +0.08 = 8% upward adjustment, -0.05 = 5% downward).
+        """
+        # Ensure data is populated (may already be from a prior run_analysis call)
+        if not self.team_pace:
+            self.team_pace = self.fetch_team_pace()
+        if not self.team_advanced:
+            self.team_advanced = self.fetch_team_advanced_stats()
+        if not self.team_dvp:
+            self.team_dvp = self.fetch_team_dvp()
+        if not self.player_baselines:
+            self.player_baselines = self.fetch_player_baselines()
+
+        implied_totals = self.compute_all_implied_totals()
+        self._estimate_team_season_totals()
+        league_avg_dvp = self._compute_league_avg_dvp()
+        matchup_map = self._build_matchup_map()
+
+        lookup: Dict[Tuple[str, str], float] = {}
+        for player in self.player_baselines:
+            team = player.get("team")
+            opponent = matchup_map.get(team)
+            if not opponent:
+                continue
+
+            position = player.get("position", "SF")
+            opp_dvp = self.team_dvp.get(opponent, {}).get(position, {}) or league_avg_dvp
+            pace_mult = self.compute_pace_multiplier(team, opponent)
+            imp_total = implied_totals.get(team, 110.0)
+            season_total = self.team_season_avg_totals.get(team, 110.0)
+
+            modifiers = self.compute_matchup_modifier(
+                opp_dvp, league_avg_dvp, imp_total, season_total, pace_mult,
+                opponent=opponent,
+            )
+
+            name_lower = player["name"].lower()
+            for stat in ["PTS", "REB", "AST"]:
+                if player.get(f"avg_{stat}", 0) > 0:
+                    lookup[(name_lower, stat)] = modifiers.get(stat, 1.0) - 1.0
+
+        logger.info("DvP modifier lookup: {} (player, stat) entries", len(lookup))
+        return lookup
 
     # ------------------------------------------------------------------
     # INTERNAL HELPERS

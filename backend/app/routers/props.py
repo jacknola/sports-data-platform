@@ -751,8 +751,33 @@ async def run_prop_analysis(sport: str = "nba") -> Dict[str, Any]:
         )
 
     analyzed: List[Dict[str, Any]] = []
+
+    # ── DvP Modifier Injection ──
+    # Run DvP analysis once for the full slate and inject matchup modifiers
+    # into each prop so PropProbabilityModel applies a DvP-weighted adjustment.
+    _PROP_STAT_TO_DVP: Dict[str, str] = {
+        "points": "PTS",
+        "rebounds": "REB",
+        "assists": "AST",
+    }
+    dvp_lookup: Dict[tuple, float] = {}
+    try:
+        from app.services.nba_dvp_analyzer import NBADvPAnalyzer as _NBADvP
+        _dvp = _NBADvP()
+        await _dvp.load_slate_from_odds_api()
+        dvp_lookup = _dvp.build_modifier_lookup()
+        logger.info(f"DvP lookup built: {len(dvp_lookup)} (player, stat) modifier entries")
+    except Exception as _dvp_err:
+        logger.warning(f"DvP lookup failed (non-fatal): {_dvp_err}")
+
     for p in raw_props:
         try:
+            # Inject DvP modifier before analysis
+            dvp_stat = _PROP_STAT_TO_DVP.get(p.get("stat_type", "").lower())
+            if dvp_stat and dvp_lookup:
+                modifier_delta = dvp_lookup.get((p.get("player_name", "").lower(), dvp_stat))
+                if modifier_delta is not None:
+                    p = {**p, "dvp_modifier": modifier_delta}
             result = _build_prop_analysis(p)
             analyzed.append(result)
         except Exception as e:
