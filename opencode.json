@@ -1,0 +1,40 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "google/gemini-2.5-pro",
+  "small_model": "google/gemini-2.5-flash",
+  "autoupdate": true,
+  "server": {
+    "port": 4096
+  },
+  "permission": {
+    "bash": "allow",
+    "edit": "allow",
+    "webfetch": "allow",
+    "grep": "allow"
+  },
+  "plugin": [
+    "oh-my-opencode@latest",
+    "@franlol/opencode-md-table-formatter@0.0.3",
+    "opencode-pilot"
+  ],
+  "agent": {
+    "OpenAgent": {
+      "model": "opencode/claude-opus-4-6"
+    },
+    "ContextScout": {
+      "model": "google/gemini-2.5-flash"
+    },
+    "ExternalScout": {
+      "model": "google/gemini-2.5-flash"
+    },
+    "DocWriter": {
+      "model": "google/gemini-2.5-flash"
+    },
+    "TaskManager": {
+      "model": "opencode/gemini-3-pro"
+    },
+    "ContextOrganizer": {
+      "model": "google/gemini-2.5-flash"
+    }
+  }
+}
