@@ -64,6 +64,39 @@ _STAT_DISPLAY = {
     "stl+blk": "S+B",
 }
 
+# Reverse mapping: DvP Stat_Category → prop stat_type display label
+# DvP analyzer (nba_dvp_analyzer.py) produces: PTS, REB, AST, PTS+REB+AST
+_DVP_STAT_TO_DISPLAY = {
+    "PTS": "PTS",
+    "REB": "REB",
+    "AST": "AST",
+    "PTS+REB+AST": "PRA",
+}
+
+
+def _build_dvp_lookup(
+    dvp_data: Optional[Dict[str, Any]],
+) -> Dict[tuple, Dict[str, Any]]:
+    """Build a lookup dict from DvP projections keyed by (player_name, stat_label).
+
+    Returns:
+        Dict mapping (player_name, stat_label) → DvP projection dict.
+        Empty dict when dvp_data is None or has no projections.
+    """
+    if not dvp_data:
+        return {}
+    projections = dvp_data.get("projections", [])
+    if not projections:
+        return {}
+    lookup: Dict[tuple, Dict[str, Any]] = {}
+    for p in projections:
+        player = p.get("Player", "")
+        stat_cat = p.get("Stat_Category", "")
+        stat_label = _DVP_STAT_TO_DISPLAY.get(stat_cat, stat_cat)
+        if player and stat_label:
+            lookup[(player, stat_label)] = p
+    return lookup
+
 
 def _coerce_odds(odds: Any, default: int = -110) -> int:
     try:
@@ -375,6 +408,7 @@ class GoogleSheetsService:
         spreadsheet_id: str,
         prop_data: Dict[str, Any],
         tab_name: str = "Props",
+        dvp_data: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Export all analyzed props to a 'Props' tab, ranked by edge.
 
@@ -382,6 +416,7 @@ class GoogleSheetsService:
             spreadsheet_id: Google Sheets ID
             prop_data: Result from run_prop_analysis()
             tab_name: Worksheet name
+            dvp_data: Result from run_dvp_analysis_pipeline() (optional)
 
         Returns:
             Status dict with rows_written count
@@ -409,6 +444,8 @@ class GoogleSheetsService:
                 "EV Class",
                 "Confidence",
                 "Kelly %",
+                "DvP Rank",
+                "Matchup",
                 "Sharp Signals",
                 "Situational Context",
                 "Best Book",
@@ -416,6 +453,8 @@ class GoogleSheetsService:
                 "Over Odds",
                 "Under Odds",
             ]
+
+            dvp_lookup = _build_dvp_lookup(dvp_data)
 
             # Use ALL analyzed props, sorted by edge descending
             all_props = prop_data.get("props", [])
@@ -455,6 +494,19 @@ class GoogleSheetsService:
                     "situational_context", "No historical analogs found."
                 )
 
+                # DvP matchup data
+                dvp_entry = dvp_lookup.get((player_key, stat_label))
+                if dvp_entry:
+                    dvp_adv = dvp_entry.get("DvP_Advantage_%", 0)
+                    dvp_rank_str = f"{dvp_adv:+.1f}%"
+                    dvp_matchup = (
+                        f"{dvp_entry.get('Team', '')} vs "
+                        f"{dvp_entry.get('Opponent', '')}"
+                    )
+                else:
+                    dvp_rank_str = "—"
+                    dvp_matchup = ""
+
                 rows.append(
                     [
                         today,
@@ -472,6 +524,8 @@ class GoogleSheetsService:
                         ev_class.replace("_", " ").title() if ev_class else "",
                         _confidence_label(edge, ev_class),
                         round(p.get("kelly_fraction", 0) * 100, 2),
+                        dvp_rank_str,
+                        dvp_matchup,
                         signals,
                         situational_context,
                         best_book,
@@ -489,8 +543,8 @@ class GoogleSheetsService:
                 self._format_tab_header(ws, "#3C4A6A", len(headers))
                 # EV class row colors (col 12 = M, 0-based index 12)
                 self._apply_ev_row_colors(sheet, ws, written, 12, len(headers))
-                # Column widths: Date|Player|Team|Opp|Game|Stat|Line|Side|Odds|Proj|Edge%|BayesP|EVClass|Conf|Kelly%|Signals|Context|Book|Books#|OvOdds|UnOdds
-                self._set_column_widths(sheet, ws, [80, 160, 70, 100, 180, 50, 50, 55, 60, 60, 60, 70, 90, 75, 60, 160, 200, 90, 55, 60, 60])
+                # Column widths: Date|Player|Team|Opp|Game|Stat|Line|Side|Odds|Proj|Edge%|BayesP|EVClass|Conf|Kelly%|DvPRank|Matchup|Signals|Context|Book|Books#|OvOdds|UnOdds
+                self._set_column_widths(sheet, ws, [80, 160, 70, 100, 180, 50, 50, 55, 60, 60, 60, 70, 90, 75, 60, 65, 100, 160, 200, 90, 55, 60, 60])
             except Exception as fmt_err:
                 logger.debug(f"Props formatting skipped: {fmt_err}")
 
@@ -1508,10 +1562,13 @@ class GoogleSheetsService:
         )
 
         if prop_data and prop_data.get("props"):
-            results["props"] = self.export_props(spreadsheet_id, prop_data)
+            results["props"] = self.export_props(
+                spreadsheet_id, prop_data, dvp_data=dvp_data
+            )
             results["high_value_props"] = self.export_high_value_props(
                 spreadsheet_id,
                 prop_data,
+                dvp_data=dvp_data,
             )
 
         if nba_predictions:
@@ -1605,6 +1662,7 @@ class GoogleSheetsService:
         spreadsheet_id: str,
         prop_data: Dict[str, Any],
         tab_name: str = "HighValueProps",
+        dvp_data: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Export high-value filtered props (Even Odds or Edge < 30%) to Google Sheets."""
         if not self.client:
@@ -1632,6 +1690,7 @@ class GoogleSheetsService:
                 "EV Class",
                 "Confidence",
                 "Kelly %",
+                "DvP Rank",
                 "Best Line?",     # ✓ = highest-edge line for player+stat
                 "Sharp Signals",
                 "Situational Context",
@@ -1639,6 +1698,8 @@ class GoogleSheetsService:
                 "Over Odds",
                 "Under Odds",
             ]
+
+            dvp_lookup = _build_dvp_lookup(dvp_data)
 
             all_props = prop_data.get("props", [])
             max_rows = int((prop_data or {}).get("export_max_rows", 120) or 120)
@@ -1741,6 +1802,14 @@ class GoogleSheetsService:
                     "situational_context", "No historical analogs found."
                 )
 
+                # DvP matchup data
+                dvp_entry = dvp_lookup.get((player_key, stat_label))
+                dvp_rank_str = (
+                    f"{dvp_entry.get('DvP_Advantage_%', 0):+.1f}%"
+                    if dvp_entry
+                    else "—"
+                )
+
                 rows.append(
                     [
                         today,
@@ -1760,7 +1829,8 @@ class GoogleSheetsService:
                         ev_class.replace("_", " ").title() if ev_class else "",
                         _confidence_label(edge, ev_class),
                         round(p.get("kelly_fraction", 0) * 100, 2),
-                        best_line_mark,            # Best Line? (col R)
+                        dvp_rank_str,              # DvP Rank (col R)
+                        best_line_mark,            # Best Line? (col S)
                         signals,
                         situational_context,
                         p.get("books_offering", 0),
@@ -1783,8 +1853,8 @@ class GoogleSheetsService:
                     {"type": "TEXT_EQ", "value": "MEDIUM", "bg": "#FFEB9C", "fg": "#9C6500", "bold": True},
                     {"type": "TEXT_EQ", "value": "LOW",    "bg": "#FFC7CE", "fg": "#9C0006", "bold": False},
                 ], written, index_offset=4)
-                # Column widths: Date|Player|Team|Opp|Game|Stat|Line|Side|BestOdds|FDOdds|WinProb%|Proj|Edge%|BayesP|EVClass|Conf|Kelly%|BestLine?|Signals|Context|Books#|OvOdds|UnOdds
-                self._set_column_widths(sheet, ws, [80, 160, 70, 100, 180, 50, 50, 55, 65, 65, 90, 60, 60, 70, 90, 75, 60, 70, 160, 200, 55, 60, 60])
+                # Column widths: Date|Player|Team|Opp|Game|Stat|Line|Side|BestOdds|FDOdds|WinProb%|Proj|Edge%|BayesP|EVClass|Conf|Kelly%|DvPRank|BestLine?|Signals|Context|Books#|OvOdds|UnOdds
+                self._set_column_widths(sheet, ws, [80, 160, 70, 100, 180, 50, 50, 55, 65, 65, 90, 60, 60, 70, 90, 75, 60, 65, 70, 160, 200, 55, 60, 60])
                 logger.info("Applied conditional formatting to HighValueProps")
 
             except Exception as fmt_err:
