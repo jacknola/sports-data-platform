@@ -32,6 +32,7 @@ class RAGAgent(BaseAgent):
     TOP_K_RETRIEVAL: int = 20
     TOP_K_RERANK: int = 5
     MIN_RELEVANCE_SCORE: float = 0.3
+    MAX_KEYWORD_SEARCH_DOCS: int = 200  # Performance cap for keyword scan
 
     def __init__(self) -> None:
         super().__init__("RAGAgent")
@@ -232,14 +233,12 @@ class RAGAgent(BaseAgent):
 
             # Search cached documents by keyword overlap
             results: List[Dict[str, Any]] = []
-            cache_keys = self._redis.keys("rag:doc:*") if hasattr(self._redis, "keys") else []
+            cache_keys = []
             if callable(getattr(self._redis, "keys", None)):
                 cache_keys = self._redis.keys("rag:doc:*")
-            else:
-                cache_keys = []
 
             import json
-            for key in cache_keys[:200]:  # Cap scan to 200 docs
+            for key in cache_keys[:self.MAX_KEYWORD_SEARCH_DOCS]:
                 try:
                     raw_val = self._redis.get(key)
                     if not raw_val:

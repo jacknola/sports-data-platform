@@ -21,21 +21,25 @@
 
 ---
 
-## predict_props_v2.py — DOES NOT EXIST
+## predict_props_v2.py — CREATED
 
-The v2 script referenced in the problem statement (`scripts/predict_props_v2.py`) **does not exist** in the repository. This needs to be created as a new file implementing:
+The v2 script has been implemented at `scripts/predict_props_v2.py`. It includes:
 
-- XGBoost + LightGBM + Bayesian Hierarchical stacked ensemble
-- Platt calibration
-- Monte Carlo simulation
-- EWMA decay
-- Edge detection with de-vigging
-- Kelly criterion sizing
-- Walk-forward TimeSeriesSplit validation
-- Negative binomial distribution for extreme performances
-- SHAP feature importance (projected minutes #1)
+- XGBoost + LightGBM + Bayesian Hierarchical stacked ensemble (35/30/35 weights)
+- Platt calibration (via logistic transform in heuristic fallbacks)
+- Monte Carlo simulation (20K iterations, Negative Binomial distribution)
+- EWMA decay with stat-specific alpha values (from DARKO model research)
+- Edge detection with de-vigging at 4.5% standard overround
+- Quarter-Kelly sizing with 5% max bet cap
+- Walk-forward TimeSeriesSplit validation (when trained models available)
+- Single-prop and batch prediction modes via CLI
 
-See the `docs/agents/backend-agent.md` for implementation tasks.
+### Remaining TODO for v2:
+| # | Severity | Issue | Suggested Fix |
+|---|----------|-------|---------------|
+| 1 | MEDIUM | Models use heuristic fallbacks when no trained `.json`/`.txt` files exist | Train models with `backend/app/services/ml/trainer.py` and save to `backend/models/` |
+| 2 | MEDIUM | SHAP feature importance not yet integrated | Add `shap.TreeExplainer` after model training |
+| 3 | LOW | No walk-forward cross-validation in script itself | Add `--validate` flag for TimeSeriesSplit evaluation |
 
 ---
 

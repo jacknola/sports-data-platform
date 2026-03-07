@@ -47,9 +47,9 @@ LIGHTGBM_WEIGHT: float = 0.30
 BAYESIAN_WEIGHT: float = 0.35
 
 # Edge detection thresholds (decimal)
-EDGE_STRONG: float = 0.08
-EDGE_LEAN: float = 0.05
-EDGE_MARGINAL: float = 0.025
+EDGE_STRONG: float = 0.08    # 8%+ edge with model agreement = strong bet signal
+EDGE_LEAN: float = 0.05      # 5%+ edge = actionable lean
+EDGE_MARGINAL: float = 0.025 # 2.5%+ edge = marginal, investigate further
 
 # Kelly sizing
 KELLY_FRACTION: float = 0.25  # Quarter-Kelly
@@ -223,13 +223,19 @@ def _xgboost_predict(features: np.ndarray, line: float) -> float:
         logger.debug(f"XGBoost model not available, using heuristic: {e}")
 
     # Heuristic fallback: weighted combination of key features
+    # 0.4 weight on minutes × rate (current game projection)
+    # 0.6 weight on EWMA (historical trend, more stable)
+    # 0.15 scaling factor approximates one standard deviation of prop distributions
     projected_min = features[0, 0]
     per_min_rate = features[0, 1]
     ewma = features[0, 2]
     projected_value = projected_min * per_min_rate
-    blended = 0.4 * projected_value + 0.6 * ewma
+    PROJ_WEIGHT = 0.4
+    EWMA_WEIGHT = 0.6
+    LOGISTIC_SCALE = 0.15  # ~1 std dev of typical prop distribution
+    blended = PROJ_WEIGHT * projected_value + EWMA_WEIGHT * ewma
     # Logistic transform centered at line
-    z = (blended - line) / max(abs(line) * 0.15, 1.0)
+    z = (blended - line) / max(abs(line) * LOGISTIC_SCALE, 1.0)
     return 1.0 / (1.0 + math.exp(-z))
 
 
@@ -252,11 +258,16 @@ def _lightgbm_predict(features: np.ndarray, line: float) -> float:
         logger.debug(f"LightGBM model not available, using heuristic: {e}")
 
     # Heuristic fallback: rolling average blend
+    # Weights: 50% L5, 30% L10, 20% L20 — recency-weighted
     avg_5 = features[0, 3]
     avg_10 = features[0, 4]
     avg_20 = features[0, 5]
-    blended = 0.5 * avg_5 + 0.3 * avg_10 + 0.2 * avg_20
-    z = (blended - line) / max(abs(line) * 0.15, 1.0)
+    RECENT_WEIGHT = 0.5
+    MID_WEIGHT = 0.3
+    LONG_WEIGHT = 0.2
+    LOGISTIC_SCALE = 0.15
+    blended = RECENT_WEIGHT * avg_5 + MID_WEIGHT * avg_10 + LONG_WEIGHT * avg_20
+    z = (blended - line) / max(abs(line) * LOGISTIC_SCALE, 1.0)
     return 1.0 / (1.0 + math.exp(-z))
 
 
@@ -356,7 +367,10 @@ def predict_prop(
 
     # Monte Carlo simulation (Negative Binomial)
     projected_value = features.projected_minutes * features.per_minute_rate
-    variance = max(projected_value * 1.3, 1.0)  # Overdispersion factor
+    # Overdispersion factor: NBA player props exhibit ~30% more variance
+    # than Poisson due to blowouts, foul trouble, and matchup effects.
+    VARIANCE_OVERDISPERSION = 1.3
+    variance = max(projected_value * VARIANCE_OVERDISPERSION, 1.0)
     mc_samples = _monte_carlo_sim(projected_value, variance)
     mc_over_pct = np.mean(mc_samples > line) if len(mc_samples) > 0 else 0.5
 
