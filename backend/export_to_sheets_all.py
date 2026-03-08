@@ -106,7 +106,19 @@ async def run_full_export():
     logger.info("👤 Discovering players from tonight's teams for prop projections...")
     analyzed_props = []
     team_stats_map = await nba_stats._nba_api_all_team_stats()
-    
+
+    # Build reverse map: full team name (lowercase) → abbreviation
+    _name_to_abbrev = {v["team_name"].lower(): k for k, v in (team_stats_map or {}).items()}
+
+    # Build abbrev → opponent abbrev map from tonight's slate
+    abbrev_opponent_map: dict = {}
+    for ev in nba_events:
+        h_abbrev = _name_to_abbrev.get((ev.get("home_team") or "").lower(), "")
+        a_abbrev = _name_to_abbrev.get((ev.get("away_team") or "").lower(), "")
+        if h_abbrev and a_abbrev:
+            abbrev_opponent_map[h_abbrev] = a_abbrev
+            abbrev_opponent_map[a_abbrev] = h_abbrev
+
     active_teams = set()
     for ev in nba_events:
         active_teams.add(ev["home_team"])
@@ -144,7 +156,14 @@ async def run_full_export():
             logger.debug(f"Qdrant retrieval failed for {player_name}: {e}")
 
         h_stats = team_stats_map.get(home_abbrev, {})
-        game_context = {"team_pace": h_stats.get("pace", 100.0), "opponent_pace": 100.0, "opponent_def_rating": 113.5, "is_home": True}
+        opp_abbrev = abbrev_opponent_map.get(home_abbrev, "")
+        opp_stats = team_stats_map.get(opp_abbrev, {})
+        game_context = {
+            "team_pace": float(h_stats.get("pace") or 100.0),
+            "opponent_pace": float(opp_stats.get("pace") or 100.0),
+            "opponent_def_rating": float(opp_stats.get("def_rating") or 113.5),
+            "is_home": True,
+        }
         
         player_data = {
             "player_id": str(research["player"]["id"]), "player_name": research["player"]["name"], "stat_type": prop_type, "line": 0.0,

@@ -22,6 +22,7 @@ from app.services.multivariate_kelly import (
 )
 from app.services.sports_api import SportsAPIService
 from app.services.nba_stats_service import NBAStatsService
+from app.services.nba_dvp_analyzer import NBADvPAnalyzer
 from app.services.ev_calculator import EVCalculator
 from app.services.open_line_cache import get_or_set_open_line
 from app.core.betting import american_to_decimal
@@ -36,8 +37,22 @@ _prop_model = PropProbabilityModel()
 _kelly_optimizer = MultivariateKellyOptimizer(kelly_scale=0.5, min_edge=0.03)
 _sports_api = SportsAPIService()
 _nba_stats = NBAStatsService()
+_dvp_analyzer = NBADvPAnalyzer()
 _ev_calc = EVCalculator()
 _similarity = SimilaritySearchService()
+
+
+def _infer_player_position(season_avg: Dict[str, Any]) -> str:
+    """Infer player position from season averages (lowercase keys: ast, reb).
+
+    Delegates to NBADvPAnalyzer.infer_position() using normalized key names
+    so the same heuristic is applied consistently throughout the pipeline.
+    """
+    # NBADvPAnalyzer.infer_position expects uppercase keys (nba_api format)
+    return NBADvPAnalyzer.infer_position({
+        "AST": season_avg.get("ast", 0),
+        "REB": season_avg.get("reb", 0),
+    })
 
 # Bankroll used for prop stake sizing (matches NCAAB/NBA game bankroll)
 _BANKROLL: float = 100.0
@@ -78,6 +93,17 @@ _PROP_TYPE_TO_STAT = {
     "player_rebounds_alternate": "rebounds",
     "player_assists_alternate": "assists",
     "player_threes_alternate": "threes",
+}
+
+# Stat type → DvP key used by NBADvPAnalyzer (PTS / REB / AST)
+_STAT_TYPE_TO_DVP_KEY: Dict[str, str] = {
+    "points": "PTS",
+    "rebounds": "REB",
+    "assists": "AST",
+    "threes": "PTS",   # 3-pt props most correlated with scoring matchup
+    "blocks": "REB",   # bigs → REB matchup is most relevant
+    "steals": "PTS",   # guard-centric — scoring matchup proxy
+    "turnovers": "AST",  # ball-handlers → AST matchup
 }
 
 
@@ -202,6 +228,21 @@ async def _get_live_props(sport: str) -> List[Dict]:
         all_team_stats = await _nba_stats._nba_api_all_team_stats()
     except Exception as e:
         logger.debug(f"All-team stats pre-fetch failed (non-fatal): {e}")
+
+    # ── Pre-fetch DvP data once for all NBA props ──
+    _dvp_team_data: Dict[str, Any] = {}
+    _dvp_league_avg: Dict[str, float] = {}
+    if sport.lower() == "nba":
+        try:
+            _dvp_analyzer.team_advanced = await asyncio.to_thread(
+                _dvp_analyzer.fetch_team_advanced_stats
+            )
+            _dvp_team_data = await asyncio.to_thread(_dvp_analyzer.fetch_team_dvp)
+            _dvp_analyzer.team_dvp = _dvp_team_data
+            _dvp_league_avg = _dvp_analyzer._compute_league_avg_dvp()
+            logger.info(f"DvP data pre-fetched for {len(_dvp_team_data)} teams")
+        except Exception as e:
+            logger.debug(f"DvP pre-fetch failed (non-fatal): {e}")
 
     # ── Pre-fetch team rotations for "Next Man Up" detection ──
     team_rotations: Dict[str, List[Dict[str, Any]]] = {}
@@ -369,14 +410,34 @@ async def _get_live_props(sport: str) -> List[Dict]:
             matchup = research.get("matchup_data", {})
 
             if matchup:
-                opp_def_rating = float(matchup.get("def_rating", 113.5))
-                opp_pace = float(matchup.get("pace", 100.0))
+                opp_def_rating = float(matchup.get("def_rating") or 113.5)
+                opp_pace = float(matchup.get("pace") or 100.0)
 
             # Resolve player's own team pace from pre-fetched all-team stats
             if player_team_abbrev and all_team_stats:
                 own_stats = all_team_stats.get(player_team_abbrev.upper(), {})
                 if own_stats:
                     team_pace = float(own_stats.get("pace", 100.0))
+
+            # ── DvP positional modifier (NBA only) ──
+            if sport.lower() == "nba" and _dvp_team_data and _dvp_league_avg:
+                opp_abbrev_raw = (matchup or {}).get("opponent_abbreviation")
+                if opp_abbrev_raw:
+                    # Convert nba_api abbreviation to DvP internal format (e.g. GSW→GS)
+                    opp_dvp_abbrev = (
+                        NBADvPAnalyzer.nba_abbrev_to_ours(opp_abbrev_raw)
+                        or opp_abbrev_raw
+                    )
+                    # Infer position from season averages
+                    _pos = _infer_player_position(research.get("season_averages") or {})
+                    # Map stat type to DvP stat key
+                    _dvp_stat_key = _STAT_TYPE_TO_DVP_KEY.get(stat_type, "PTS")
+                    opp_pos_dvp = _dvp_team_data.get(opp_dvp_abbrev, {}).get(_pos, {})
+                    if opp_pos_dvp:
+                        lg_avg = _dvp_league_avg.get(_dvp_stat_key, 0)
+                        opp_val = opp_pos_dvp.get(_dvp_stat_key, lg_avg)
+                        if lg_avg > 0:
+                            dvp_modifier = round((opp_val / lg_avg) - 1.0, 4)
 
         # ── Determine team / opponent / is_home from research + event data ──
         home_team = raw.get("home_team", "")
@@ -632,9 +693,16 @@ def _build_prop_analysis(prop: Dict) -> Dict:
     # 5. Situational RAG (Similarity search in Qdrant)
     situational_context = "No historical analogs found."
     try:
+        # Build search description matching the stored PlayerProfiler format
+        _is_home_str = "home" if prop.get("is_home") else "away"
+        _search_desc = (
+            f"{prop['player_name']} playing at {_is_home_str} vs {prop.get('opponent', 'Opponent')}. "
+            f"Rest: {prop.get('rest_days', 1)} days. "
+            f"Opponent pace: {prop.get('opponent_pace', 100.0):.1f}."
+        )
         # Use player-specific collection for props
         analogs = _similarity.vector_store.search_similar_scenarios(
-            description=f"{prop['player_name']} vs {prop['opponent']} {prop['stat_type']}",
+            description=_search_desc,
             collection=settings.QDRANT_COLLECTION_PLAYERS,
             limit=3,
         )

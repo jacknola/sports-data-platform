@@ -943,7 +943,7 @@ class NBADvPAnalyzer:
         return players
 
     @staticmethod
-    def _infer_position(row) -> str:
+    def infer_position(row: Dict[str, Any]) -> str:
         """Best-effort position inference from nba_api data."""
         # nba_api doesn't always provide clean positional data in
         # LeagueDashPlayerStats — use PLAYER_POSITION if available
@@ -961,8 +961,11 @@ class NBADvPAnalyzer:
             return "PF"
         return "SF"
 
+    # Keep private alias for internal callers
+    _infer_position = infer_position
+
     @staticmethod
-    def _nba_abbrev_to_ours(nba_abbrev: str) -> Optional[str]:
+    def nba_abbrev_to_ours(nba_abbrev: str) -> Optional[str]:
         """Map nba_api team abbreviations to our internal abbreviations."""
         mapping = {
             "ATL": "ATL", "BOS": "BOS", "BKN": "BKN", "CHA": "CHA",
@@ -975,6 +978,9 @@ class NBADvPAnalyzer:
             "UTA": "UTA", "WAS": "WAS",
         }
         return mapping.get(nba_abbrev)
+
+    # Keep private alias for internal callers
+    _nba_abbrev_to_ours = nba_abbrev_to_ours
 
     # ------------------------------------------------------------------
     # FALLBACK DATA (when nba_api is unavailable)
