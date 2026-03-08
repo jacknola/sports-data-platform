@@ -10,13 +10,14 @@ from app.agents.analysis_agent import AnalysisAgent
 from app.agents.expert_agent import ExpertAgent
 from app.agents.dvp_agent import DvPAgent
 from app.agents.ncaab_dvp_agent import NCAABDvPAgent
+from app.agents.rag_agent import RAGAgent
 from app.memory.agent_memory import AgentMemory
 
 
 class OrchestratorAgent:
     """Orchestrates multiple agents to accomplish complex tasks"""
 
-    def __init__(self, odds_agent, analysis_agent, expert_agent, dvp_agent, ncaab_dvp_agent, memory, twitter_agent):
+    def __init__(self, odds_agent, analysis_agent, expert_agent, dvp_agent, ncaab_dvp_agent, memory, twitter_agent, rag_agent=None):
         self.odds_agent = odds_agent
         self.analysis_agent = analysis_agent
         self.expert_agent = expert_agent
@@ -24,6 +25,7 @@ class OrchestratorAgent:
         self.ncaab_dvp_agent = ncaab_dvp_agent
         self.memory = memory
         self.twitter_agent = twitter_agent
+        self.rag_agent = rag_agent
 
     @classmethod
     async def create(cls) -> "OrchestratorAgent":
@@ -33,6 +35,14 @@ class OrchestratorAgent:
         # Initialize async agents
         analysis_agent = await AnalysisAgent.create()
         memory = await AgentMemory.create()
+
+        # Initialize RAG agent
+        rag_agent = None
+        try:
+            rag_agent = await RAGAgent.create()
+            logger.info("RAGAgent initialized.")
+        except Exception as e:
+            logger.warning(f"RAGAgent could not be initialized: {e}")
 
         # Initialize sync agents
         odds_agent = OddsAgent()
@@ -56,6 +66,7 @@ class OrchestratorAgent:
             ncaab_dvp_agent=ncaab_dvp_agent,
             memory=memory,
             twitter_agent=twitter_agent,
+            rag_agent=rag_agent,
         )
 
     async def execute_prop_analysis(self, task: Dict[str, Any]) -> Dict[str, Any]:
@@ -218,11 +229,14 @@ class OrchestratorAgent:
                 results["agents_used"].append("OddsAgent")
 
                 logger.info("Step 3: Analyzing Twitter sentiment...")
-                for team in teams:
-                    sentiment_task = {"target": team, "target_type": "team", "days": 7}
-                    sentiment_result = await self.twitter_agent.execute(sentiment_task)
-                    results["sentiment"].append(sentiment_result)
-                    results["agents_used"].append("TwitterAgent")
+                if self.twitter_agent:
+                    for team in teams:
+                        sentiment_task = {"target": team, "target_type": "team", "days": 7}
+                        sentiment_result = await self.twitter_agent.execute(sentiment_task)
+                        results["sentiment"].append(sentiment_result)
+                        results["agents_used"].append("TwitterAgent")
+                else:
+                    logger.info("TwitterAgent not available, skipping sentiment analysis.")
 
             # Step 4: Run Bayesian analysis on value bets
             value_bets = odds_result.get("value_bets", [])
@@ -357,14 +371,18 @@ class OrchestratorAgent:
 
     async def get_agent_status(self) -> Dict[str, Any]:
         """Get status of all agents"""
+        agents = {
+            "odds": self.odds_agent.get_agent_status(),
+            "analysis": self.analysis_agent.get_agent_status(),
+            "expert": self.expert_agent.get_agent_status(),
+            "dvp": self.dvp_agent.get_agent_status(),
+            "ncaab_dvp": self.ncaab_dvp_agent.get_agent_status(),
+        }
+        if self.twitter_agent:
+            agents["twitter"] = self.twitter_agent.get_agent_status()
+        if self.rag_agent:
+            agents["rag"] = self.rag_agent.get_agent_status()
         return {
             "orchestrator": "active",
-            "agents": {
-                "odds": self.odds_agent.get_agent_status(),
-                "analysis": self.analysis_agent.get_agent_status(),
-                "twitter": self.twitter_agent.get_agent_status(),
-                "expert": self.expert_agent.get_agent_status(),
-                "dvp": self.dvp_agent.get_agent_status(),
-                "ncaab_dvp": self.ncaab_dvp_agent.get_agent_status(),
-            },
+            "agents": agents,
         }
