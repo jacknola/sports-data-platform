@@ -39,7 +39,9 @@ _BACKEND_DIR = os.path.join(_SCRIPT_DIR, "..", "backend")
 if os.path.isdir(_BACKEND_DIR):
     sys.path.insert(0, _BACKEND_DIR)
 
-# ── Constants ────────────────────────────────────────────────────
+# Remove loguru's default handler so we can configure it once in main().
+logger.remove()
+
 
 # Ensemble weights (sum to 1.0)
 XGBOOST_WEIGHT: float = 0.35
@@ -133,6 +135,9 @@ class PredictionResult:
     mc_mean: float = 0.0
     mc_std: float = 0.0
     mc_over_pct: float = 0.0
+    # Composite confidence scoring
+    top_direction: str = ""  # "OVER" or "UNDER"
+    composite_score: Optional[float] = None  # weighted rank score [0, 1]
 
 
 # ── Utility Functions ────────────────────────────────────────────
@@ -333,7 +338,7 @@ def predict_prop(
         bankroll: Total bankroll for Kelly sizing.
 
     Returns:
-        PredictionResult with probabilities, edge, and Kelly stake.
+        PredictionResult with probabilities, edge, Kelly stake, and composite score.
     """
     arr = features.to_array()
 
@@ -401,6 +406,46 @@ def predict_prop(
             kelly_frac = min(kelly_frac, MAX_BET_FRACTION)
             kelly_stake = round(kelly_frac * bankroll, 2)
 
+    # Composite confidence score
+    # Weights: edge magnitude 40%, model agreement 30%, DvP alignment 20%, L5 hit rate 10%.
+    # This mirrors the research-backed ranking used in the daily slate pipeline.
+    top_direction = "OVER" if ensemble_prob > 0.5 else "UNDER"
+    composite_score: Optional[float] = None
+    if edge is not None:
+        # Edge score: normalize raw edge against a 20% cap. Research (Kovalchik
+        # & Ingram 2024) shows edges above ~15-20% are either data errors or
+        # heavily juice-adjusted lines, so capping at 20% prevents inflated
+        # edges from overshadowing model agreement and DvP signals.
+        EDGE_CAP = 0.20
+        edge_score = min(abs(edge) / EDGE_CAP, 1.0)
+
+        agreement_weights = {"STRONG": 1.0, "MODERATE": 0.67, "MILD": 0.33, "SPLIT": 0.0}
+        agreement_score = agreement_weights.get(agreement, 0.0)
+
+        # DvP alignment: rank 1 = toughest defense (bad for OVER), 30 = weakest (good for OVER)
+        dvp_rank = max(1, min(features.dvp_rank, 30))
+        if top_direction == "OVER":
+            dvp_score = dvp_rank / 30.0
+        else:
+            dvp_score = (31 - dvp_rank) / 30.0
+
+        # L5 hit rate: fraction of recent 5 games that hit the predicted direction
+        l5_hit_rate = 0.5  # neutral default when logs are unavailable
+        if game_logs and len(game_logs) >= 5:
+            recent_5 = game_logs[-5:]
+            if top_direction == "OVER":
+                l5_hit_rate = sum(1.0 for g in recent_5 if g > line) / len(recent_5)
+            else:
+                l5_hit_rate = sum(1.0 for g in recent_5 if g < line) / len(recent_5)
+
+        composite_score = round(
+            0.40 * edge_score
+            + 0.30 * agreement_score
+            + 0.20 * dvp_score
+            + 0.10 * l5_hit_rate,
+            4,
+        )
+
     return PredictionResult(
         player=player,
         prop=prop,
@@ -421,6 +466,8 @@ def predict_prop(
         mc_mean=round(float(np.mean(mc_samples)), 2) if len(mc_samples) > 0 else 0.0,
         mc_std=round(float(np.std(mc_samples)), 2) if len(mc_samples) > 0 else 0.0,
         mc_over_pct=round(float(mc_over_pct), 4),
+        top_direction=top_direction,
+        composite_score=composite_score,
     )
 
 
@@ -505,8 +552,11 @@ def _format_output(result: PredictionResult) -> str:
             f"  ── Edge Detection ──",
             f"  Edge:    {result.edge:.1%}",
             f"  Rating:  {result.edge_rating}",
+            f"  Direction: {result.top_direction}",
             f"  Kelly:   {result.kelly_fraction:.2%} → ${result.kelly_stake:.2f}",
         ])
+        if result.composite_score is not None:
+            lines.append(f"  Composite Score: {result.composite_score:.4f}")
 
     lines.append(f"{'═' * 60}")
     return "\n".join(lines)
@@ -538,8 +588,24 @@ def main() -> None:
     # Batch mode
     parser.add_argument("--batch", type=str, default=None, help="Batch input JSON file")
     parser.add_argument("--output", type=str, default=None, help="Output JSON file")
+    parser.add_argument(
+        "--top-n", type=int, default=None, dest="top_n",
+        help="In batch mode, print only the top N results ranked by composite confidence score",
+    )
+
+    # Diagnostics
+    parser.add_argument(
+        "--verbose", action="store_true",
+        help="Show DEBUG-level log messages (e.g. model fallback notices)",
+    )
 
     args = parser.parse_args()
+
+    # ── Logging setup ─────────────────────────────────────────────
+    # --verbose wins over LOGURU_LEVEL; default is WARNING so heuristic
+    # fallback notices don't clutter normal usage.
+    log_level = "DEBUG" if args.verbose else os.environ.get("LOGURU_LEVEL", "WARNING")
+    logger.add(sys.stderr, level=log_level, format="<level>{level}</level>: {message}")
 
     # Batch mode
     if args.batch:
@@ -552,30 +618,62 @@ def main() -> None:
 
         results = []
         for entry in batch_data:
+            line_val = entry.get("line", 20.0)
+            minutes = entry.get("minutes", 32.0)
+            # Per-player rolling averages: use dedicated fields when present,
+            # fall back to the sportsbook line so heuristics stay centred.
+            l5_avg = entry.get("l5_avg", line_val)
+            l10_avg = entry.get("l10_avg", line_val)
+            l20_avg = entry.get("l20_avg", line_val)
+            ewma = entry.get("ewma", l10_avg)
             feats = PlayerFeatures(
-                projected_minutes=entry.get("minutes", 32.0),
-                per_minute_rate=entry.get("line", 20.0) / max(entry.get("minutes", 32.0), 1),
-                ewma_projection=entry.get("line", 20.0),
-                rolling_avg_5=entry.get("line", 20.0),
-                rolling_avg_10=entry.get("line", 20.0),
-                rolling_avg_20=entry.get("line", 20.0),
+                projected_minutes=minutes,
+                per_minute_rate=line_val / max(minutes, 1),
+                ewma_projection=ewma,
+                rolling_avg_5=l5_avg,
+                rolling_avg_10=l10_avg,
+                rolling_avg_20=l20_avg,
                 dvp_rank=entry.get("dvp", 15),
                 implied_team_total=entry.get("total", 112.0),
             )
             result = predict_prop(
                 features=feats,
-                line=entry.get("line", 20.0),
+                line=line_val,
                 player=entry.get("player", "Unknown"),
                 prop=entry.get("prop", "points"),
+                game_logs=entry.get("game_logs"),
                 american_odds=entry.get("odds"),
                 bankroll=args.bankroll,
             )
             results.append(asdict(result))
-            print(_format_output(result))
+
+        # Rank by composite score when --top-n is requested (or always sort for
+        # consistent output ordering — highest composite score first).
+        results.sort(
+            key=lambda r: r.get("composite_score") or 0.0,
+            reverse=True,
+        )
+
+        top_results = results[: args.top_n] if args.top_n else results
+
+        for r in top_results:
+            # Reconstruct a PredictionResult from the serialised dict for
+            # pretty-printing. Use only the fields declared on the dataclass
+            # so that any extra keys produced by future asdict() calls don't
+            # cause an unexpected keyword argument error.
+            known_fields = PredictionResult.__dataclass_fields__
+            pr = PredictionResult(**{k: r[k] for k in known_fields if k in r})
+            print(_format_output(pr))
+
+        if args.top_n:
+            logger.info(
+                f"Showing top {len(top_results)} of {len(results)} props "
+                f"ranked by composite confidence score."
+            )
 
         if args.output:
             with open(args.output, "w") as f:
-                json.dump(results, f, indent=2)
+                json.dump(top_results, f, indent=2)
             logger.info(f"Results saved to {args.output}")
 
         sys.exit(0)
