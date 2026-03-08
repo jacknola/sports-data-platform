@@ -23,7 +23,7 @@ class TestCalibrateModelSingleClass:
         trainer = ModelTrainer(model_dir=str(tmp_path))
         return trainer
 
-    def _fitted_rf(self, X: pd.DataFrame, y: np.ndarray) -> RandomForestClassifier:
+    def _fitted_rf(self, X: pd.DataFrame, y: np.ndarray) -> "RandomForestClassifier":
         """Return a minimal RandomForest already fitted on two-class data.
 
         Uses n_estimators=5 to keep tests fast; production models use 200+.

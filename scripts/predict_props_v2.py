@@ -39,7 +39,9 @@ _BACKEND_DIR = os.path.join(_SCRIPT_DIR, "..", "backend")
 if os.path.isdir(_BACKEND_DIR):
     sys.path.insert(0, _BACKEND_DIR)
 
-# ── Constants ────────────────────────────────────────────────────
+# Remove loguru's default handler so we can configure it once in main().
+logger.remove()
+
 
 # Ensemble weights (sum to 1.0)
 XGBOOST_WEIGHT: float = 0.35
@@ -591,7 +593,19 @@ def main() -> None:
         help="In batch mode, print only the top N results ranked by composite confidence score",
     )
 
+    # Diagnostics
+    parser.add_argument(
+        "--verbose", action="store_true",
+        help="Show DEBUG-level log messages (e.g. model fallback notices)",
+    )
+
     args = parser.parse_args()
+
+    # ── Logging setup ─────────────────────────────────────────────
+    # --verbose wins over LOGURU_LEVEL; default is WARNING so heuristic
+    # fallback notices don't clutter normal usage.
+    log_level = "DEBUG" if args.verbose else os.environ.get("LOGURU_LEVEL", "WARNING")
+    logger.add(sys.stderr, level=log_level, format="<level>{level}</level>: {message}")
 
     # Batch mode
     if args.batch:

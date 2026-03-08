@@ -1,0 +1,14 @@
+# Minimal dependencies for scripts/predict_props_v2.py
+# Install with: pip install -r scripts/requirements-predict.txt
+#
+# These are the ONLY packages you need to run the standalone prediction
+# pipeline. You do NOT need the full backend stack (FastAPI, Redis, etc.).
+
+numpy>=1.26.0
+scipy>=1.11.0
+loguru>=0.7.0
+
+# Optional: install for full ML models instead of heuristic fallbacks.
+# The script works without them — it uses feature-weighted heuristics.
+# xgboost>=2.0.3
+# lightgbm>=4.1.0

@@ -81,6 +81,26 @@ docker-compose up --build
 # API Docs: http://localhost:8000/docs
 ```
 
+### Standalone Prediction Script (no server required)
+
+Run the ML prop prediction engine directly — no API keys, no Docker, no server:
+
+```bash
+# 1. Install only the 3 required packages
+pip install -r scripts/requirements-predict.txt
+
+# 2a. Single prop
+python3 scripts/predict_props_v2.py \
+  --player "Jayson Tatum" --prop points --line 23.5 --odds -120 --dvp 14 --minutes 37
+
+# 2b. Batch — tonight's full slate (30 props)
+python3 scripts/predict_props_v2.py \
+  --batch scripts/tonight_march8.json --top-n 30 --output top30.json
+```
+
+See **[scripts/README.md](scripts/README.md)** for the full argument reference,
+batch JSON format, and example output.
+
 ## Required Environment Variables
 
 ```bash
