@@ -23,7 +23,8 @@ except ImportError:
 
 try:
     from sklearn.ensemble import RandomForestClassifier
-    from sklearn.calibration import CalibratedClassifierCV
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.isotonic import IsotonicRegression
     from sklearn.metrics import (
         accuracy_score,
         brier_score_loss,
@@ -41,6 +42,36 @@ except ImportError:
 DEFAULT_MODEL_DIR = Path("./models")
 NBA_ML_DIR = DEFAULT_MODEL_DIR / "nba_ml"
 RF_DIR = DEFAULT_MODEL_DIR / "rf"
+
+
+class _CalibratedModel:
+    """
+    Lightweight wrapper that applies Platt or isotonic calibration on top of
+    a pre-fitted base classifier.
+
+    Designed to work across all sklearn versions as a version-agnostic
+    replacement for ``CalibratedClassifierCV(cv="prefit")``, which was
+    removed in sklearn 1.2+.
+    """
+
+    def __init__(self, base_model, calibrator, method: str = "sigmoid"):
+        self._base_model = base_model
+        self._calibrator = calibrator
+        self._method = method
+
+    def predict_proba(self, X) -> np.ndarray:
+        """Return calibrated probabilities for both classes."""
+        raw_probs = self._base_model.predict_proba(X)[:, 1]
+        if self._method == "sigmoid":
+            cal_probs = self._calibrator.predict_proba(raw_probs.reshape(-1, 1))[:, 1]
+        else:  # isotonic
+            cal_probs = np.clip(self._calibrator.predict(raw_probs), 0.0, 1.0)
+        return np.column_stack([1.0 - cal_probs, cal_probs])
+
+    def predict(self, X) -> np.ndarray:
+        """Return class predictions using a 0.5 probability threshold."""
+        return (self.predict_proba(X)[:, 1] >= 0.5).astype(int)
+
 
 
 class ModelTrainer:
@@ -79,7 +110,7 @@ class ModelTrainer:
         max_depth: int = 6,
         eval_metric: str = "logloss",
         **kwargs,
-    ) -> xgb.XGBClassifier:
+    ):
         """
         Train an XGBoost classifier.
 
@@ -135,7 +166,7 @@ class ModelTrainer:
         n_estimators: int = 200,
         max_depth: Optional[int] = 12,
         **kwargs,
-    ) -> RandomForestClassifier:
+    ):
         """
         Train a Random Forest classifier.
 
@@ -177,27 +208,65 @@ class ModelTrainer:
 
     def calibrate_model(
         self, model, X: pd.DataFrame, y: np.ndarray, method: str = "sigmoid"
-    ) -> CalibratedClassifierCV:
+    ):
         """
         Calibrate model probabilities using Platt scaling or isotonic regression.
 
+        Implements calibration by fitting a post-hoc calibrator on top of a
+        pre-fitted model's predicted probabilities on the validation set. This
+        approach works correctly across all sklearn versions and is more
+        transparent than CalibratedClassifierCV with cv="prefit" (which was
+        removed in sklearn 1.2+).
+
+        Handles the edge case where all validation outcomes are the same class
+        (e.g. all OVER or all UNDER), which would cause the calibrator to fail
+        because it cannot distinguish two classes. In that case the original
+        uncalibrated model is returned and a warning is logged.
+
         Args:
-            model: Trained classifier.
+            model: Trained classifier with a predict_proba method.
             X: Validation features.
-            y: Validation labels.
-            method: 'sigmoid' (Platt) or 'isotonic'.
+            y: Validation labels (0 or 1).
+            method: 'sigmoid' (Platt scaling via logistic regression) or
+                    'isotonic' (isotonic regression).
 
         Returns:
-            Calibrated model.
+            _CalibratedModel wrapping the original classifier with the fitted
+            calibrator, or the original model when calibration cannot be
+            performed due to single-class validation data.
         """
         if not SKLEARN_AVAILABLE:
             raise RuntimeError("sklearn not available")
 
+        # Guard: both calibrators require at least two distinct classes in the
+        # validation set. When all samples belong to one class — which happens
+        # in small player-specific windows where every game went OVER or every
+        # game went UNDER — fitting fails with a ValueError.
+        unique_classes = np.unique(y)
+        if len(unique_classes) < 2:
+            logger.warning(
+                f"Calibration skipped: validation set contains only class "
+                f"{unique_classes.tolist()} ({len(y)} samples). "
+                f"Returning uncalibrated model."
+            )
+            return model
+
         logger.info(f"Calibrating model using {method}...")
 
-        calibrated = CalibratedClassifierCV(estimator=model, method=method, cv="prefit")
+        # Obtain raw probabilities from the pre-fitted model.
+        raw_probs = model.predict_proba(X)[:, 1]
 
-        calibrated.fit(X, y)
+        if method == "sigmoid":
+            # Platt scaling: fit a logistic regression on the raw probabilities.
+            calibrator = LogisticRegression(C=1.0, solver="lbfgs")
+            calibrator.fit(raw_probs.reshape(-1, 1), y)
+        elif method == "isotonic":
+            calibrator = IsotonicRegression(out_of_bounds="clip")
+            calibrator.fit(raw_probs, y)
+        else:
+            raise ValueError(f"Unknown calibration method: {method!r}. Use 'sigmoid' or 'isotonic'.")
+
+        calibrated = _CalibratedModel(base_model=model, calibrator=calibrator, method=method)
 
         # Save calibrated model
         model_name = getattr(model, "__class__.__name__", "model")
