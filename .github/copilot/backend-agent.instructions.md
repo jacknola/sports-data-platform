@@ -31,7 +31,7 @@ to Python backend code, follow these rules strictly.
 - **DB sessions:** Use context managers. Always close in `finally` blocks.
 - **Async HTTP:** Use `httpx.AsyncClient` with `timeout=15.0`. Wrap all network calls in `try/except`.
 - **Graceful degradation:** Services MUST handle unavailable external APIs/DBs. Example: `BetTracker` falls back to SQLite when Supabase is down.
-- **Model registration:** Use `_ = (Model1, Model2)` pattern for unused model imports (not `# noqa: F401`).
+- **Model registration imports:** Use `_ = (Model1, Model2)` pattern to keep SQLAlchemy model imports active (needed for ORM table registration) while satisfying pyflakes unused-import checks. This is preferred over `# noqa: F401` per codebase convention.
 
 ## Service Architecture
 

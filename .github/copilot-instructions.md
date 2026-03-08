@@ -98,7 +98,7 @@ docker-compose up --build
 - **DB sessions:** Use context managers. Always close in `finally` blocks.
 - **Async HTTP:** Use `httpx.AsyncClient` with `timeout=15.0`. Wrap in `try/except`.
 - **Graceful degradation:** All services must handle unavailable external APIs/DBs. Example: `BetTracker` falls back to SQLite when Supabase is down.
-- **Model registration:** Use `_ = (Model1, Model2)` pattern instead of `# noqa: F401` for unused imports.
+- **Model registration imports:** Use `_ = (Model1, Model2)` pattern to keep SQLAlchemy model imports active (needed for ORM table registration) while satisfying pyflakes unused-import checks. This is preferred over `# noqa: F401` per codebase convention.
 - **Docstrings:** Required on all classes and public methods. Explain business logic (the *why*), not just the *what*.
 
 ### TypeScript Frontend

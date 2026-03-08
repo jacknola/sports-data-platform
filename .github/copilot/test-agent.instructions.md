@@ -77,7 +77,11 @@ def orchestrator():
 
 ### Required Test Dependencies
 
-Tests require: `pydantic-settings`, `loguru`, `httpx`, `sqlalchemy`, `redis`, `scipy`, `numpy`, `pandas`, `beautifulsoup4`, `nba_api`, `tenacity`, `cachetools`, `scikit-learn`.
+Tests require many backend dependencies. Install from `backend/requirements.txt` before running:
+```bash
+pip install -r backend/requirements.txt
+```
+Key packages needed for tests: `pydantic-settings`, `loguru`, `httpx`, `sqlalchemy`, `redis`, `scipy`, `numpy`, `pandas`, `beautifulsoup4`, `nba_api`, `tenacity`, `cachetools`, `scikit-learn`.
 
 ## Frontend Test Conventions (Vitest)
 

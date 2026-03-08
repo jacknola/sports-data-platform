@@ -23,7 +23,8 @@ infrastructure changes, follow these rules strictly.
 ```
 ┌─────────────┐  ┌──────────────┐  ┌─────────┐
 │  PostgreSQL  │  │    Redis     │  │ Qdrant  │
-│  (port 5433) │  │  (port 6379) │  │ (6333)  │
+│  (host 5433) │  │  (port 6379) │  │ (6333)  │
+│  (ctnr 5432) │
 └──────┬───────┘  └──────┬───────┘  └────┬────┘
        │                 │               │
        └────────┬────────┘               │
